@@ -10,7 +10,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, type Stats } from "node:fs";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { run, type CommandResult } from "./vps-command.ts";
 import { capturePath, directory, isDirectory, oldFiles, ScanBudget, ScanStopped, validateEntry, validatePath, type PathPlan } from "./vps-doctor-files.ts";
@@ -659,7 +659,7 @@ export class VpsDoctor {
       await rename(temporary, path);
     } finally { await unlink(temporary).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); }
 
-    const previous: { path: string; stat: Awaited<ReturnType<typeof lstat>> }[] = [];
+    const previous: { path: string; stat: Stats }[] = [];
     for (const name of await readdir(dir)) {
       if (!BRIEF_NAME.test(name) || join(dir, name) === path) continue;
       const file = join(dir, name);
