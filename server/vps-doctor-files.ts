@@ -120,17 +120,19 @@ export async function capturePath(path: string, work: ScanBudget, cutoff?: numbe
     };
     if (!await walk(path, 0)) return null;
     work.check();
-    return { path, root: entries[0]!.directory ? path : dirname(path), ancestors, entries: entries.sort((a, b) => a.path.localeCompare(b.path)) };
+    return { path, root: entries[0]!.directory ? path : dirname(path), ancestors, entries };
   } catch (error) { if (error instanceof ScanStopped) throw error; return null; }
 }
 
 /** Re-check the full parent chain as well as canonical containment immediately before each delete. */
-export async function validateEntry(plan: PathPlan, entry: FileIdentity, content = true): Promise<boolean> {
+export async function validateEntry(plan: PathPlan, entry: FileIdentity, directories: ReadonlyMap<string, FileIdentity>, content = true): Promise<boolean> {
   try {
-    const parents = [...plan.ancestors, ...plan.entries.filter((item) => item.directory && entry.path.startsWith(`${item.path}/`))];
-    for (const parent of parents) {
-      const stat = await lstat(parent.path);
+    for (let path = dirname(entry.path); ; path = dirname(path)) {
+      const parent = directories.get(path);
+      if (!parent) return false;
+      const stat = await lstat(path);
       if (!stat.isDirectory() || stat.isSymbolicLink() || !same(parent, identity(parent.path, stat), false)) return false;
+      if (path === dirname(path)) break;
     }
     const canonical = await realpath(dirname(entry.path));
     const allowed = entry.path === plan.root ? dirname(plan.root) : plan.root;
@@ -142,7 +144,8 @@ export async function validateEntry(plan: PathPlan, entry: FileIdentity, content
 
 export async function validatePath(plan: PathPlan, work: ScanBudget): Promise<boolean> {
   const current = await capturePath(plan.path, work);
+  const expected = new Map(plan.entries.map((entry) => [entry.path, entry]));
   return current !== null && current.root === plan.root && current.ancestors.length === plan.ancestors.length
     && current.ancestors.every((entry, i) => same(entry, plan.ancestors[i]!, false))
-    && current.entries.length === plan.entries.length && current.entries.every((entry, i) => same(entry, plan.entries[i]!, true));
+    && current.entries.length === plan.entries.length && current.entries.every((entry) => { const prior = expected.get(entry.path); return prior !== undefined && same(entry, prior, true); });
 }

@@ -21,10 +21,20 @@ export function run(argv: string[], timeoutMs = 60_000, signal?: AbortSignal, ma
     let timedOut = false;
     let truncated = false;
     let failure = "";
-    const kill = (): void => {
+    let stopping = false;
+    let force: ReturnType<typeof setTimeout> | undefined;
+    const signalGroup = (signal: "SIGTERM" | "SIGKILL"): void => {
       // Also close inherited pipes held by descendants (e.g. a shell's running command).
-      try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); }
-      catch { child.kill("SIGKILL"); }
+      try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal); else child.kill(signal); }
+      catch { child.kill(signal); }
+    };
+    const kill = (): void => {
+      if (stopping) return;
+      stopping = true;
+      // sudo must get a chance to forward termination to its privileged child. SIGKILL
+      // cannot be forwarded, and this user's group signal cannot kill another uid's child.
+      signalGroup("SIGTERM");
+      force = setTimeout(() => signalGroup("SIGKILL"), 100);
     };
     const abort = (): void => { timedOut = true; kill(); };
     const timer = setTimeout(abort, Math.max(1, timeoutMs));
@@ -38,6 +48,7 @@ export function run(argv: string[], timeoutMs = 60_000, signal?: AbortSignal, ma
     child.on("error", (error) => { failure = error.message; });
     child.on("close", (code) => {
       clearTimeout(timer);
+      clearTimeout(force);
       signal?.removeEventListener("abort", abort);
       resolve({ code: timedOut || truncated ? null : code, stdout: Buffer.concat(output[0]!).toString(), stderr: failure || Buffer.concat(output[1]!).toString(), timedOut, truncated });
     });

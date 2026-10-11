@@ -513,11 +513,13 @@ export class VpsDoctor {
             for (const path of plan.paths) {
               if (!this.deletable(path.path, plan.root) || !await validatePath(path, work)) { errors.push("Path changed, missing, unreadable or protected; kept"); continue; }
               // No recursive rm: even a new child arriving after validation prevents rmdir.
-              const entries = [...path.entries].sort((a, b) => b.path.length - a.path.length);
+              // Capture is pre-order: reversing it visits every child before its parent.
+              const entries = [...path.entries].reverse();
+              const directories = new Map([...path.ancestors, ...path.entries.filter((entry) => entry.directory)].map((entry) => [entry.path, entry]));
               let ok = true;
               for (const entry of entries) {
                 work.check();
-                if (!this.deletable(entry.path, plan.root) || !await validateEntry(path, entry, !entry.directory)) { ok = false; errors.push("Path changed before deletion; kept"); break; }
+                if (!this.deletable(entry.path, plan.root) || !await validateEntry(path, entry, directories, !entry.directory)) { ok = false; errors.push("Path changed before deletion; kept"); break; }
                 if (plan.root) {
                   const result = await this.command(["sudo", "-n", entry.directory ? "rmdir" : "rm", "--", entry.path], 30_000);
                   if (result.code !== 0) { ok = false; errors.push("Privileged deletion failed"); break; }

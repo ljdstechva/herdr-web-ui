@@ -21,3 +21,13 @@ it("aborts and reaps a child before resolving without blocking timers", async ()
     if (pid) expect(() => process.kill(pid, 0)).toThrow();
   } finally { clearInterval(timer); clearTimeout(abort); }
 });
+
+it("forces and reaps a child that ignores graceful termination", async () => {
+  const started = performance.now();
+  const result = await run([process.execPath, "-e", "process.on('SIGTERM',()=>{}); console.log(process.pid); setInterval(()=>{},1000)"], 80);
+  expect(result.timedOut).toBe(true);
+  expect(performance.now() - started).toBeLessThan(1500);
+  const pid = Number(result.stdout.trim());
+  expect(pid).toBeGreaterThan(0);
+  expect(() => process.kill(pid, 0)).toThrow();
+});
