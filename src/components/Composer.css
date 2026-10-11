@@ -1281,3 +1281,10 @@
   color: var(--text-dim);
   font-size: var(--fs-xs);
 }
+
+/* a phone's bar sits under the composer (styles.css "phone") and takes the home-indicator inset */
+@media (max-width: 640px) {
+  .composer {
+    padding-bottom: var(--space-4);
+  }
+}

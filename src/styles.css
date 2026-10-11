@@ -1647,6 +1647,74 @@ button {
   }
 }
 
+/* ---------- phone: the bar at the bottom, the drawer from the right ---------- */
+
+/* Within the thumb's reach: on a phone (up to the width where menus are bottom sheets,
+   RowMenu's SHEET_QUERY, and lib/edgeSwipe.ts RIGHT_DRAWER_QUERY) the app's bar is its last
+   row, with the menu button at its right end, and the workspace list slides in from the right
+   edge, the side of the hand most people hold a phone in. The bar takes the home-indicator
+   inset the pane's last row (terminal, composer, key bar) takes elsewhere, and makes way for the
+   soft keyboard (data-keyboard, lib/viewport.ts), which covers where it sits. Tablets keep
+   the bar on top and the drawer on the left. */
+@media (max-width: 640px) {
+  .app-header {
+    order: 1;
+    position: relative;
+    height: calc(var(--header-h) + env(safe-area-inset-bottom, 0px));
+    padding-top: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-top: var(--hairline) solid var(--border);
+    border-bottom: 0;
+  }
+
+  /* the status bar's band, which the bar held while it was on top */
+  .app-body {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* left to right: the pane, its lens, More, the palette, and the menu button last */
+  .header-meta {
+    order: 2;
+  }
+
+  .palette-button {
+    order: 3;
+  }
+
+  .drawer-toggle {
+    order: 4;
+  }
+
+  .sidebar {
+    top: env(safe-area-inset-top, 0px);
+    right: 0;
+    bottom: calc(var(--header-h) + env(safe-area-inset-bottom, 0px));
+    left: auto;
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-left: 0;
+    border-right: 0;
+    border-left: var(--hairline) solid var(--border);
+    transform: translateX(100%);
+  }
+
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  /* the bar stays in reach under it: its menu button closes the drawer again */
+  .scrim {
+    inset: 0 0 calc(var(--header-h) + env(safe-area-inset-bottom, 0px)) 0;
+  }
+
+  .terminal-host {
+    padding-bottom: 0;
+  }
+
+  html[data-keyboard] .app-header {
+    display: none;
+  }
+}
+
 /* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself */
 @media (pointer: coarse), (max-width: 768px) {
   .terminal-host:has(.key-bar) {

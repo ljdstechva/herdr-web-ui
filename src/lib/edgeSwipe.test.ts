@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { EDGE_PX, SWIPE_PX, swipeVerdict, watchDrawerSwipe } from "./edgeSwipe.ts";
+import { EDGE_PX, RIGHT_DRAWER_QUERY, SWIPE_PX, swipeVerdict, watchDrawerSwipe } from "./edgeSwipe.ts";
 
 describe("swipeVerdict", () => {
   test("a swipe in from the left edge opens the closed drawer", () => {
@@ -24,6 +24,18 @@ describe("swipeVerdict", () => {
     expect(swipeVerdict(true, 200, -SWIPE_PX, 3)).toBe("close");
     expect(swipeVerdict(true, 200, SWIPE_PX, 3)).toBe("ignore");
   });
+
+  test("on a phone the drawer comes in from the right edge and goes back to it", () => {
+    const width = 390;
+    expect(swipeVerdict(false, width - 4, -20, 2, "right", width)).toBe("claim");
+    expect(swipeVerdict(false, width - 4, -SWIPE_PX, 5, "right", width)).toBe("open");
+    // the left edge, or a stroke toward the right edge, opens nothing there
+    expect(swipeVerdict(false, 4, SWIPE_PX, 0, "right", width)).toBe("ignore");
+    expect(swipeVerdict(false, width - 4, SWIPE_PX, 0, "right", width)).toBe("ignore");
+    expect(swipeVerdict(false, width - EDGE_PX - 1, -SWIPE_PX * 2, 0, "right", width)).toBe("ignore");
+    expect(swipeVerdict(true, 200, SWIPE_PX, 3, "right", width)).toBe("close");
+    expect(swipeVerdict(true, 200, -SWIPE_PX, 3, "right", width)).toBe("ignore");
+  });
 });
 
 /**
@@ -35,16 +47,19 @@ describe("watchDrawerSwipe", () => {
   let listeners: Map<string, Handler>;
   let saved: { window: unknown; document: unknown };
   let narrow: { matches: boolean };
+  let phone: { matches: boolean };
   let modal: unknown;
   let selection: { isCollapsed: boolean };
 
   beforeEach(() => {
     listeners = new Map();
     narrow = { matches: true };
+    // a tablet-width drawer unless a test says phone: the drawer on the left
+    phone = { matches: false };
     modal = null;
     selection = { isCollapsed: true };
     saved = { window: (globalThis as Record<string, unknown>)["window"], document: (globalThis as Record<string, unknown>)["document"] };
-    (globalThis as Record<string, unknown>)["window"] = { matchMedia: () => narrow };
+    (globalThis as Record<string, unknown>)["window"] = { matchMedia: (query: string) => query === RIGHT_DRAWER_QUERY ? phone : narrow, innerWidth: 390 };
     (globalThis as Record<string, unknown>)["document"] = {
       addEventListener: (type: string, handler: Handler) => listeners.set(type, handler),
       removeEventListener: (type: string) => listeners.delete(type),
@@ -131,6 +146,20 @@ describe("watchDrawerSwipe", () => {
 
   test("a selection begun mid-stroke, before the drawer moved, hands the stroke back", () => {
     expect(stroke([[4, 400], [24, 400], [40, 400], [90, 400]], false, null, () => { selection = { isCollapsed: false }; })).toEqual({ reached: 2, calls: [] });
+  });
+
+  test("on a phone a swipe in from the right edge opens the drawer, a swipe right closes it", () => {
+    phone.matches = true;
+    expect(stroke([[386, 400], [366, 400], [310, 400]])).toEqual({ reached: 0, calls: [true] });
+    expect(stroke([[100, 400], [130, 400], [200, 400]], true)).toEqual({ reached: 0, calls: [false] });
+    // the left edge is the page's there
+    expect(stroke([[4, 400], [24, 400], [90, 400]])).toEqual({ reached: 2, calls: [] });
+  });
+
+  test("on a phone a swipe on a code block with more to its right scrolls it instead", () => {
+    phone.matches = true;
+    const code = { scrollLeft: 0, scrollWidth: 900, clientWidth: 350, parentElement: null };
+    expect(stroke([[386, 400], [366, 400], [310, 400]], false, code)).toEqual({ reached: 2, calls: [] });
   });
 
   test("a selection after the drawer moved leaves the stroke with it", () => {

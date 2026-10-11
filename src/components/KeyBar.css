@@ -81,3 +81,11 @@
     transition: none;
   }
 }
+
+/* a phone's bar sits under the key bar (styles.css "phone") and takes the home-indicator inset */
+@media (max-width: 640px) {
+  .key-bar {
+    height: var(--keybar-h);
+    padding-bottom: 0;
+  }
+}

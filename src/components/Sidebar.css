@@ -539,3 +539,10 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
   .sidebar-status[data-status="working"] svg { animation: none; }
 }
+
+/* a phone's drawer ends above the app's bar (styles.css "phone"), which takes the home-indicator inset */
+@media (max-width: 640px) {
+  .sidebar-footer {
+    padding-bottom: var(--space-2);
+  }
+}

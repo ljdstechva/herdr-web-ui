@@ -741,3 +741,13 @@ summary.vps-heading {
   .vps-issue { flex-wrap: wrap; }
   .vps-issue > .btn { margin-left: auto; }
 }
+
+/* a phone's bar is at the bottom (styles.css "phone"): the alert sits above it */
+@media (max-width: 640px) {
+  .vps-toast {
+    bottom: calc(var(--header-h) + env(safe-area-inset-bottom, 0px) + var(--space-3));
+  }
+  html[data-keyboard] .vps-toast {
+    bottom: var(--space-3);
+  }
+}
