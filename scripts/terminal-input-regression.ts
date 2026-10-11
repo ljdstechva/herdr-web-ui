@@ -73,14 +73,16 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     await remountLine();
     await line.waitFor();
     await page.getByRole("button", { name: "Send to the terminal", exact: true }).click();
+    // the line is the next command's at once: the terminal over it shows the one that left
+    assert.equal(await line.inputValue(), "", "the line empties as Send is pressed, before the pane answers");
     await until(() => !!acknowledge);
     await remountLine();
-    assert.equal(await page.getByRole("button", { name: "Send to the terminal", exact: true }).isDisabled(), true, "pending send survives remount");
-    await line.fill("");
+    assert.equal(await page.getByRole("button", { name: "Press Enter in the terminal", exact: true }).isDisabled(), true, "pending send survives remount");
     await line.fill("draft 한글 😀");
+    assert.equal(await page.getByRole("button", { name: "Send to the terminal", exact: true }).isDisabled(), true, "nothing else leaves before its answer");
     acknowledge!();
     await until(async () => !(await page.getByRole("button", { name: "Send to the terminal", exact: true }).isDisabled()));
-    assert.equal(await line.inputValue(), "draft 한글 😀", "late ack cannot erase replacement text");
+    assert.equal(await line.inputValue(), "draft 한글 😀", "late ack cannot erase text typed meanwhile");
     assert.equal(sent.length, 1);
 
     await page.keyboard.press("ControlOrMeta+Shift+Comma");

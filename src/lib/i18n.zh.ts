@@ -502,7 +502,6 @@ export const ZH: Record<string, string> = {
   // ---- composer ----
   "Reconnecting… message held here, never queued": "正在重连… 消息保留在此处，不会加入队列",
   "Message {agent}…": "给 {agent} 发消息…",
-  "Sent as it was. Your changes made while it was sending stayed here and were not sent.": "已按原内容发送。发送期间所做的修改保留在此处，未被发送。",
   "Message composer": "消息输入框",
   "Model and reasoning": "模型和推理",
   "Model not available": "模型信息不可用",
@@ -733,6 +732,8 @@ export const ZH: Record<string, string> = {
   "Test notification": "测试通知",
   "Check whether this device can receive push alerts": "检查此设备能否接收推送通知",
   "Sending…": "正在发送…",
+  "Sent": "已发送",
+  "Not confirmed: the page reloaded before the pane answered for this message. Check the chat before sending it again.": "未确认：窗格答复此消息之前页面已重新加载。重新发送前请检查聊天。",
   "Send test": "发送测试",
   "Push alerts need HTTPS or localhost, and on iPhone the home-screen app.": "推送通知需要 HTTPS 或 localhost。在 iPhone 上请使用添加到主屏幕的应用。",
   "Allow notifications in your browser settings, then try again.": "请在浏览器设置中允许通知，然后重试。",

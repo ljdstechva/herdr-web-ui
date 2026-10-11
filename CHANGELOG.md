@@ -8,6 +8,19 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Chat: Send is felt at once.** The message box empties and the message stands in the chat
+  the moment Send is pressed, marked **Sending…** and then **Sent**, instead of waiting in the
+  box until the pane answered. The next message can be typed and sent right away; it follows the
+  first in order. A message the pane refuses comes back to the box with the reason, with anything
+  sent or typed after it, and nothing is ever sent a second time. A message sent while scrolled
+  up is brought into view. The terminal's input line on a touch screen empties at once too.
+- **Swipe between tabs** on a touch screen: a sideways stroke over the pane opens the tab beside
+  the open one. The pane follows the finger and names the tab it is going to, so letting go short
+  changes nothing. Vertical scrolling, the drawer's edge swipe, text fields, selections and the
+  key bar keep their own strokes, and a code block or table that scrolls sideways keeps a stroke
+  for as long as it can still scroll that way.
+- A chat opened again (another pane and back, or back from the terminal lens) shows the
+  conversation it already had at once and updates behind it, instead of a loading line.
 - Native conversation transcripts for Hermes Agent: turns, thinking blocks, and tool calls are read directly from its SQLite session store. ([#604](https://github.com/devswha/herdr-web-ui/pull/604) by @RikiSanjayaa)
   This server change needs a `REMOTE_BUNDLE_VERSION` bump at release so remote PCs can read Hermes transcripts.
 - **Deep links.** The address now says where you are, and opens there: the PC, the workspace (by id and a short slug of its name, so `?ws=w2K-herdr-web-ui&pane=w2K:p1&view=chat` reads like the place), the pane and its lens, an open file, a Settings page and group (`&settings=about&section=updates`), the New workspace dialog with its fields filled (`?new=workspace&cwd=…&name=…&agent=…`; a link never creates anything), and a collapsed sidebar (`&sidebar=hidden`). Opening another pane is a history entry, so Back returns to the last one. A link to a pane that has closed opens its workspace, a link to nothing open says so, and **Copy link** in the header's More menu copies the address on a phone.
@@ -53,6 +66,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **In-app alerts on a phone.** The alert card (an agent finished, or needs you) took its place
+  from the header's lower edge. On a phone the header is the bar at the bottom of the screen, so
+  the card was drawn under the screen and never seen. It now clears whatever holds the top of the
+  screen: the header, or on a phone the tab strip.
+- Buttons, menu items, sidebar rows and tabs answer a press at once on a touch screen, which has
+  no hover to do it. A phone's keyboard shows **Send** on its Enter key in the chat while Enter
+  sends.
 - When a chat message is not sent because Claude Code's input box in the terminal is not empty,
   the note now says what the box holds, and a one-line draft there can be cleared from the chat
   with Clear it and send. The chat did not show that text, so Send seemed to do nothing until the

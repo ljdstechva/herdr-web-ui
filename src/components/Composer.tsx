@@ -20,6 +20,7 @@ import "./Composer.css";
 import type { AgentStatus, ConversationMetadata, SlashCommand } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { composerDrafts } from "../lib/composerDraft.ts";
+import { outbox } from "../lib/outbox.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import {
   agentDisplayLabel,
@@ -35,6 +36,7 @@ import {
   insertMention,
   MAX_COMPOSER_CHARS,
   rankSlashCommands,
+  type SendQueued,
   submitNote,
   terminalOnlyCommand,
 } from "../lib/compose.ts";
@@ -73,13 +75,16 @@ export interface ComposerProps {
   restored?: string | null;
   /** an empty chat's greeting: it stands over the composer's column and takes no row of its own */
   greeting?: ReactNode;
-  /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
-   * note offers to send again with `clearDraft`, which clears that draft from the terminal first; a
-   * promise settles to any of them */
-  onSend: (text: string, clearDraft?: string) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+  /** true: sent; a SendQueued: taken into the bridge's waiting list, which shows it; false: not sent,
+   * and nothing to say; a string: not sent, and why; a DraftRefusal: the same, and the note offers to
+   * send again with `clearDraft`, which clears that draft from the terminal first; a promise settles
+   * to any of them. The box is cleared as the message leaves, and takes back one that was not sent. */
+  onSend: (text: string, clearDraft?: string) => SendResult | Promise<SendResult>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
+
+export type SendResult = boolean | string | DraftRefusal | SendQueued;
 
 const MAX_IMAGES_PER_ACTION = 4;
 /**
@@ -270,6 +275,11 @@ export function Composer({
   const fileRequest = useRef(0);
   const draftKey = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
+  // messages of this pane on their way (lib/outbox.ts): the chat shows them, the box is already the next one's
+  const outboxOwner = paneStorageId(machineId, paneId);
+  const delivering = useSyncExternalStore(outbox.subscribe, () => outbox.busy(outboxOwner));
+  const onSendRef = useRef(onSend);
+  onSendRef.current = onSend;
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
   const mounted = useRef(true);
   const [caret, setCaret] = useState(text.length);
@@ -318,7 +328,7 @@ export function Composer({
   // cleared: text the user typed or edited over it is their own and stays.
   useEffect(() => {
     if (restored !== null) {
-      if (restored === filledFrom.current || textRef.current.trim() !== "" || sending) return;
+      if (restored === filledFrom.current || textRef.current.trim() !== "" || sending || delivering) return;
       setText(restored);
       textRef.current = restored;
       caretRef.current = restored.length;
@@ -379,6 +389,27 @@ export function Composer({
       for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.previewUrl);
     };
   }, []);
+
+  /** Messages that were not sent return to the box, ahead of what was typed since: they were written first. */
+  const takeBack = useCallback((texts: readonly string[]): void => {
+    const returned = texts.join("\n");
+    if (returned === "") return;
+    composerDrafts.set(draftKey, (current) => current.trim() === "" ? returned : `${returned}\n${current}`);
+    if (!mounted.current) return;
+    const next = composerDrafts.read(draftKey).text;
+    textRef.current = next;
+    caretRef.current = next.length;
+    setCaret(next.length);
+  }, [draftKey]);
+
+  // The page went away (a reload, a phone that dropped it) before the pane answered for a message:
+  // it is back in the box, as it was while the box kept a message until its answer. Not sent again.
+  useEffect(() => {
+    const abandoned = outbox.takeAbandoned(outboxOwner);
+    if (abandoned.length === 0) return;
+    takeBack(abandoned);
+    setNote(t("Not confirmed: the page reloaded before the pane answered for this message. Check the chat before sending it again."));
+  }, [outboxOwner]);
 
   // The app's faces swap in after the first paint (fonts/fonts.css, font-display: swap) and are
   // not as wide as the fallback they replace. No box changes size for that, so nothing else
@@ -700,47 +731,57 @@ export function Composer({
     }
   }, []);
 
-  /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over */
+  /**
+   * Send is felt at once: the box empties for the next message and the chat shows this one as
+   * sending (lib/outbox.ts), while the pane's answer is still on its way. A message that was not
+   * sent comes back to the box with the reason.
+   * `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over
+   */
   const send = useCallback((clearDraft?: string) => {
     if (composingRef.current) return;
     if (!connected || uploading || sending || text.trim().length === 0) return;
     const sent = text;
-    const sentAttachments = attachments;
-    const settle = (result: boolean | string | DraftRefusal): void => {
-      const acknowledged = result === true ? composerDrafts.settle(draftKey, sent) : null;
-      if (!mounted.current) return;
-      if (typeof result !== "boolean") setNote(result);
-      if (acknowledged === null) return;
-      // only what was sent leaves the box: text added after it stays exactly as typed. Changed
-      // inside while on its way, the whole edit stays, and the note says it was not sent
-      const { text: rest, edited } = acknowledged;
-      setCaret(rest.length);
-      textRef.current = rest;
-      caretRef.current = rest.length;
-      setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
-      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
-      setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
-    };
-    if (!composerDrafts.begin(draftKey, sent)) return;
-    // a polish landing before the acknowledgement would count as an edit and keep the sent message here
+    // a polish landing after this would be typed into the next message
     dictation.forget();
-    try {
-      const result = onSend(text, clearDraft);
-      if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
-      void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
-    } catch {
-      composerDrafts.end(draftKey);
-      if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
-    }
-  }, [attachments, connected, dictation.forget, draftKey, onSend, sending, text, uploading]);
+    for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
+    textRef.current = "";
+    caretRef.current = 0;
+    filledFrom.current = null;
+    // one commit, before the pane is asked: the box is empty in the frame the key or tap is answered in
+    flushSync(() => {
+      setText("");
+      setCaret(0);
+      setNote(null);
+      setMenuDismissed(false);
+      setAttachments((current) => current.filter((attachment) => !attachments.includes(attachment)));
+    });
+    outbox.send<string | DraftRefusal | false>(outboxOwner, sent, {
+      deliver: async (message) => {
+        // the composer left with this message still waiting its turn: it goes back, never out later
+        if (!mounted.current) return { ok: false, refusal: false };
+        const result = await onSendRef.current(message, clearDraft);
+        if (result === true) return { ok: true };
+        if (typeof result === "object" && "queued" in result) return { ok: true, queued: true };
+        return { ok: false, refusal: result };
+      },
+      refused: (texts, refusal) => {
+        takeBack(texts);
+        // no answer at all: it may have been typed, and that is said; `false` sent nothing and says nothing
+        if (mounted.current && refusal !== false) setNote(refusal ?? t("Not confirmed. Check the terminal before sending again."));
+      },
+    });
+  }, [attachments, connected, dictation.forget, outboxOwner, sending, setText, takeBack, text, uploading]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
-    if (!connected || sending) return;
+    // after a message still on its way, never beside it
+    if (!connected || sending || outbox.busy(outboxOwner)) return;
     setNote(null);
     // a quick reply is not the box's text, so its note offers no send over a draft
-    const settle = (result: boolean | string | DraftRefusal): void => {
-      if (mounted.current && typeof result !== "boolean") setNote(typeof result === "string" ? result : submitNote("input_draft", result.note));
+    const settle = (result: SendResult): void => {
+      if (!mounted.current || typeof result === "boolean") return;
+      if (typeof result === "string") setNote(result);
+      else if ("note" in result) setNote(submitNote("input_draft", result.note));
     };
     if (!composerDrafts.begin(draftKey)) return;
     try {
@@ -751,7 +792,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [connected, draftKey, onSend, sending]);
+  }, [connected, draftKey, onSend, outboxOwner, sending]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -836,7 +877,7 @@ export function Composer({
   // the name and the level open the agent's own picker, answered as a card (lib/modelPicker.ts)
   const modelCommand = pickerCommand(agent, "model");
   const effortCommand = pickerCommand(agent, "effort");
-  const pickable = connected && !sending && pickerReady(agentStatus);
+  const pickable = connected && !sending && !delivering && pickerReady(agentStatus);
   // a tap on the name: Claude Code asks which picker (its level often does not fit a phone's row), Codex opens its one list
   const openPicker = (anchor: HTMLElement): void => {
     if (!modelCommand) return;
@@ -879,7 +920,7 @@ export function Composer({
               type="button"
               className="composer-quick-reply"
               title={t("Send “{reply}”", { reply })}
-              disabled={!connected || sending}
+              disabled={!connected || sending || delivering}
               onClick={() => sendQuick(reply)}
             >
               {reply}
@@ -1005,6 +1046,8 @@ export function Composer({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
+          // a phone's keyboard draws the key as what it does here (Settings → Chat → Enter sends)
+          enterKeyHint={settings.enterSends ? "send" : "enter"}
           // stays editable while the socket reconnects (sending waits for it): a phone's
           // dictation keyboard opens its own app and comes back, the socket may drop meanwhile,
           // and a disabled box would lose its focus and the dictated text with it

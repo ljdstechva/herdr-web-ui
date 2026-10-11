@@ -18,7 +18,7 @@ import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, restoreDraft, type InputDraft 
 import { messageQueues } from "../lib/messageQueue.ts";
 import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
-import { type DraftRefusal, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, agentDisplayLabel, composerDelivery, composerMessage, composerPayload, submitNote, submitNotTyped, submitRefusal } from "../lib/compose.ts";
+import { MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, SEND_QUEUED, agentDisplayLabel, composerDelivery, composerMessage, composerPayload, submitNote, submitNotTyped, submitRefusal } from "../lib/compose.ts";
 import { afterRead, afterSend, afterSettled, composerLift, greetingMemory, rememberGreeting, greetingFits, greetingFolder, roomOverComposer, showsGreeting, type ChatRead } from "../lib/greeting.ts";
 import { answerFromText, answerHint, answerRefusal, needsConfirmation, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { ApiError, assertAttachable, fetchPaneScroll, fetchPaneSelection, scrollPane } from "../lib/api.ts";
@@ -35,7 +35,7 @@ import { SecretInput } from "./SecretInput.tsx";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
-import { Composer } from "./Composer.tsx";
+import { Composer, type SendResult } from "./Composer.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
@@ -2060,7 +2060,7 @@ export function PaneTerminal({
   }, [greetingDue, paneId]);
 
   const composerSend = useCallback(
-    (text: string, clearDraft?: string): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
+    (text: string, clearDraft?: string): SendResult | Promise<SendResult> => {
       const pane = paneRef.current;
       // Codex's queue open in the terminal holds the input: a message would become the answer
       if (pane !== null && heldByOpenQueue) {
@@ -2072,7 +2072,8 @@ export function PaneTerminal({
         if (choice === null) return answerRefusal(answering);
         if (needsConfirmation(answering, choice)) {
           setPendingAnswer({ pane, promptId: answering.id, answer: choice });
-          return true;
+          // not sent yet: the card shows the pick and asks for Confirm
+          return SEND_QUEUED;
         }
         setPendingAnswer(null);
         return answerPanePrompt({ pane_id: pane, prompt_id: answering.id, ...choice }).then(
@@ -2088,7 +2089,7 @@ export function PaneTerminal({
       // A draft is cleared only by a send at once: one that waits its turn is checked when it goes
       const delivery = composerDelivery(agent, agentStatus);
       const result = submitComposerMessage(text, delivery, delivery === "immediate" ? clearDraft : undefined);
-      return result === null ? false : result.then((answer) => answer.ok ? true : submitRefusal(answer.code, answer.message, answer.draft));
+      return result === null ? false : result.then((answer) => answer.ok ? answer.pending ? SEND_QUEUED : true : submitRefusal(answer.code, answer.message, answer.draft));
     },
     [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, submitComposerMessage, queueStore, machineId],
   );

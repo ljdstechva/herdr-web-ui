@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { CornerDownLeft, SendHorizontal } from "lucide-react";
 
 import "./TerminalInput.css";
-import { readTerminalDraft, writeTerminalDraft, TERMINAL_LINE_LIMIT, subscribeTerminalDraft, terminalDraftSending, setTerminalDraftSending, acknowledgeTerminalDraft } from "../lib/terminalDraft.ts";
+import { readTerminalDraft, writeTerminalDraft, TERMINAL_LINE_LIMIT, subscribeTerminalDraft, terminalDraftSending, setTerminalDraftSending } from "../lib/terminalDraft.ts";
 
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -79,16 +79,19 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
     }
     const sent = onSend(text);
     if (sent === false) { setNote(t("Not sent: the terminal is disconnected.")); return; }
-    // a polish that lands before the acknowledgement would read as text typed meanwhile, and
-    // leave the sent command in the line
+    // a polish that lands after this would be typed into the next line
     dictation.forget();
+    // The line is the next command's at once: the terminal over it shows this one as the pane
+    // takes it. A line the pane did not take comes back, in front of what was typed since.
+    const written = text;
+    setText("");
     setTerminalDraftSending(owner, true);
+    const takeBack = (): void => setText((current) => `${written}${current}`);
     void sent.then((result) => {
-      if (result === true) {
-        // text typed while it was on its way stays
-        acknowledgeTerminalDraft(owner);
-      } else setNote(result);
-    }).catch(() => setNote(t("Not confirmed. Check the terminal before sending again."))).finally(() => { setTerminalDraftSending(owner, false); });
+      if (result === true) return;
+      takeBack();
+      setNote(result);
+    }).catch(() => { takeBack(); setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => { setTerminalDraftSending(owner, false); });
   }, [connected, dictation.forget, onEnter, onSend, owner, setText, t, text]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {

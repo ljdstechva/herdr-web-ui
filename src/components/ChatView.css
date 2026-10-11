@@ -136,6 +136,58 @@
   pointer-events: auto;
 }
 
+/* A message on its way (lib/outbox.ts): the user's bubble as the transcript will draw it, quieter
+   until the pane has it, with how far it has got where its time will stand. Same boxes as a
+   sent turn, so the transcript's own turn takes its place without a move. */
+.chat-outgoing {
+  animation: chat-outgoing-in var(--dur-base) var(--ease-out);
+}
+
+.chat-outgoing .chat-bubble {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.chat-outgoing[data-state="sending"] .chat-bubble {
+  opacity: 0.72;
+}
+
+.chat-outgoing-status {
+  opacity: 1;
+  white-space: nowrap;
+}
+
+.chat-outgoing-status svg {
+  width: var(--fs-sm);
+  height: var(--fs-sm);
+}
+
+.chat-outgoing-dot {
+  flex: 0 0 auto;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
+}
+
+@keyframes chat-outgoing-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-outgoing,
+  .chat-outgoing-dot {
+    animation: none;
+  }
+
+  .chat-outgoing .chat-bubble {
+    transition: none;
+  }
+}
+
 .chat-copy-error,
 .markdown-code-error {
   margin: 0;

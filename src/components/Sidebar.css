@@ -178,6 +178,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   }
 }
 
+/* a touch has no hover: the row answers the press itself (styles.css, .btn:active) */
+.workspace-header:active {
+  background: var(--side-hover);
+}
+
 .workspace-group.is-selected > .workspace-header {
   background: var(--side-selected);
 }

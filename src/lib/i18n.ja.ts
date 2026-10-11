@@ -500,7 +500,6 @@ export const JA: Record<string, string> = {
   // ---- composer ----
   "Reconnecting… message held here, never queued": "再接続しています… メッセージはここに保持され、キューには入りません",
   "Message {agent}…": "{agent} へのメッセージ…",
-  "Sent as it was. Your changes made while it was sending stayed here and were not sent.": "元の内容で送信しました。送信中に加えた変更はここに残っており、送信されていません。",
   "Message composer": "メッセージ入力欄",
   "Model and reasoning": "モデルと推論",
   "Model not available": "モデル情報なし",
@@ -731,6 +730,8 @@ export const JA: Record<string, string> = {
   "Test notification": "テスト通知",
   "Check whether this device can receive push alerts": "このデバイスでプッシュ通知を受け取れるか確認します",
   "Sending…": "送信中…",
+  "Sent": "送信済み",
+  "Not confirmed: the page reloaded before the pane answered for this message. Check the chat before sending it again.": "未確認: ペインがこのメッセージに応答する前にページが再読み込みされました。再送信する前にチャットを確認してください。",
   "Send test": "テスト送信",
   "Push alerts need HTTPS or localhost, and on iPhone the home-screen app.": "プッシュ通知には HTTPS または localhost が必要です。iPhone ではホーム画面に追加したアプリを使ってください。",
   "Allow notifications in your browser settings, then try again.": "ブラウザーの設定で通知を許可してから、もう一度お試しください。",

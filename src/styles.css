@@ -1164,6 +1164,14 @@ button {
   }
 }
 
+/* A touch screen has no hover, so the press is the answer: the control takes its hover look in
+   the frame the finger lands, before whatever the tap opens has been drawn. The same for a
+   mouse, between the button going down and coming up. */
+.btn:active:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
 .btn:disabled {
   opacity: 0.55;
   cursor: default;
@@ -1182,6 +1190,11 @@ button {
   }
 }
 
+.btn-primary:active:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
 .btn-danger {
   background: var(--danger-tint);
   border-color: var(--status-blocked);
@@ -1198,6 +1211,10 @@ button {
   .btn-ghost:hover:not(:disabled) {
     border-color: transparent;
   }
+}
+
+.btn-ghost:active:not(:disabled) {
+  border-color: transparent;
 }
 
 /* fingers: the header controls grow to the touch target; the header still fits them */
@@ -1335,6 +1352,10 @@ button {
 .segmented > button svg {
   width: 15px;
   height: 15px;
+}
+
+.segmented > button:active {
+  color: var(--text-strong);
 }
 
 .segmented > button[aria-pressed="true"] {
@@ -1539,6 +1560,11 @@ button {
     background: var(--bg-hover);
     color: var(--text-strong);
   }
+}
+
+.menu-item:active {
+  background: var(--bg-hover);
+  color: var(--text-strong);
 }
 
 .menu-item-main {

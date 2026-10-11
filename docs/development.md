@@ -84,6 +84,8 @@ bun scripts/sticky-modifiers-regression.ts # mobile held keys through real legac
 bun scripts/key-bar-customization-demo-regression.ts # mobile key layout, saved combinations and migration on demo fixtures
 bun scripts/key-bar-hold-repeat-regression.ts # phone touch-arrow taps, holds, swipes and sticky Ctrl on demo fixtures
 bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px and a 320px phone, and Back stepping out of the dialog
+bun scripts/instant-send-demo-regression.ts # chat Send on a slow bridge: instant box and bubble, order, refusal, reload, on demo fixtures
+bun scripts/tab-swipe-demo-regression.ts # phone tab swipe with browser-dispatched touches on demo fixtures
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
 bun scripts/math-browser-qa.ts  # chat math: KaTeX loads with the first expression

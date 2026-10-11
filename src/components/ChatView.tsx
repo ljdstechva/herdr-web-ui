@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target,
@@ -31,7 +31,8 @@ import { useFacesArrived } from "../lib/fontFaces.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { patchText } from "../../shared/patch.ts";
 import { toolVerb } from "../lib/toolVerbs.ts";
-import { machinePath } from "../../shared/machines.ts";
+import { machinePath, paneStorageId } from "../../shared/machines.ts";
+import { outbox, sentBaseline, transcriptHolds, type OutgoingMessage, type SentBaseline } from "../lib/outbox.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { lineDiff } from "../lib/diff.ts";
@@ -540,6 +541,37 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: T
   </article>;
 });
 
+const NO_PARTS: ConversationPart[] = [];
+/**
+ * What the transcript held when each message on its way appeared (lib/outbox.ts sentBaseline), by
+ * the message's id. Kept beside the outbox, not in a chat: a chat left and shown again while a
+ * message is still on its way (the terminal lens and back) must not count the transcript anew,
+ * with the message's own turn already in it.
+ */
+const sentBaselines = new Map<string, SentBaseline>();
+/** the text of a user's turn, as the composer sent it */
+const userTurnText = (turn: ConversationTurn): string =>
+  turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n");
+
+/**
+ * A message on its way (lib/outbox.ts): the bubble the transcript will draw for it, and where its
+ * time will stand, how far it has got. The transcript's own turn takes its place without a move.
+ */
+const OutgoingTurn = memo(function OutgoingTurn({ paneId, message }: { paneId: string; message: OutgoingMessage }) {
+  const t = useT();
+  const sent = message.state === "sent";
+  return <article className="chat-turn chat-turn-user chat-outgoing" data-state={message.state}>
+    <UserImages paneId={paneId} parts={NO_PARTS} text={message.text} />
+    <div className="chat-user-row">
+      <div className="chat-bubble"><Markdown>{message.text}</Markdown></div>
+      <div className="chat-turn-meta chat-outgoing-status">
+        {sent ? <Check aria-hidden="true" /> : <span className="chat-outgoing-dot" aria-hidden="true" />}
+        <span>{t(sent ? "Sent" : "Sending…")}</span>
+      </div>
+    </div>
+  </article>;
+});
+
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
@@ -549,8 +581,18 @@ function FallbackTurn({ paneId, message }: { paneId: string; message: Transcript
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
 export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
-  const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
+  const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript, peekPaneConversation } = useMachineApi();
+  // The conversation as this page last read it (lib/api.ts keeps the answer for its 304s): a chat
+  // opened again, from another pane or back from the terminal lens, draws it at once and reads
+  // behind it, where it used to stand empty on a loading line until the first answer came.
+  const [seed] = useState(() => {
+    const known = peekPaneConversation(paneId);
+    return known !== null && known.source !== "scrollback" ? known : null;
+  });
   const { settings } = useSettings();
+  // this pane's messages on their way: drawn under the transcript until it holds them itself
+  const outboxOwner = paneStorageId(useMachineId(), paneId);
+  const outgoing = useSyncExternalStore(outbox.subscribe, () => outbox.read(outboxOwner));
   // polls pause while the page is hidden and pick up at once when it is back
   const visible = usePageVisible();
   /** the answer last laid out: an unchanged poll (a 304) hands back this very object */
@@ -558,14 +600,19 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   const [conversationRefresh] = useState(() => new ConversationRefresh());
   const onMetadataRef = useRef(onMetadata);
   onMetadataRef.current = onMetadata;
-  const [state, setState] = useState<ChatState>(EMPTY_STATE);
+  const [seeded] = useState<{ state: ChatState; signature: string } | null>(() => {
+    if (seed === null) return null;
+    const state: ChatState = { source: "conversation", conversationSource: seed.source, turns: seed.turns, messages: [], truncated: false };
+    return { state, signature: JSON.stringify(state) };
+  });
+  const [state, setState] = useState<ChatState>(seeded?.state ?? EMPTY_STATE);
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [newMessages, setNewMessages] = useState(false);
   /** scrolled up from the end: the way back is offered even when nothing new came */
   const [away, setAway] = useState(false);
   /** an answer for this pane arrived (or failed): until then, and while a replaced history is read again, an empty chat is only loading */
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(seed !== null);
   const [prompt, setPrompt] = useState<InteractivePrompt | null>(null);
   // Each prompt that appears is an occurrence of its own, and gets a card of its own. The prompt's
   // id is a hash of what it says, so the same question asked twice shares it: the read below keeps
@@ -574,7 +621,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   if (prompt !== null && promptOccurrence.current.of !== prompt) promptOccurrence.current = { of: prompt, count: promptOccurrence.current.count + 1 };
   // turns the transcript holds on a path /tree walked away from: no page can reach them, so the
   // only way to say they exist is to be told, and to say it where the reader would look for them
-  const [abandoned, setAbandoned] = useState<{ count: number; branches: number; summary: string | null } | null>(null);
+  const [abandoned, setAbandoned] = useState<{ count: number; branches: number; summary: string | null } | null>(seed?.abandoned ?? null);
   // the suggestion is handed up from each read, with the pane that read it: never kept here,
   // where a pane switch or a send upstream could leave it stale
   const onSuggestionRef = useRef(onSuggestion);
@@ -590,19 +637,19 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   const [promptPollKey, setPromptPollKey] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
-  const signature = useRef("");
+  const signature = useRef(seeded?.signature ?? "");
   // Older pages sit above the newest one. Once any shows, the newest page is
   // polled from its start at that moment, so the two always meet.
   const [older, setOlder] = useState<ConversationTurn[]>([]);
   /** the page before everything shown; null at the conversation's beginning, undefined when unknown */
-  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined);
+  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(seed?.cursor);
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
   const heldFrom = useRef<string | null>(null);
   const loadingOlder = useRef(false);
   /** bumped whenever the older pages are dropped: a load still in flight for them is ignored */
   const olderGeneration = useRef(0);
-  const history = useRef<string | undefined>(undefined);
-  const [historyId, setHistoryId] = useState<string | undefined>(undefined);
+  const history = useRef<string | undefined>(seed?.history_id);
+  const [historyId, setHistoryId] = useState<string | undefined>(seed?.history_id);
   const shownPane = useRef(paneId);
   const prepended = useRef<{ top: number; height: number } | null>(null);
   const [pollKey, setPollKey] = useState(0);
@@ -624,7 +671,16 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     heldFrom.current = null; prepended.current = null; setOlder([]); setOlderCursor(undefined); setOlderState("idle");
   };
 
+  // the composer's model line comes with the seeded conversation, not one read later
   useEffect(() => {
+    if (seed !== null) onMetadataRef.current?.(paneId, seed.metadata ?? null);
+  }, []);
+
+  const mountedPane = useRef(paneId);
+  useEffect(() => {
+    // the pane this chat was mounted for starts as seeded above; only another pane starts over
+    if (mountedPane.current === paneId) return;
+    mountedPane.current = "";
     shownPane.current = paneId;
     history.current = undefined; setHistoryId(undefined);
     stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setAway(false); setLoaded(false); setError(null); setErrorStatus(null); setPrompt(null); setAbandoned(null); setRestored(null);
@@ -935,6 +991,38 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     const sent = last.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n");
     return sameMessage(sent, restored) ? turns.slice(0, -1) : turns;
   }, [turns, restored]);
+  // A message on its way is drawn until the transcript holds it (lib/outbox.ts transcriptHolds):
+  // then the transcript's own turn is the message. Only what the user wrote counts: a runtime's
+  // notice or a compaction is a user turn with no text of theirs.
+  const userTexts = useMemo(() => (state.source === "conversation"
+    ? turns.filter((turn) => turn.role === "user").map(userTurnText)
+    : state.messages.filter((message) => message.role === "user").map((message) => message.text)).filter((text) => text.trim() !== ""), [state.source, state.messages, turns]);
+  const inTranscript = (message: OutgoingMessage): boolean => {
+    const baseline = sentBaselines.get(message.id);
+    return baseline !== undefined && transcriptHolds(message, baseline, userTexts);
+  };
+  const outgoingShown = outgoing.filter((message) => !message.seen && !inTranscript(message));
+  // counted once, with the transcript as it stood when the message appeared; never while it is unread
+  useLayoutEffect(() => {
+    const known = sentBaselines;
+    // other panes' messages are in here too: only a long list is cut, to those still on their way here
+    if (known.size > 64) for (const id of [...known.keys()]) if (!outgoing.some((message) => message.id === id)) known.delete(id);
+    outgoing.forEach((message, index) => {
+      if (message.seen) return;
+      if (!known.has(message.id)) { if (loaded && error === null) known.set(message.id, sentBaseline(outgoing, index, userTexts)); }
+      else if (inTranscript(message)) outbox.markSeen(outboxOwner, message.id);
+    });
+  });
+  // the reader's own message is always brought into view, wherever they had scrolled to
+  const newestOutgoing = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const newest = outgoing[outgoing.length - 1]?.id ?? null;
+    const arrived = newest !== null && newest !== newestOutgoing.current;
+    newestOutgoing.current = newest;
+    if (arrived) { stickToBottom.current = true; setNewMessages(false); setAway(false); }
+    const node = scroller.current;
+    if (node !== null && stickToBottom.current) node.scrollTop = node.scrollHeight;
+  }, [outgoing]);
   heldPage.current = state.turns;
   const finishedBeforeSend = sentOver !== null && sentOver.page === state.turns ? sentOver.turn : null;
   const empty = state.source === "conversation" ? turns.length === 0 : state.messages.length === 0;
@@ -983,10 +1071,11 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         : agent !== null
           ? <details className="chat-terminal-fallback"><summary>{t("Conversation unavailable — show terminal output")}</summary><pre>{state.messages.map((message) => message.text).join("\n\n")}</pre></details>
           : state.messages.map((message, index) => <FallbackTurn key={index} paneId={paneId} message={message} />)}
+      {outgoingShown.map((message) => <OutgoingTurn key={message.id} paneId={paneId} message={message} />)}
       {!ended && !connected && <p className="chat-inline-state" role="status">{t("Reconnecting…")}</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? t("locked — the token gate is asking again") : error}</p>}
       {!loaded && error === null && <p className="chat-inline-state" role="status">{t("Loading conversation…")}</p>}
-      {loaded && empty && error === null && prompt === null && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
+      {loaded && empty && outgoingShown.length === 0 && error === null && prompt === null && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
     </div>
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>

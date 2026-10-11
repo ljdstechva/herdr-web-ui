@@ -109,6 +109,8 @@
   .agent-row:enabled:hover { background: var(--side-hover); }
 }
 
+.agent-row:enabled:active { background: var(--side-hover); }
+
 .agent-item.is-selected > .agent-row { background: var(--side-selected); }
 
 .agent-copy {

@@ -204,12 +204,14 @@ try {
             transform: getComputedStyle(composer).transform,
             animations: composer.getAnimations().length,
             gap: Math.abs(composer.getBoundingClientRect().bottom - document.querySelector(".terminal-stack")!.getBoundingClientRect().bottom),
-            turns: document.querySelectorAll(".chat-turn").length,
+            turns: document.querySelectorAll(".chat-turn:not(.chat-outgoing)").length,
+            outgoing: [...document.querySelectorAll(".chat-outgoing")].map((node) => node.getAttribute("data-state")),
             status: document.querySelector(".composer-status")!.getAttribute("data-status"),
           };
         });
         assert.equal(sent.held, 1, "the message is on its way and nothing answered it");
         assert.equal(sent.turns, 0);
+        assert.deepEqual(sent.outgoing, ["sending"], "the chat shows it as on its way, in the frame of the send");
         assert.notEqual(sent.status, "working");
         assert.equal(sent.greetings, 0, `the greeting goes with the send itself: ${JSON.stringify(sent)}`);
         assert.equal(sent.transform, "none");
@@ -224,8 +226,10 @@ try {
         await page.locator(".terminal-stack:not(.is-chat)").waitFor();
         await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
         await page.locator(".terminal-stack.is-chat").waitFor();
-        await page.locator(".chat-empty").waitFor();
-        assert.equal(await page.locator(".chat-turn").count(), 0);
+        // the message is still on its way: the chat shows it again, not its empty line
+        await page.locator('.chat-outgoing[data-state="sending"]').waitFor();
+        assert.equal(await page.locator(".chat-empty").count(), 0);
+        assert.equal(await page.locator(".chat-turn:not(.chat-outgoing)").count(), 0);
         assert.equal(await page.locator(".composer-greeting").count(), 0, "the greeting does not return after a send");
         assert.equal((await geometryOf(page)).transform, "none");
         console.log("PASS the greeting does not return when the chat is left and shown again after a send");
@@ -236,7 +240,9 @@ try {
           page.heldSubmits = null;
           for (const send of held) send();
         });
-        await page.locator(".chat-turn").first().waitFor({ timeout: 8_000 });
+        await page.locator(".chat-turn:not(.chat-outgoing)").first().waitFor({ timeout: 8_000 });
+        await page.locator(".chat-outgoing").waitFor({ state: "detached", timeout: 12_000 });
+        assert.equal(await page.locator(".chat-turn-user .chat-bubble").count(), 1, "the transcript's turn stands for the message, once");
         assert.equal(await page.locator(".composer-greeting").count(), 0);
         assert.deepEqual(errors, []);
         console.log("PASS the message arrives and the conversation shows it, with no greeting");

@@ -241,6 +241,15 @@ function trimConversationAnswers(keep: string): void {
   }
 }
 
+/**
+ * The pane's newest page as this page last read it, or null: what a chat opened again (another
+ * pane and back, the terminal lens and back) draws at once while it reads behind it. Never a
+ * substitute for the read: it may be as old as the pane's last visit.
+ */
+export function peekPaneConversation(paneId: string, machineId = "local"): ConversationResponse | null {
+  return conversationAnswers.get(machinePath(machineId, `pane/conversation?${new URLSearchParams({ pane_id: paneId }).toString()}`))?.body ?? null;
+}
+
 /** GET /api/pane/conversation: structured turns, or scrollback fallback; `page` as ConversationResponse.cursor describes. */
 export async function fetchPaneConversation(paneId: string, machineId = "local", page: ConversationPageQuery = {}): Promise<ConversationResponse> {
   const query = new URLSearchParams({ pane_id: paneId });

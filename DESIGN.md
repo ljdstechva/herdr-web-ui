@@ -638,6 +638,13 @@ One set for both themes: the card is island black wherever it shows.
   when a neighbouring position exists. Desktop tabs have no close or dropdown buttons. Touch and narrow layouts show a `⋯` beside
   the selected tab for the same menu; Shift+F10 or the menu key opens it from a focused tab.
   Pane actions are not tab actions.
+- On a touch screen a sideways stroke over the pane opens the tab beside the open one
+  (`src/lib/tabSwipe.ts`). The canvas follows the finger 40% of the way (12% where no tab lies
+  that way) and a pill (`--bg-elevated`, hairline, `--radius-pill`, `--fs-sm`) names the tab it is
+  going to at the edge that tab comes from, coming in with the stroke; from 64px, or a quick
+  flick, the pill takes `--accent` on its edge and `--text-strong`, and letting go opens the tab,
+  which comes in over `--dur-base` from that edge. Short of it the canvas goes back over
+  `--dur-base`. Reduced motion keeps the pill and drops the movement.
 - Mouse dragging previews an accent insertion line, with edge scrolling for an overflowing strip.
   The snapshot's tab order is authoritative: a tab's stable `number` is not its place. A drop calls
   `tab.move` with an insertion boundary before removal, within that workspace and PC. The visible
@@ -748,6 +755,11 @@ One set for both themes: the card is island black wherever it shows.
   text button in the regular weight beside it. Otherwise the answer keeps two labelled buttons,
   glyph + MD and glyph + TXT; where the primary pointer is coarse each is a `--touch-target` target on a
   one-line row, as is a user turn's copy, and a skill list under a user turn clears that target.
+- A message on its way (`.chat-outgoing`, `src/lib/outbox.ts`) is the user turn's own card, at
+  72% opacity until the pane has it, entering with a `--dur-base` rise of `--space-2`. Where its
+  time will stand it says how far it has got, always visible: a `--dot-size` dot on the shared
+  `pulse` and **Sending…**, then a check and **Sent**. It keeps the sent turn's boxes, so the
+  transcript's turn takes its place without a move. Reduced motion drops the rise and the pulse.
 - Markdown supports headings, lists (a task item `- [x]` / `- [ ]` shows a checked or empty box in
   place of its bullet, not clickable), links, quotes, tables, inline/fenced code and code-copy
   actions.

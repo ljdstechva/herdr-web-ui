@@ -40,6 +40,13 @@ export function submitNotTyped(code: string): boolean {
 /** A send refused over a one-row draft in Claude's terminal input box: the note, and the draft a send may clear first. */
 export interface DraftRefusal { note: string; draft: string }
 
+/**
+ * A send that is not in the pane yet and is shown where it waits: in the bridge's own waiting
+ * list (PendingMessages), or in the prompt card as a pick that asks for Confirm.
+ */
+export interface SendQueued { queued: true }
+export const SEND_QUEUED: SendQueued = Object.freeze({ queued: true as const });
+
 /** submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`). */
 export function submitRefusal(code: string, message: string, draft?: string): string | DraftRefusal {
   if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };

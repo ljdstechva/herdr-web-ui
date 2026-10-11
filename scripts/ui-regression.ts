@@ -1071,26 +1071,30 @@ try {
   assert.equal(await composer.inputValue(), "draft for A");
   console.log("PASS drafts stay with their panes");
 
-  // A real successful send waits on its acknowledgement while its composer unmounts.
+  // A send leaves the box at once and is shown as on its way (src/lib/outbox.ts); its
+  // acknowledgement settles it while its composer is unmounted, and never touches what was typed since.
   for (const returnBeforeAck of [false, true]) {
     await composer.fill("# confirmed draft");
     holdSubmitResult = true;
     await page.getByRole("button", { name: "Send message", exact: true }).click();
+    assert.equal(await composer.inputValue(), "", "the box is the next message's as soon as Send is pressed");
+    await page.locator('.chat-outgoing[data-state="sending"]').waitFor();
     await until(() => releaseSubmitResult !== null, "held submit acknowledgement");
     await selectPane(paneB);
     assert.equal(await composer.inputValue(), "draft for B");
     if (returnBeforeAck) {
       await selectPane(paneA);
-      assert.equal(await page.getByRole("button", { name: "Send message", exact: true }).isDisabled(), true);
-      await composer.fill("# confirmed draft plus unsent text");
+      await page.locator('.chat-outgoing[data-state="sending"]').waitFor();
+      await composer.fill("typed while it was on its way");
     }
     releaseSubmitResult!();
     if (!returnBeforeAck) await selectPane(paneA);
-    await until(async () => await composer.inputValue() === (returnBeforeAck ? " plus unsent text" : ""), "only acknowledged text leaves the draft");
+    await until(async () => await page.locator('.chat-outgoing[data-state="sending"]').count() === 0, "the acknowledgement settles the message on its way");
+    assert.equal(await composer.inputValue(), returnBeforeAck ? "typed while it was on its way" : "", "what was typed meanwhile stays as typed");
   }
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "composer-acknowledged-draft.png") });
   await composer.fill("draft for A");
-  console.log("PASS successful sends settle after switching panes and preserve edits made after returning");
+  console.log("PASS a send leaves the box at once, settles after switching panes and leaves what was typed meanwhile alone");
 
   let releaseImage!: () => void;
   const imageGate = new Promise<void>((resolve) => { releaseImage = resolve; });
