@@ -10,7 +10,10 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstat, readFile, realpath, rmdir, unlink } from "node:fs/promises";
+import { run, type CommandResult } from "./vps-command.ts";
+import { capturePath, directory, isDirectory, oldFiles, ScanBudget, ScanStopped, validateEntry, validatePath, type PathPlan } from "./vps-doctor-files.ts";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, normalize } from "node:path";
 
@@ -48,83 +51,20 @@ export interface DoctorContext {
   /** the user's home; tests point it elsewhere */
   home?: string;
   codexHome?: string;
+  /** Test fixtures remap system scan locations; unset uses the host paths. */
+  systemRoot?: string;
+  command?: typeof run;
+  scanTimeoutMs?: number;
+  scanEntryLimit?: number;
+  now?: () => number;
   /** starts an agent in a pane herdr just made (index.ts `agentLaunch`) */
   launchAgent(paneId: string, agent: { kind: string; args: string[] }): Promise<{ agent_started: boolean; error?: { code: string; message: string } }>;
-}
-
-interface CommandResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-/** A bounded child process; a missing program answers code null rather than throwing. */
-export async function run(argv: string[], timeoutMs = 60_000): Promise<CommandResult> {
-  let child: ReturnType<typeof Bun.spawn>;
-  try {
-    child = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, LC_ALL: "C" } });
-  } catch (error) {
-    return { code: null, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
-  }
-  const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout as ReadableStream).text(),
-      new Response(child.stderr as ReadableStream).text(),
-      child.exited,
-    ]);
-    return { code, stdout, stderr };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Sizes the `du` CLI measures, keyed by path; what it cannot read counts what it could. */
-async function du(paths: string[], root: boolean): Promise<Map<string, number>> {
-  const sizes = new Map<string, number>();
-  for (let start = 0; start < paths.length; start += 200) {
-    const chunk = paths.slice(start, start + 200);
-    const result = await run([...(root ? ["sudo", "-n"] : []), "du", "-sb", "--", ...chunk], 120_000);
-    for (const line of result.stdout.split("\n")) {
-      const tab = line.indexOf("\t");
-      if (tab > 0) sizes.set(line.slice(tab + 1), Number(line.slice(0, tab)));
-    }
-  }
-  return sizes;
 }
 
 function sum(sizes: Map<string, number>): number {
   let total = 0;
   for (const value of sizes.values()) total += value;
   return total;
-}
-
-function listDir(path: string): string[] {
-  try { return readdirSync(path); } catch { return []; }
-}
-
-function isDir(path: string): boolean {
-  try { return lstatSync(path).isDirectory(); } catch { return false; }
-}
-
-/** Regular files under `root` last written before `cutoff`, with their sizes. */
-function oldFiles(root: string, cutoff: number, keep: (path: string) => boolean = () => true, limit = 200_000): { paths: string[]; bytes: number } {
-  const paths: string[] = [];
-  let bytes = 0;
-  const walk = (dir: string, depth: number): void => {
-    if (depth > 12 || paths.length >= limit) return;
-    for (const name of listDir(dir)) {
-      const path = join(dir, name);
-      let stats;
-      try { stats = lstatSync(path); } catch { continue; }
-      if (stats.isDirectory()) { if (keep(path)) walk(path, depth + 1); continue; }
-      if (!stats.isFile() || stats.mtimeMs >= cutoff || !keep(path)) continue;
-      paths.push(path);
-      bytes += stats.size;
-    }
-  };
-  walk(root, 0);
-  return { paths, bytes };
 }
 
 /** Parses the sizes docker prints ("502.4MB", "1.2GB", "0B"). */
@@ -158,8 +98,10 @@ function underAny(path: string, prefixes: readonly string[]): boolean {
 }
 
 type Plan =
-  | { kind: "paths"; paths: string[]; root: boolean }
+  | { kind: "paths"; paths: PathPlan[]; root: boolean }
   | { kind: "commands"; commands: string[][]; root: boolean };
+
+export const SCAN_TTL_MS = 30 * 60_000;
 
 interface StoredScan {
   at: number;
@@ -181,18 +123,34 @@ export class VpsDoctor {
   private readonly home: string;
   private readonly codexHome: string;
   private scans = new Map<string, StoredScan>();
+  private scanFlight: { days: number; promise: Promise<DiskScan> } | null = null;
+  private cleanFlight: { key: string; promise: Promise<DiskCleanResult> } | null = null;
+  private readonly now: () => number;
   private rootChecked: { at: number; ok: boolean } | null = null;
 
   constructor(private readonly ctx: DoctorContext) {
+    this.now = ctx.now ?? Date.now;
     this.home = ctx.home ?? homedir();
     this.codexHome = ctx.codexHome ?? process.env["CODEX_HOME"] ?? join(this.home, ".codex");
   }
 
   /** Whether `sudo` runs without asking for a password (checked at most every five minutes). */
-  async root(): Promise<boolean> {
-    if (this.rootChecked && Date.now() - this.rootChecked.at < 5 * 60_000) return this.rootChecked.ok;
-    const ok = (await run(["sudo", "-n", "true"], 10_000)).code === 0;
-    this.rootChecked = { at: Date.now(), ok };
+  private system(path: string): string { return this.ctx.systemRoot ? join(this.ctx.systemRoot, path.slice(1)) : path; }
+
+  private async command(argv: string[], timeoutMs: number, work?: ScanBudget): Promise<CommandResult> {
+    const result = await (this.ctx.command ?? run)(argv, work ? Math.min(timeoutMs, work.remaining()) : timeoutMs, work?.controller.signal);
+    if (work) {
+      work.check();
+      if (result.timedOut) throw new ScanStopped("scan_timeout");
+      if (result.truncated) throw new ScanStopped("scan_limit");
+    }
+    return result;
+  }
+
+  async root(work?: ScanBudget): Promise<boolean> {
+    if (this.rootChecked && this.now() - this.rootChecked.at < 5 * 60_000) return this.rootChecked.ok;
+    const ok = (await this.command(["sudo", "-n", "true"], 10_000, work)).code === 0;
+    this.rootChecked = { at: this.now(), ok };
     return ok;
   }
 
@@ -268,13 +226,61 @@ export class VpsDoctor {
 
   // ── disk ────────────────────────────────────────────────────────────────────────────────
 
-  async scanDisk(olderThanDays: number): Promise<DiskScan> {
+  scanDisk(olderThanDays: number): Promise<DiskScan> {
     const days = Number.isInteger(olderThanDays) && olderThanDays >= 1 && olderThanDays <= 3650 ? olderThanDays : 30;
-    const root = await this.root();
-    const cutoff = Date.now() - days * 86_400_000;
+    if (this.cleanFlight || (this.scanFlight && this.scanFlight.days !== days)) return Promise.reject(new DoctorError("doctor_busy", "Another disk operation is running. Try again when it finishes.", 409));
+    if (this.scanFlight) return this.scanFlight.promise;
+    const promise = Promise.resolve().then(async () => {
+      const work = new ScanBudget(this.ctx.scanTimeoutMs, this.ctx.scanEntryLimit);
+      try { return await this.performScan(days, work); }
+      catch (error) { if (error instanceof ScanStopped) throw new DoctorError(error.code, error.message, error.code === "scan_timeout" ? 408 : 409); throw error; }
+      finally { work.close(); }
+    }).finally(() => { this.scanFlight = null; });
+    this.scanFlight = { days, promise };
+    return promise;
+  }
+
+  private async du(paths: string[], root: boolean, work: ScanBudget): Promise<Map<string, number>> {
+    const sizes = new Map<string, number>();
+    for (let start = 0; start < paths.length; start += 200) {
+      const result = await this.command([...(root ? ["sudo", "-n"] : []), "du", "-sb", "--", ...paths.slice(start, start + 200)], 120_000, work);
+      for (const line of result.stdout.split("\n")) {
+        work.check();
+        const tab = line.indexOf("\t");
+        const size = Number(line.slice(0, tab));
+        if (tab > 0 && Number.isFinite(size) && size >= 0) sizes.set(line.slice(tab + 1), size);
+      }
+    }
+    return sizes;
+  }
+
+  private async directories(paths: string[], work: ScanBudget): Promise<string[]> {
+    const result: string[] = [];
+    for (const path of paths) { work.check(); if (await isDirectory(path)) result.push(path); }
+    work.check();
+    return result;
+  }
+
+  private async performScan(days: number, work: ScanBudget): Promise<DiskScan> {
+    const root = await this.root(work);
+    const cutoff = this.now() - days * 86_400_000;
     const candidates: DiskCandidate[] = [];
     const plans = new Map<string, Plan>();
-    const add = (candidate: Omit<DiskCandidate, "selected"> & { selected?: boolean }, plan: Plan): void => {
+    const add = async (candidate: Omit<DiskCandidate, "selected"> & { selected?: boolean }, proposed: { kind: "paths"; paths: string[]; root: boolean; cutoff?: number } | Extract<Plan, { kind: "commands" }>): Promise<void> => {
+      work.check();
+      let plan: Plan;
+      if (proposed.kind === "paths") {
+        const paths: PathPlan[] = [];
+        for (const path of proposed.paths) {
+          work.check();
+          if (!this.deletable(path, proposed.root)) continue;
+          const captured = await capturePath(path, work, proposed.cutoff);
+          if (captured) paths.push(captured);
+        }
+        if (!paths.length) return;
+        plan = { kind: "paths", paths, root: proposed.root };
+        candidate.bytes = paths.reduce((total, path) => total + path.entries.reduce((size, entry) => size + entry.size, 0), 0);
+      } else plan = proposed;
       if (candidate.bytes !== null && candidate.bytes <= 0) return;
       candidates.push({ ...candidate, selected: candidate.selected ?? candidate.risk === "safe" });
       plans.set(candidate.id, plan);
@@ -282,22 +288,23 @@ export class VpsDoctor {
     const home = this.home;
     const own = this.ctx.monitor.reader.ownUid();
 
-    const [folders, large] = await Promise.all([this.bigFolders(root), this.largeFiles(root)]);
+    const folders = await this.bigFolders(root, work);
+    const large = await this.largeFiles(root, work);
 
     // ── system (root) ──
-    if (existsSync("/var/cache/apt")) {
-      const size = sum(await du(["/var/cache/apt/archives"], false));
-      add({ id: "apt-cache", group: "system", label: "Package downloads (apt cache)", detail: "Installer files apt keeps after installing. apt downloads them again if it needs them.", bytes: size, risk: "safe", root: true, preview: ["apt-get clean"] },
+    if (await isDirectory(this.system("/var/cache/apt"))) {
+      const size = sum(await this.du([this.system("/var/cache/apt/archives")], false, work));
+      await add({ id: "apt-cache", group: "system", label: "Package downloads (apt cache)", detail: "Installer files apt keeps after installing. apt downloads them again if it needs them.", bytes: size, risk: "safe", root: true, preview: ["apt-get clean"] },
         { kind: "commands", commands: [["apt-get", "clean"]], root: true });
     }
     if (Bun.which("journalctl")) {
-      const usage = parseJournalUsage((await run([...(root ? ["sudo", "-n"] : []), "journalctl", "--disk-usage"], 30_000)).stdout);
-      add({ id: "journal", group: "system", label: "Old system logs (journal)", detail: `Keeps the newest ${formatBytes(JOURNAL_KEEP_BYTES)} of system logs and drops older entries.`, bytes: Math.max(0, usage - JOURNAL_KEEP_BYTES), risk: "safe", root: true, preview: ["journalctl --vacuum-size=200M"] },
+      const usage = parseJournalUsage((await this.command([...(root ? ["sudo", "-n"] : []), "journalctl", "--disk-usage"], 30_000, work)).stdout);
+      await add({ id: "journal", group: "system", label: "Old system logs (journal)", detail: `Keeps the newest ${formatBytes(JOURNAL_KEEP_BYTES)} of system logs and drops older entries.`, bytes: Math.max(0, usage - JOURNAL_KEEP_BYTES), risk: "safe", root: true, preview: ["journalctl --vacuum-size=200M"] },
         { kind: "commands", commands: [["journalctl", "--vacuum-size=200M"]], root: true });
     }
     if (Bun.which("docker")) {
       const prefix = root ? ["sudo", "-n"] : [];
-      const df = await run([...prefix, "docker", "system", "df", "--format", "{{json .}}"], 60_000);
+      const df = await this.command([...prefix, "docker", "system", "df", "--format", "{{json .}}"], 60_000, work);
       let build = 0;
       for (const line of df.stdout.split("\n")) {
         try {
@@ -305,116 +312,122 @@ export class VpsDoctor {
           if (row.Type === "Build Cache" && row.Reclaimable) build += parseDockerSize(row.Reclaimable);
         } catch { /* not a row */ }
       }
-      const dangling = await run([...prefix, "docker", "images", "-f", "dangling=true", "--format", "{{.Size}}"], 60_000);
+      const dangling = await this.command([...prefix, "docker", "images", "-f", "dangling=true", "--format", "{{.Size}}"], 60_000, work);
       const images = dangling.stdout.split("\n").filter(Boolean).reduce((total, size) => total + parseDockerSize(size), 0);
-      add({ id: "docker", group: "system", label: "Docker build cache and untagged images", detail: "Leftover layers from builds. Tagged images, containers and volumes are kept.", bytes: build + images, risk: "safe", root: true, preview: ["docker image prune -f", "docker builder prune -f"] },
+      await add({ id: "docker", group: "system", label: "Docker build cache and untagged images", detail: "Leftover layers from builds. Tagged images, containers and volumes are kept.", bytes: build + images, risk: "safe", root: true, preview: ["docker image prune -f", "docker builder prune -f"] },
         { kind: "commands", commands: [["docker", "image", "prune", "-f"], ["docker", "builder", "prune", "-f"]], root: true });
     }
     {
-      const tmpCutoff = Date.now() - TMP_DAYS * 86_400_000;
-      const keep = (path: string): boolean => !TMP_SKIP.some((skip) => path.startsWith(skip));
-      const files = [oldFiles("/tmp", tmpCutoff, keep), oldFiles("/var/tmp", tmpCutoff, keep)];
-      // only this user's files: the rest belong to services that may still want them
-      const mine = files.flatMap((found) => found.paths).filter((path) => { try { return lstatSync(path).uid === own; } catch { return false; } });
-      let bytes = 0;
-      for (const path of mine) { try { bytes += lstatSync(path).size; } catch { /* gone */ } }
-      add({ id: "tmp-old", group: "system", label: `Temporary files older than ${TMP_DAYS} days`, detail: "Your files in /tmp and /var/tmp nobody has written for a week.", bytes, risk: "safe", root: false, preview: mine.slice(0, 5) },
-        { kind: "paths", paths: mine, root: false });
+      const tmpCutoff = this.now() - TMP_DAYS * 86_400_000;
+      const keep = (path: string, stat: import("node:fs").Stats): boolean => !TMP_SKIP.some((skip) => path.startsWith(this.system(skip))) && (stat.isDirectory() || stat.uid === own);
+      const files = [await oldFiles(this.system("/tmp"), tmpCutoff, work, keep), await oldFiles(this.system("/var/tmp"), tmpCutoff, work, keep)];
+      const mine = files.flatMap((found) => found.paths);
+      const bytes = files.reduce((total, found) => total + found.bytes, 0);
+      await add({ id: "tmp-old", group: "system", label: `Temporary files older than ${TMP_DAYS} days`, detail: "Your files in /tmp and /var/tmp nobody has written for a week.", bytes, risk: "safe", root: false, preview: mine.slice(0, 5) },
+        { kind: "paths", paths: mine, root: false, cutoff: tmpCutoff });
     }
 
     // ── caches ──
     {
-      const paths = [join(home, ".npm", "_cacache"), join(home, ".bun", "install", "cache"), join(home, ".cache", "pip"), join(home, ".cache", "yarn"), join(home, ".cache", "pnpm"), join(home, ".cache", "go-build"), join(home, ".cache", "node-gyp")].filter(isDir);
-      const sizes = await du(paths, false);
-      add({ id: "package-caches", group: "caches", label: "Package manager caches (npm, bun, pip…)", detail: "Downloaded packages kept for faster installs. They download again when needed.", bytes: sum(sizes), risk: "safe", root: false, preview: paths },
+      const paths = await this.directories([join(home, ".npm", "_cacache"), join(home, ".bun", "install", "cache"), join(home, ".cache", "pip"), join(home, ".cache", "yarn"), join(home, ".cache", "pnpm"), join(home, ".cache", "go-build"), join(home, ".cache", "node-gyp")], work);
+      const sizes = await this.du(paths, false, work);
+      await add({ id: "package-caches", group: "caches", label: "Package manager caches (npm, bun, pip…)", detail: "Downloaded packages kept for faster installs. They download again when needed.", bytes: sum(sizes), risk: "safe", root: false, preview: paths },
         { kind: "paths", paths, root: false });
     }
     {
       const dir = join(home, ".cache", "ms-playwright");
-      const builds = listDir(dir).flatMap((name) => { const match = /^(.*)-(\d+)$/.exec(name); return match ? [{ name, family: match[1]!, revision: Number(match[2]) }] : []; });
+      const builds: { name: string; family: string; revision: number }[] = [];
+      for await (const path of directory(dir, work)) { const name = basename(path); const match = /^(.*)-(\d+)$/.exec(name); if (match) builds.push({ name, family: match[1]!, revision: Number(match[2]) }); }
       const newest = new Map<string, number>();
       for (const build of builds) newest.set(build.family, Math.max(newest.get(build.family) ?? 0, build.revision));
       const old = builds.filter((build) => build.revision < (newest.get(build.family) ?? 0)).map((build) => join(dir, build.name));
-      add({ id: "browser-builds", group: "caches", label: "Old browser builds (Playwright)", detail: "Older Chromium/Firefox builds; the newest of each is kept. A project pinned to an older one downloads it again.", bytes: sum(await du(old, false)), risk: "caution", root: false, preview: old.map((path) => basename(path)) },
+      await add({ id: "browser-builds", group: "caches", label: "Old browser builds (Playwright)", detail: "Older Chromium/Firefox builds; the newest of each is kept. A project pinned to an older one downloads it again.", bytes: sum(await this.du(old, false, work)), risk: "caution", root: false, preview: old.map((path) => basename(path)) },
         { kind: "paths", paths: old, root: false });
     }
     {
       const old: string[] = [];
       const claudeDir = join(home, ".local", "share", "claude", "versions");
-      const claudeVersions = listDir(claudeDir).map((name) => join(claudeDir, name));
+      const claudeVersions: { path: string; mtime: number }[] = [];
+      for await (const path of directory(claudeDir, work)) { try { claudeVersions.push({ path, mtime: (await lstat(path)).mtimeMs }); } catch { /* gone */ } }
       let claudeCurrent: string | null = null;
-      try { claudeCurrent = realpathSync(join(home, ".local", "bin", "claude")); } catch { /* not installed that way */ }
-      const claudeNewest = [...claudeVersions].sort((a, b) => { try { return statSync(b).mtimeMs - statSync(a).mtimeMs; } catch { return 0; } })[0];
-      if (claudeCurrent) old.push(...claudeVersions.filter((path) => path !== claudeCurrent && path !== claudeNewest));
+      try { claudeCurrent = await realpath(join(home, ".local", "bin", "claude")); } catch { /* not installed that way */ }
+      const claudeNewest = claudeVersions.sort((a, b) => b.mtime - a.mtime)[0]?.path;
+      if (claudeCurrent) old.push(...claudeVersions.map((entry) => entry.path).filter((path) => path !== claudeCurrent && path !== claudeNewest));
       const codexDir = join(this.codexHome, "packages", "standalone", "releases");
       let codexCurrent: string | null = null;
-      try { codexCurrent = realpathSync(join(this.codexHome, "packages", "standalone", "current")); } catch { /* not the standalone install */ }
-      if (codexCurrent) old.push(...listDir(codexDir).map((name) => join(codexDir, name)).filter((path) => path !== codexCurrent));
-      add({ id: "agent-versions", group: "caches", label: "Old Claude Code and Codex versions", detail: "Previous versions their updaters left behind; the one in use is kept.", bytes: sum(await du(old, false)), risk: "safe", root: false, preview: old.map((path) => basename(path)) },
+      try { codexCurrent = await realpath(join(this.codexHome, "packages", "standalone", "current")); } catch { /* not the standalone install */ }
+      if (codexCurrent) for await (const path of directory(codexDir, work)) if (path !== codexCurrent) old.push(path);
+      await add({ id: "agent-versions", group: "caches", label: "Old Claude Code and Codex versions", detail: "Previous versions their updaters left behind; the one in use is kept.", bytes: sum(await this.du(old, false, work)), risk: "safe", root: false, preview: old.map((path) => basename(path)) },
         { kind: "paths", paths: old, root: false });
     }
 
     // ── history ──
     {
-      const sessions = [oldFiles(join(this.codexHome, "sessions"), cutoff), oldFiles(join(this.codexHome, "archived_sessions"), cutoff)];
+      const sessions = [await oldFiles(join(this.codexHome, "sessions"), cutoff, work), await oldFiles(join(this.codexHome, "archived_sessions"), cutoff, work)];
       const paths = sessions.flatMap((found) => found.paths);
-      add({ id: "codex-history", group: "history", label: `Codex conversations older than ${days} days`, detail: "Old Codex sessions can no longer be resumed or read in chat afterwards.", bytes: sessions.reduce((total, found) => total + found.bytes, 0), risk: "caution", root: false, selected: false, preview: paths.slice(0, 5).map((path) => path.replace(home, "~")) },
-        { kind: "paths", paths, root: false });
+      await add({ id: "codex-history", group: "history", label: `Codex conversations older than ${days} days`, detail: "Old Codex sessions can no longer be resumed or read in chat afterwards.", bytes: sessions.reduce((total, found) => total + found.bytes, 0), risk: "caution", root: false, selected: false, preview: paths.slice(0, 5).map((path) => path.replace(home, "~")) },
+        { kind: "paths", paths, root: false, cutoff });
     }
     {
       const projects = join(home, ".claude", "projects");
       const paths: string[] = [];
       const folders: string[] = [];
       let bytes = 0;
-      for (const project of listDir(projects)) {
-        const dir = join(projects, project);
-        for (const name of listDir(dir)) {
+      for await (const dir of directory(projects, work)) {
+        if (!await isDirectory(dir)) continue;
+        for await (const path of directory(dir, work)) {
+          const name = basename(path);
           if (!name.endsWith(".jsonl")) continue;
-          const path = join(dir, name);
           let stats;
-          try { stats = statSync(path); } catch { continue; }
-          if (stats.mtimeMs >= cutoff) continue;
+          try { stats = await lstat(path); } catch { continue; }
+          if (!stats.isFile() || stats.mtimeMs >= cutoff) continue;
           paths.push(path);
           bytes += stats.size;
           // the session's own folder (subagents, tool output) goes with it
           const folder = join(dir, name.slice(0, -".jsonl".length));
-          if (isDir(folder)) folders.push(folder);
+          if (await isDirectory(folder)) folders.push(folder);
         }
       }
-      bytes += sum(await du(folders, false));
+      bytes += sum(await this.du(folders, false, work));
       paths.push(...folders);
-      add({ id: "claude-history", group: "history", label: `Claude Code conversations older than ${days} days`, detail: "Old Claude sessions can no longer be resumed or read in chat afterwards.", bytes, risk: "caution", root: false, selected: false, preview: paths.slice(0, 5).map((path) => path.replace(home, "~")) },
-        { kind: "paths", paths, root: false });
+      await add({ id: "claude-history", group: "history", label: `Claude Code conversations older than ${days} days`, detail: "Old Claude sessions can no longer be resumed or read in chat afterwards.", bytes, risk: "caution", root: false, selected: false, preview: paths.slice(0, 5).map((path) => path.replace(home, "~")) },
+        { kind: "paths", paths, root: false, cutoff });
     }
     {
       const dir = join(this.codexHome, "generated_images");
-      const old = listDir(dir).map((name) => join(dir, name)).filter((path) => { try { return statSync(path).mtimeMs < cutoff; } catch { return false; } });
-      add({ id: "codex-images", group: "history", label: `Images Codex generated, older than ${days} days`, detail: "Pictures Codex made in past sessions. Copies you saved elsewhere stay.", bytes: sum(await du(old, false)), risk: "caution", root: false, selected: false, preview: old.slice(0, 5).map((path) => path.replace(home, "~")) },
-        { kind: "paths", paths: old, root: false });
+      const old: string[] = [];
+      for await (const path of directory(dir, work)) { try { if ((await lstat(path)).mtimeMs < cutoff) old.push(path); } catch { /* gone */ } }
+      await add({ id: "codex-images", group: "history", label: `Images Codex generated, older than ${days} days`, detail: "Pictures Codex made in past sessions. Copies you saved elsewhere stay.", bytes: sum(await this.du(old, false, work)), risk: "caution", root: false, selected: false, preview: old.slice(0, 5).map((path) => path.replace(home, "~")) },
+        { kind: "paths", paths: old, root: false, cutoff });
     }
 
     // ── large files, one by one ──
-    large.forEach((file, index) => {
-      const mine = (() => { try { return lstatSync(file.path).uid === own; } catch { return false; } })();
-      add({ id: `file:${index}`, group: "large-files", label: file.path.replace(home, "~"), detail: mine ? "A large file. Delete it only if you know you no longer need it." : "A large file owned by another user (deleted with sudo). Delete it only if you know what it is.", bytes: file.bytes, risk: "danger", root: !mine, selected: false, preview: [file.path] },
+    for (const [index, file] of large.entries()) {
+      let mine = false;
+      try { mine = (await lstat(file.path)).uid === own; } catch { continue; }
+      await add({ id: `file:${index}`, group: "large-files", label: file.path.replace(home, "~"), detail: mine ? "A large file. Delete it only if you know you no longer need it." : "A large file owned by another user (deleted with sudo). Delete it only if you know what it is.", bytes: file.bytes, risk: "danger", root: !mine, selected: false, preview: [file.path] },
         { kind: "paths", paths: [file.path], root: !mine });
-    });
+    }
 
+    work.check();
+    const disk = this.rootDisk();
+    work.check();
     const scanId = randomBytes(8).toString("hex");
-    this.scans.set(scanId, { at: Date.now(), plans });
+    this.scans.set(scanId, { at: this.now(), plans });
     // the last few scans only: an old one names paths that may hold new files by now
-    for (const [id, scan] of this.scans) if (Date.now() - scan.at > 30 * 60_000 || this.scans.size > 5) { if (id !== scanId) this.scans.delete(id); }
-    return { scan_id: scanId, scanned_at: Date.now(), older_than_days: days, disk: this.rootDisk(), candidates, folders };
+    for (const [id, scan] of this.scans) if (this.now() - scan.at >= SCAN_TTL_MS || this.scans.size > 5) { if (id !== scanId) this.scans.delete(id); }
+    return { scan_id: scanId, scanned_at: this.now(), older_than_days: days, disk, candidates, folders };
   }
 
   private rootDisk(): VpsDisk | null {
-    const disks = this.ctx.monitor.sample().disks;
+    const disks = this.ctx.monitor.status().disks;
     return disks.find((disk) => disk.mount === "/") ?? disks[0] ?? null;
   }
 
-  private async bigFolders(root: boolean): Promise<DiskFolder[]> {
-    const roots = [this.home, "/opt", "/var", "/srv", "/root"].filter(isDir);
-    const result = await run([...(root ? ["sudo", "-n"] : []), "du", "-xb", "-d", "2", "--", ...roots], 180_000);
+  private async bigFolders(root: boolean, work: ScanBudget): Promise<DiskFolder[]> {
+    const roots = await this.directories([this.home, ...["/opt", "/var", "/srv", "/root"].map((path) => this.system(path))], work);
+    if (!roots.length) return [];
+    const result = await this.command([...(root ? ["sudo", "-n"] : []), "du", "-xb", "-d", "2", "--", ...roots], 180_000, work);
     const folders: DiskFolder[] = [];
     for (const line of result.stdout.split("\n")) {
       const tab = line.indexOf("\t");
@@ -428,11 +441,12 @@ export class VpsDoctor {
     return folders.slice(0, 15);
   }
 
-  private async largeFiles(root: boolean): Promise<{ path: string; bytes: number }[]> {
+  private async largeFiles(root: boolean, work: ScanBudget): Promise<{ path: string; bytes: number }[]> {
     const swaps = new Set<string>();
-    try { for (const line of readFileSync("/proc/swaps", "utf8").split("\n").slice(1)) { const path = line.split(/\s+/)[0]; if (path) swaps.add(path); } } catch { /* none */ }
-    const roots = ["/home", "/opt", "/var", "/srv", "/tmp", "/root", "/mnt", "/data"].filter(isDir);
-    const result = await run([...(root ? ["sudo", "-n"] : []), "find", ...roots, "-xdev", "-type", "f", "-size", `+${Math.floor(LARGE_FILE_BYTES / 1024 / 1024)}M`, "-printf", "%s\t%p\n"], 120_000);
+    try { for (const line of (await readFile(this.system("/proc/swaps"), "utf8")).split("\n").slice(1)) { const path = line.split(/\s+/)[0]; if (path) swaps.add(path); } } catch { /* none */ }
+    const roots = await this.directories(["/home", "/opt", "/var", "/srv", "/tmp", "/root", "/mnt", "/data"].map((path) => this.system(path)), work);
+    if (!roots.length) return [];
+    const result = await this.command([...(root ? ["sudo", "-n"] : []), "find", ...roots, "-xdev", "-type", "f", "-size", `+${Math.floor(LARGE_FILE_BYTES / 1024 / 1024)}M`, "-printf", "%s\t%p\n"], 120_000, work);
     return result.stdout.split("\n").flatMap((line) => {
       const tab = line.indexOf("\t");
       if (tab <= 0) return [];
@@ -445,60 +459,78 @@ export class VpsDoctor {
   /** Whether a path the scan planned may still be deleted: never a protected place or a bare root. */
   private deletable(path: string, root: boolean): boolean {
     if (!isAbsolute(path) || normalize(path) !== path) return false;
-    if (underAny(path, PROTECTED_PREFIXES)) return false;
+    if (underAny(path, [...PROTECTED_PREFIXES, join(this.home, ".ssh"), join(this.home, ".gnupg")])) return false;
     const bare = new Set(["/", "/home", "/opt", "/var", "/tmp", "/var/tmp", "/srv", "/root", this.home, join(this.home, ".cache"), join(this.home, ".local"), this.codexHome, join(this.home, ".claude")]);
     if (bare.has(path)) return false;
     if (root) return true;
     return underAny(path, [this.home, "/tmp", "/var/tmp", "/opt", "/srv"]);
   }
 
-  async cleanDisk(scanId: string, ids: string[]): Promise<DiskCleanResult> {
+  cleanDisk(scanId: string, ids: string[]): Promise<DiskCleanResult> {
+    const unique = [...new Set(ids)].sort();
+    const key = JSON.stringify([scanId, unique]);
+    if (this.scanFlight || (this.cleanFlight && this.cleanFlight.key !== key)) return Promise.reject(new DoctorError("doctor_busy", "Another disk operation is running. Try again when it finishes.", 409));
+    if (this.cleanFlight) return this.cleanFlight.promise;
     const scan = this.scans.get(scanId);
-    if (!scan) throw new DoctorError("scan_expired", "That scan has expired. Scan again.", 409);
+    if (!scan || this.now() - scan.at >= SCAN_TTL_MS) {
+      this.scans.delete(scanId);
+      return Promise.reject(new DoctorError("scan_expired", "That scan has expired. Scan again.", 409));
+    }
+    // Claim all requested plans before the first await, including ones that later fail.
+    const claimed = unique.map((id) => ({ id, plan: scan.plans.get(id) }));
+    for (const id of unique) scan.plans.delete(id);
+    const promise = Promise.resolve().then(() => this.performClean(claimed)).finally(() => { this.cleanFlight = null; });
+    this.cleanFlight = { key, promise };
+    return promise;
+  }
+
+  private async performClean(claimed: { id: string; plan: Plan | undefined }[]): Promise<DiskCleanResult> {
     const root = await this.root();
     const available = (): number => this.ctx.monitor.sample().disks.reduce((total, disk) => total + disk.available_bytes, 0);
     const before = available();
     const results: DiskCleanItem[] = [];
-    for (const id of ids) {
-      const plan = scan.plans.get(id);
-      if (!plan) { results.push({ id, ok: false, message: "Not in that scan" }); continue; }
+    for (const { id, plan } of claimed) {
+      if (!plan) { results.push({ id, ok: false, message: "Not in that scan (or already used)" }); continue; }
       if (plan.root && !root) { results.push({ id, ok: false, message: "Needs passwordless sudo" }); continue; }
       try {
         if (plan.kind === "commands") {
           const failures: string[] = [];
           for (const command of plan.commands) {
-            const result = await run([...(plan.root ? ["sudo", "-n"] : []), ...command], 300_000);
-            if (result.code !== 0) failures.push(`${command.join(" ")}: ${(result.stderr || result.stdout).trim().split("\n").at(-1) ?? "failed"}`);
+            const result = await this.command([...(plan.root ? ["sudo", "-n"] : []), ...command], 300_000);
+            if (result.code !== 0) failures.push(`${command.join(" ")}: ${(result.stderr || result.stdout).trim().split("\n").at(-1) || "failed"}`);
           }
           results.push({ id, ok: failures.length === 0, message: failures.length ? failures.join("; ") : "Done" });
         } else {
-          const allowed = plan.paths.filter((path) => this.deletable(path, plan.root));
           let removed = 0;
           const errors: string[] = [];
-          if (plan.root) {
-            for (let start = 0; start < allowed.length; start += 200) {
-              const chunk = allowed.slice(start, start + 200);
-              const result = await run(["sudo", "-n", "rm", "-rf", "--", ...chunk], 300_000);
-              if (result.code === 0) removed += chunk.length; else errors.push(result.stderr.trim().split("\n").at(-1) ?? "rm failed");
+          const work = new ScanBudget(300_000);
+          try {
+            for (const path of plan.paths) {
+              if (!this.deletable(path.path, plan.root) || !await validatePath(path, work)) { errors.push("Path changed, missing, unreadable or protected; kept"); continue; }
+              // No recursive rm: even a new child arriving after validation prevents rmdir.
+              const entries = [...path.entries].sort((a, b) => b.path.length - a.path.length);
+              let ok = true;
+              for (const entry of entries) {
+                work.check();
+                if (!this.deletable(entry.path, plan.root) || !await validateEntry(path, entry, !entry.directory)) { ok = false; errors.push("Path changed before deletion; kept"); break; }
+                if (plan.root) {
+                  const result = await this.command(["sudo", "-n", entry.directory ? "rmdir" : "rm", "--", entry.path], 30_000);
+                  if (result.code !== 0) { ok = false; errors.push("Privileged deletion failed"); break; }
+                } else if (entry.directory) await rmdir(entry.path);
+                else await unlink(entry.path);
+              }
+              if (ok) removed++;
             }
-          } else {
-            for (const path of allowed) {
-              try { rmSync(path, { recursive: true, force: true }); removed += 1; } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
-            }
-          }
-          const skipped = plan.paths.length - allowed.length;
-          results.push({ id, ok: errors.length === 0, message: `Removed ${removed} of ${plan.paths.length}${skipped ? ` (${skipped} protected, kept)` : ""}${errors.length ? `; ${errors.slice(0, 2).join("; ")}` : ""}` });
+          } finally { work.close(); }
+          results.push({ id, ok: errors.length === 0, message: `Removed ${removed} of ${plan.paths.length}${errors.length ? `; ${errors.slice(0, 2).join("; ")}` : ""}` });
         }
       } catch (error) {
         results.push({ id, ok: false, message: error instanceof Error ? error.message : String(error) });
       }
       const last = results.at(-1)!;
       this.log(`clean ${id} ${last.ok ? "ok" : "failed"}: ${last.message}`);
-      // a path list is used once: a second click must not delete what was written there since
-      scan.plans.delete(id);
     }
-    const freed = Math.max(0, available() - before);
-    return { freed_bytes: freed, results, disk: this.rootDisk() };
+    return { freed_bytes: Math.max(0, available() - before), results, disk: this.rootDisk() };
   }
 
   // ── processes ───────────────────────────────────────────────────────────────────────────
