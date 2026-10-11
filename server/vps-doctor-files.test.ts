@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "bun:test";
-import { realpath, mkdtemp, mkdir, writeFile, utimes, rename, symlink, rm } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, chmod, writeFile, utimes, rename, symlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ScanBudget, oldFiles, capturePath, validatePath } from "./vps-doctor-files.ts";
@@ -62,4 +62,18 @@ it.skipIf(process.platform === "win32")("rejects symlink leaves and parents, rep
   expect(await capturePath(join(dir, "link", "file"), budget())).toBeNull();
   await rm(join(target, "file")); await symlink(join(dir, "moved", "file"), join(target, "file"));
   expect(await capturePath(join(target, "file"), budget())).toBeNull();
+});
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("skips unreadable advisory directories while cleanup manifests still fail closed", async () => {
+  const dir = await fixture();
+  const readable = join(dir, "old");
+  await writeFile(readable, "old");
+  const locked = join(dir, "locked");
+  await mkdir(locked);
+  await writeFile(join(locked, "private"), "private");
+  await chmod(locked, 0o000);
+  try {
+    expect(await oldFiles(dir, Date.now() + 1000, budget())).toEqual({ paths: [readable], bytes: 3 });
+    expect(await capturePath(dir, budget())).toBeNull();
+  } finally { await chmod(locked, 0o700); }
 });

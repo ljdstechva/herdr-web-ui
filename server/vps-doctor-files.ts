@@ -28,9 +28,15 @@ export class ScanBudget {
 
 export async function* directory(path: string, work: ScanBudget): AsyncGenerator<string> {
   work.check();
-  let dir;
-  try { dir = await opendir(path); } catch { work.check(); return; }
-  for await (const entry of dir) { work.visit(); yield join(path, entry.name); }
+  try {
+    const dir = await opendir(path);
+    for await (const entry of dir) { work.visit(); yield join(path, entry.name); }
+  } catch (error) {
+    if (error instanceof ScanStopped) throw error;
+    // Bun may defer permission errors until the first directory read.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(code ?? "")) throw error;
+  }
   work.check();
 }
 
