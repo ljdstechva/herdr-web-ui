@@ -10,8 +10,8 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { lstat, readFile, realpath, rmdir, unlink } from "node:fs/promises";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { run, type CommandResult } from "./vps-command.ts";
 import { capturePath, directory, isDirectory, oldFiles, ScanBudget, ScanStopped, validateEntry, validatePath, type PathPlan } from "./vps-doctor-files.ts";
 import { homedir } from "node:os";
@@ -57,6 +57,7 @@ export interface DoctorContext {
   scanTimeoutMs?: number;
   scanEntryLimit?: number;
   now?: () => number;
+  createWorkspace?: typeof workspaceCreate;
   /** starts an agent in a pane herdr just made (index.ts `agentLaunch`) */
   launchAgent(paneId: string, agent: { kind: string; args: string[] }): Promise<{ agent_started: boolean; error?: { code: string; message: string } }>;
 }
@@ -102,6 +103,8 @@ type Plan =
   | { kind: "commands"; commands: string[][]; root: boolean };
 
 export const SCAN_TTL_MS = 30 * 60_000;
+export const BRIEF_RETENTION = 20;
+const BRIEF_NAME = /^brief-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}(?:-[a-f0-9]{16})?\.md$/;
 
 interface StoredScan {
   at: number;
@@ -125,6 +128,7 @@ export class VpsDoctor {
   private scans = new Map<string, StoredScan>();
   private scanFlight: { days: number; promise: Promise<DiskScan> } | null = null;
   private cleanFlight: { key: string; promise: Promise<DiskCleanResult> } | null = null;
+  private agentFlight: { key: string; promise: Promise<DoctorAgentResult> } | null = null;
   private readonly now: () => number;
   private rootChecked: { at: number; ok: boolean } | null = null;
 
@@ -634,7 +638,45 @@ export class VpsDoctor {
 
   // ── AI doctor ───────────────────────────────────────────────────────────────────────────
 
-  async startAgent(request: DoctorAgentRequest): Promise<DoctorAgentResult> {
+  startAgent(request: DoctorAgentRequest): Promise<DoctorAgentResult> {
+    const key = JSON.stringify([request.engine, request.model, request.effort, request.issue_id, request.note]);
+    if (this.agentFlight) return this.agentFlight.key === key ? this.agentFlight.promise : Promise.reject(new DoctorError("doctor_busy", "A Doctor is being started. Try again when it finishes.", 409));
+    const promise = Promise.resolve().then(() => this.performStartAgent(request)).finally(() => { this.agentFlight = null; });
+    this.agentFlight = { key, promise };
+    return promise;
+  }
+
+  private async saveBrief(brief: string): Promise<string> {
+    const dir = join(this.ctx.stateDir, "doctor");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const directoryStat = await lstat(dir);
+    if (directoryStat.isSymbolicLink() || await realpath(dir) !== dir) throw new DoctorError("unsafe_brief_directory", "The Doctor brief directory must not be a symlink.", 409);
+    await chmod(dir, 0o700);
+    const path = join(dir, `brief-${new Date(this.now()).toISOString().replace(/[:.]/g, "-")}-${randomBytes(8).toString("hex")}.md`);
+    const temporary = `${path}.tmp`;
+    try {
+      await writeFile(temporary, brief, { mode: 0o600, flag: "wx" });
+      await rename(temporary, path);
+    } finally { await unlink(temporary).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); }
+
+    const previous: { path: string; stat: Awaited<ReturnType<typeof lstat>> }[] = [];
+    for (const name of await readdir(dir)) {
+      if (!BRIEF_NAME.test(name) || join(dir, name) === path) continue;
+      const file = join(dir, name);
+      const stat = await lstat(file);
+      if (stat.isFile() && !stat.isSymbolicLink()) previous.push({ path: file, stat });
+    }
+    previous.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs || b.path.localeCompare(a.path));
+    for (const old of previous.slice(BRIEF_RETENTION - 1)) {
+      const currentDir = await lstat(dir);
+      if (currentDir.dev !== directoryStat.dev || currentDir.ino !== directoryStat.ino || currentDir.isSymbolicLink()) throw new DoctorError("unsafe_brief_directory", "The Doctor brief directory changed.", 409);
+      const current = await lstat(old.path);
+      if (current.isFile() && current.dev === old.stat.dev && current.ino === old.stat.ino && current.ctimeMs === old.stat.ctimeMs && await realpath(dir) === dir) await unlink(old.path);
+    }
+    return path;
+  }
+
+  private async performStartAgent(request: DoctorAgentRequest): Promise<DoctorAgentResult> {
     const options = await this.options();
     const engine = options.engines.find((entry) => entry.engine === request.engine);
     if (!engine) throw new DoctorError("invalid_engine", "engine must be claude or codex");
@@ -645,13 +687,11 @@ export class VpsDoctor {
     const issue = request.issue_id === null ? null : status.issues.find((entry) => entry.id === request.issue_id) ?? null;
     const brief = this.brief(status, issue, request.note.trim().slice(0, 4000), await this.root());
     const dir = join(this.ctx.stateDir, "doctor");
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const briefPath = join(dir, `brief-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
-    writeFileSync(briefPath, brief, { mode: 0o600 });
+    const briefPath = await this.saveBrief(brief);
 
     // its own folder, where the briefs are: the agent's one-time trust question is for that
     // folder, not for the whole home directory
-    const created = await workspaceCreate({ cwd: dir, label: "VPS Doctor" });
+    const created = await (this.ctx.createWorkspace ?? workspaceCreate)({ cwd: dir, label: "VPS Doctor" });
     const paneId = created.root_pane.pane_id;
     const prompt = `You are the VPS Doctor for this server. Read ${briefPath} and follow it.`;
     const args = request.engine === "claude"

@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "bun:test";
-import { mkdtemp, mkdir, writeFile, utimes, rename, symlink, rm, lstat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, utimes, rename, symlink, rm, lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SCAN_TTL_MS, VpsDoctor, type DoctorContext } from "./vps-doctor.ts";
 import { VpsMonitor, type VpsReader } from "./vps.ts";
@@ -127,4 +127,38 @@ it("revalidates privileged file plans and never issues rm for a replacement", as
   await rename(file, `${file}.kept`); await writeFile(file, "replacement");
   expect((await doctor.cleanDisk(scan.scan_id, ["file:0"])).results[0]?.ok).toBe(false);
   expect(calls.some((argv) => argv.includes("rm"))).toBe(false);
+});
+
+it("retains twenty private briefs, keeps unrelated files/symlinks and joins a launch double tap", async () => {
+  const entered = deferred(); const release = deferred();
+  let creates = 0; let launches = 0;
+  const { doctor, dir } = await fixture({
+    createWorkspace: async () => { creates++; return { workspace: { workspace_id: "fixture" }, root_pane: { pane_id: "fixture" } } as Awaited<ReturnType<NonNullable<DoctorContext["createWorkspace"]>>>; },
+    launchAgent: async () => { launches++; entered.resolve(); await release.promise; return { agent_started: true }; },
+  });
+  doctor.options = async () => ({ root: false, engines: [{ engine: "codex", label: "Codex", available: true, default_model: null, models: [] }] });
+  const briefs = join(dir, "doctor"); await mkdir(briefs);
+  for (let i = 1; i <= 23; i++) {
+    const path = join(briefs, `brief-2020-01-${String(i).padStart(2, "0")}T00-00-00-000.md`);
+    await writeFile(path, "old fixture"); await utimes(path, i, i);
+  }
+  const unrelated = join(briefs, "notes.md"); await writeFile(unrelated, "keep");
+  const link = join(briefs, "brief-2019-01-01T00-00-00-000.md"); await symlink(unrelated, link);
+  const request = { engine: "codex" as const, model: null, effort: null, issue_id: null, note: "fixture" };
+  const first = doctor.startAgent(request);
+  expect(doctor.startAgent(request)).toBe(first);
+  await entered.promise;
+  await expect(doctor.startAgent({ ...request, note: "different" })).rejects.toMatchObject({ code: "doctor_busy" });
+  const files = await readdir(briefs);
+  expect(files.filter((name) => name.startsWith("brief-"))).toHaveLength(21); // 20 regular files + untouched symlink
+  expect(files.some((name) => name.endsWith(".tmp"))).toBe(false);
+  expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  expect(await readFile(unrelated, "utf8")).toBe("keep");
+  expect(files).not.toContain("brief-2020-01-01T00-00-00-000.md");
+  release.resolve();
+  const result = await first;
+  expect((await lstat(result.brief_path)).mode & 0o777).toBe(0o600);
+  expect((await lstat(briefs)).mode & 0o777).toBe(0o700);
+  expect(await readFile(result.brief_path, "utf8")).toContain("# VPS Doctor brief");
+  expect(creates).toBe(1); expect(launches).toBe(1);
 });
