@@ -20,6 +20,7 @@ import { rosterPanes } from "../lib/dagPane.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useTabReorder } from "../lib/useTabReorder.ts";
+import { watchTabSwipe, type TabSwipeOptions } from "../lib/tabSwipe.ts";
 import { paneStatus, rollupStatus } from "../lib/status.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
@@ -36,9 +37,11 @@ export interface TabStripProps {
   selectedPane: PaneInfo;
   onSelectPane: (paneId: string) => void;
   onNewTab: () => void;
+  /** the pane region under the strip: on a touch screen a sideways stroke over it opens the tab beside (lib/tabSwipe.ts) */
+  swipeHost?: HTMLElement | null;
 }
 
-export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab }: TabStripProps) {
+export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, swipeHost = null }: TabStripProps) {
   const t = useT();
   const machineId = useMachineId();
   const { closeTab, renameTab, moveTab } = useMachineApi();
@@ -174,7 +177,20 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
     if (row) scroll.current = stripScrolled(scroll.current, row.scrollLeft, row.scrollWidth - row.clientWidth);
   };
 
-  if (!shown || (cramped && tabs.length === 1)) return null;
+  // What a stroke over the pane may do, as this render has it; null while the tabs are not the
+  // finger's to move. The listeners are bound once per host and read it when a finger comes down.
+  const swipe = useRef<Pick<TabSwipeOptions, "beside" | "open"> | null>(null);
+  useEffect(() => {
+    const surface = swipeHost?.parentElement;
+    if (!swipeHost || !surface) return;
+    return watchTabSwipe(surface, swipeHost, {
+      enabled: () => swipe.current !== null,
+      beside: (step) => swipe.current?.beside(step) ?? null,
+      open: (step) => swipe.current?.open(step),
+    });
+  }, [swipeHost]);
+
+  if (!shown || (cramped && tabs.length === 1)) { swipe.current = null; return null; }
 
   const panesOf = (tab: HerdrTab): PaneInfo[] => panes.filter((pane) => pane.tab_id === tab.tab_id);
   const paneFor = (tab: HerdrTab): PaneInfo | undefined => {
@@ -184,6 +200,16 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
       ?? pick(snapshot.layouts?.find((layout) => layout.tab_id === tab.tab_id)?.focused_pane_id)
       ?? own.find((pane) => pane.focused)
       ?? own[0];
+  };
+
+  // the tab beside the open one, when it has a pane to open; not under a name field, a menu or a move still on its way
+  const besideOpen = (step: -1 | 1): HerdrTab | null => {
+    const tab = tabs[tabs.findIndex((candidate) => candidate.tab_id === selectedPane.tab_id) + step];
+    return tab && paneFor(tab) ? tab : null;
+  };
+  swipe.current = editing || picker || confirm || reorder.moving || reorder.drag ? null : {
+    beside: (step) => { const tab = besideOpen(step); return tab ? nameOf(tab) : null; },
+    open: (step) => { const tab = besideOpen(step); const pane = tab ? paneFor(tab) : undefined; if (pane) onSelectPane(pane.pane_id); },
   };
 
   const focusTab = (tabId: string): void => {

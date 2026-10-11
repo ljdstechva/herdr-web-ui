@@ -242,6 +242,8 @@ export function App() {
   // the width the sidebar's edge was dragged to on this device; null is the density's own
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
+  // the pane region, for the tab strip to follow a finger across it (lib/tabSwipe.ts)
+  const [paneHost, setPaneHost] = useState<HTMLElement | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [findRequest, setFindRequest] = useState<{ paneId: string | null; serial: number }>({ paneId: null, serial: 0 });
   // the header's More menu: its button, and whether it opened on a phone-width screen
@@ -1163,11 +1165,11 @@ export function App() {
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
         {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
         {snapshot && selectedPane && selectedWorkspace && (
-          <TabStrip snapshot={snapshot} workspace={selectedWorkspace} selectedPane={selectedPane} onSelectPane={selectPane} onNewTab={() => actions.openNewTab()} />
+          <TabStrip snapshot={snapshot} workspace={selectedWorkspace} selectedPane={selectedPane} onSelectPane={selectPane} onNewTab={() => actions.openNewTab()} swipeHost={paneHost} />
         )}
         {/* the tab strip's panel: its id is what each tab's aria-controls points at. No tabIndex -
             the terminal (PaneTerminal) and the composer are the focusable things inside it. */}
-        <main className="terminal-host">
+        <main className="terminal-host" ref={setPaneHost}>
           {/* the panel sits inside main, so the page keeps its main landmark; it draws no box */}
           <div id={PANE_TABPANEL_ID} className="terminal-tabpanel" role={tabPanelLabel === null ? undefined : "tabpanel"} aria-label={tabPanelLabel ?? undefined}>
           <PaneCanvas key={selectedMachineId} snapshot={snapshot} pane={selectedPane} selectedPaneId={selectedPaneId} onSelect={selectPane} onChanged={actions.refresh}

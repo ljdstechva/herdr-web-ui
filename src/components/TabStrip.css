@@ -54,6 +54,12 @@
   color: var(--text-strong);
 }
 
+/* a touch has no hover: the name answers the press, before the tab it opens is drawn */
+.tab-strip-tab:active {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
 /* the name being typed, in the tab's own place */
 .tab-strip-rename {
   align-self: center;
@@ -178,3 +184,87 @@
 }
 .tab-strip-item.is-drop-before::before { left: 0; }
 .tab-strip-item.is-drop-after::after { right: 0; }
+
+/* A sideways stroke over the pane opens the tab beside (lib/tabSwipe.ts, which sets these
+   attributes and the two properties on the pane region). The canvas follows the finger part of
+   the way, less where no tab lies that way; the name of the tab it is going to comes in from
+   the edge that tab comes from, and takes the accent once letting go will open it. */
+.terminal-host[data-tab-swipe] .pane-canvas {
+  transform: translateX(var(--tab-swipe-x, 0));
+}
+
+.terminal-host[data-tab-swipe="back"] .pane-canvas {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+.terminal-host[data-tab-swipe="enter-end"] .pane-canvas {
+  animation: tab-swipe-in-end var(--dur-base) var(--ease-out);
+}
+
+.terminal-host[data-tab-swipe="enter-start"] .pane-canvas {
+  animation: tab-swipe-in-start var(--dur-base) var(--ease-out);
+}
+
+@keyframes tab-swipe-in-end {
+  from {
+    transform: translateX(var(--space-6));
+    opacity: 0.4;
+  }
+}
+
+@keyframes tab-swipe-in-start {
+  from {
+    transform: translateX(calc(-1 * var(--space-6)));
+    opacity: 0.4;
+  }
+}
+
+.tab-swipe-hint {
+  position: absolute;
+  top: 50%;
+  z-index: var(--z-banner);
+  max-width: 60%;
+  padding: var(--space-2) var(--space-4);
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: var(--tab-swipe-progress, 0);
+}
+
+.tab-swipe-hint[data-side="end"] {
+  right: var(--space-3);
+  transform: translate(calc((1 - var(--tab-swipe-progress, 0)) * var(--space-5)), -50%);
+}
+
+.tab-swipe-hint[data-side="start"] {
+  left: var(--space-3);
+  transform: translate(calc((var(--tab-swipe-progress, 0) - 1) * var(--space-5)), -50%);
+}
+
+.tab-swipe-hint[data-side="end"]::after { content: " ›"; }
+.tab-swipe-hint[data-side="start"]::before { content: "‹ "; }
+
+.terminal-host[data-tab-swipe="armed"] .tab-swipe-hint {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-host[data-tab-swipe] .pane-canvas {
+    transform: none;
+    transition: none;
+    animation: none;
+  }
+
+  .tab-swipe-hint[data-side] {
+    transform: translateY(-50%);
+  }
+}
