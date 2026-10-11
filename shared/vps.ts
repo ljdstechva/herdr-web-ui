@@ -60,6 +60,9 @@ export interface VpsDisk {
   used_bytes: number;
   available_bytes: number;
   used_percent: number;
+  /** Optional statfs inode counts; absent/zero files means inode usage is unknown. */
+  files?: number;
+  ffree?: number;
 }
 
 export interface VpsProcess {
@@ -77,7 +80,7 @@ export interface VpsProcess {
 }
 
 export interface VpsIssue {
-  /** stable while the condition lasts: `disk:/`, `memory`, `swap`, `cpu` */
+  /** stable while the condition lasts: `disk:/`, `inodes:/`, `memory`, `memory:oom`, `swap`, `cpu` */
   id: string;
   kind: VpsIssueKind;
   severity: Exclude<VpsSeverity, "ok">;
@@ -97,6 +100,8 @@ export interface VpsStatus {
   memory: { total_bytes: number; available_bytes: number; used_percent: number };
   swap: { total_bytes: number; used_bytes: number; used_percent: number };
   disks: VpsDisk[];
+  /** Kernel OOM kills in the last 15 minutes; null means journal evidence is unavailable. */
+  oom_kills?: number | null;
   /** the heaviest processes by CPU and by memory */
   top: VpsProcess[];
   issues: VpsIssue[];

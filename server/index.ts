@@ -99,7 +99,7 @@ import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleVpsRequest, type VpsServices } from "./vps-api.ts";
 import { VpsDoctor } from "./vps-doctor.ts";
-import { VpsMonitor, vpsAlertMessage } from "./vps.ts";
+import { VpsMonitor, vpsAlertMessage, vpsResolvedMessage } from "./vps.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
@@ -1477,6 +1477,11 @@ export function createServer(
       // no device subscribed: not told yet, so the first device that turns alerts on hears it
       if (!push.hasSubscribers()) return false;
       push.notifySystem(vpsAlertMessage(issue, status.hostname), issue.severity === "critical" ? "high" : "normal").catch(logPushError);
+      return true;
+    };
+    monitor.onResolved = (id, status) => {
+      if (!push.hasSubscribers()) return false;
+      push.notifySystem(vpsResolvedMessage(id, status.hostname), "normal").catch(logPushError);
       return true;
     };
     vps = {

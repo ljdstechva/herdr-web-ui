@@ -1,11 +1,11 @@
 import { expect, it } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_VPS_THRESHOLDS, type VpsDisk, type VpsIssue } from "../shared/vps.ts";
 import { parseDockerSize, parseJournalUsage, VpsDoctor } from "./vps-doctor.ts";
-import { CPU_WINDOW_MS, evaluateIssues, levelOf, parseConfig, REMIND_MS, shouldAlert, vpsAlertMessage, VpsMonitor, type MemInfo, type ProcessRow, type VpsReader } from "./vps.ts";
+import { CPU_WINDOW_MS, evaluateIssues, levelOf, parseConfig, parseKernelOom, REMIND_MS, shouldAlert, vpsAlertMessage, vpsResolvedMessage, VpsMonitor, type MemInfo, type ProcessRow, type VpsReader } from "./vps.ts";
 
 const GB = 1024 ** 3;
 
@@ -192,4 +192,134 @@ it("writes the Doctor's brief with the numbers, the ask-first rules and the owne
   expect(brief).toContain("keep the client folders");
   expect(brief).toContain("Ask the user which to do and wait for the answer.");
   expect(brief).toContain("sudo works without a password here");
+});
+
+it("judges inodes with disk thresholds and keeps hysteresis and unknown measurements", () => {
+  const input = { ...calm, disks: [{ ...disk(20), files: 100, ffree: 5 }] };
+  const first = evaluateIssues(input, DEFAULT_VPS_THRESHOLDS, new Map(), 1);
+  expect(first).toMatchObject([{ id: "inodes:/", kind: "disk", severity: "critical" }]);
+  const previous = new Map(first.map((issue) => [issue.id, issue]));
+  expect(evaluateIssues({ ...input, disks: [{ ...disk(20), files: 100, ffree: 8 }] }, DEFAULT_VPS_THRESHOLDS, previous, 2)[0]?.severity).toBe("critical");
+  expect(evaluateIssues({ ...calm, disks: [disk(20)] }, DEFAULT_VPS_THRESHOLDS, previous, 3)).toEqual(first);
+  expect(evaluateIssues({ ...calm, disks: [{ ...disk(20), files: 100, ffree: 50 }] }, DEFAULT_VPS_THRESHOLDS, previous, 4)).toEqual([]);
+});
+
+it("parses recent kernel OOM kills without treating missing or unreadable journals as healthy", () => {
+  const now = Date.now();
+  const row = (message: string, time = now) => JSON.stringify({ MESSAGE: message, __REALTIME_TIMESTAMP: String(time * 1000) });
+  expect(parseKernelOom(row("Out of memory: Killed process 123 (fixture)"), now)).toBe(1);
+  expect(parseKernelOom(row("Memory cgroup out of memory: Killed process 124 (fixture)", now - 86_400_000), now)).toBe(0);
+  expect(parseKernelOom(row("kernel fixture"), now)).toBe(0);
+  expect(parseKernelOom("", now)).toBeNull();
+  expect(parseKernelOom("not json", now)).toBeNull();
+});
+
+it("retries a throwing alert callback and ignores malformed persisted entries", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  writeFileSync(join(stateDir, "vps-alerts.json"), JSON.stringify({ null: null, array: [], wrong: { severity: "critical", at: "bad" } }));
+  const reader = new FakeReader(); reader.usedDisk = 95;
+  const monitor = new VpsMonitor({ stateDir, reader });
+  let calls = 0;
+  monitor.onAlert = () => { calls++; if (calls === 1) throw new Error("fixture notification failure"); return true; };
+  monitor.sample(); monitor.sample(); monitor.sample();
+  expect(calls).toBe(2);
+});
+
+it("resolves once with the original tag after valid recovery, including restart and no-subscriber retry", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  const reader = new FakeReader(); reader.usedDisk = 95;
+  const first = new VpsMonitor({ stateDir, reader });
+  first.onAlert = () => true; first.sample();
+  const monitor = new VpsMonitor({ stateDir, reader });
+  let subscribed = false;
+  const resolved: string[] = [];
+  monitor.onAlert = () => true;
+  monitor.onResolved = (id) => { if (!subscribed) return false; resolved.push(id); return true; };
+  const readDisks = reader.disks.bind(reader);
+  reader.disks = () => [];
+  monitor.sample(); expect(resolved).toEqual([]);
+  reader.disks = readDisks;
+  reader.usedDisk = 89; monitor.sample(); // downgrade is not recovery
+  reader.usedDisk = 94; monitor.sample();
+  reader.usedDisk = 50; monitor.sample();
+  expect(resolved).toEqual([]);
+  subscribed = true;
+  monitor.sample(); monitor.sample();
+  expect(resolved).toEqual(["disk:/"]);
+  expect(vpsResolvedMessage("disk:/", "srv").tag).toBe("herdr-vps-disk:/");
+  const restarted = new VpsMonitor({ stateDir, reader });
+  restarted.onResolved = (id) => { resolved.push(id); return true; }; restarted.sample();
+  expect(resolved).toHaveLength(1);
+});
+
+it("does not resolve unheard or disabled alerts, or replay an issue on enabling alerts", () => {
+  for (const disabled of [true, false]) {
+    const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+    const reader = new FakeReader();
+    const monitor = new VpsMonitor({ stateDir, reader });
+    const resolved: string[] = []; const alerts: string[] = [];
+    monitor.onAlert = (issue) => { if (!disabled) return false; alerts.push(issue.id); return true; };
+    monitor.onResolved = (id) => { resolved.push(id); return true; };
+    if (disabled) monitor.setConfig({ alerts: false });
+    reader.usedDisk = 95; monitor.sample();
+    if (disabled) monitor.setConfig({ alerts: true });
+    expect(alerts).toEqual([]);
+    reader.usedDisk = 50; monitor.sample();
+    expect(resolved).toEqual([]);
+  }
+});
+
+it("samples OOM evidence asynchronously and never recovers on a failed read", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  const reader: VpsReader = new FakeReader();
+  let now = 0; let count: number | null = 2; let reads = 0;
+  reader.oomKills = async () => { reads++; return count; };
+  const monitor = new VpsMonitor({ stateDir, reader, now: () => now });
+  const resolved: string[] = [];
+  monitor.onAlert = () => true;
+  monitor.onResolved = (id) => { resolved.push(id); return true; };
+  await monitor.refreshOom();
+  expect(monitor.sample().issues).toMatchObject([{ id: "memory:oom", kind: "memory" }]);
+  monitor.sample(); expect(reads).toBe(1);
+  count = null; now += 60_000; await monitor.refreshOom(); monitor.sample();
+  expect(resolved).toEqual([]);
+  expect(monitor.status().oom_kills).toBeNull();
+  count = 0; now += 60_000; await monitor.refreshOom(); monitor.sample(); monitor.sample();
+  expect(resolved).toEqual(["memory:oom"]);
+  monitor.stop();
+});
+
+it("holds memory and CPU alerts on missing measurements and retries a throwing recovery", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  const reader = new FakeReader();
+  reader.memory.available_bytes = 0;
+  const monitor = new VpsMonitor({ stateDir, reader });
+  monitor.onAlert = () => true;
+  let attempts = 0;
+  monitor.onResolved = () => { attempts++; if (attempts === 1) throw new Error("fixture recovery failure"); return true; };
+  monitor.sample();
+  reader.memory.total_bytes = 0;
+  expect(monitor.sample().issues.map((issue) => issue.id)).toEqual(["memory"]);
+  expect(attempts).toBe(0);
+  reader.memory = { total_bytes: 8 * GB, available_bytes: 4 * GB, swap_total_bytes: 0, swap_free_bytes: 0 };
+  monitor.sample(); monitor.sample(); monitor.sample(); expect(attempts).toBe(2);
+  const previous = new Map<string, VpsIssue>([["cpu", { id: "cpu", kind: "cpu", severity: "critical", title: "CPU", detail: "busy", since: 1 }]]);
+  expect(evaluateIssues({ ...calm, cpuJudged: false, disks: [] }, DEFAULT_VPS_THRESHOLDS, previous, 2)).toEqual([...previous.values()]);
+});
+
+it("reads the journal once under concurrent samples and aborts it on stop", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  const reader: VpsReader = new FakeReader();
+  let calls = 0; let cancelled = false;
+  reader.oomKills = (signal) => new Promise((resolve) => {
+    calls++;
+    const done = () => { cancelled = true; resolve(null); };
+    if (signal!.aborted) done(); else signal!.addEventListener("abort", done, { once: true });
+  });
+  const monitor = new VpsMonitor({ stateDir, reader });
+  const first = monitor.refreshOom();
+  expect(monitor.refreshOom()).toBe(first);
+  monitor.sample(); monitor.sample(); monitor.stop(); await first;
+  expect(calls).toBe(1); expect(cancelled).toBe(true);
+  expect(monitor.status().oom_kills).toBeNull();
 });

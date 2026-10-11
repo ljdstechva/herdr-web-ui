@@ -3,7 +3,7 @@
  * processes), the issues it has against the owner's thresholds, and an alert when one appears or
  * gets worse. The Doctor that fixes them is server/vps-doctor.ts; the routes are at the bottom.
  *
- * Linux only, read straight from /proc and statfs: nothing here starts a process while sampling.
+ * Linux only: /proc and statfs plus a bounded, asynchronous kernel journal read once a minute.
  */
 
 import { mkdirSync, readdirSync, readFileSync, renameSync, statfsSync, writeFileSync } from "node:fs";
@@ -21,6 +21,7 @@ import {
   type VpsThresholds,
 } from "../shared/vps.ts";
 import type { PushPayload } from "../shared/protocol.ts";
+import { run } from "./vps-command.ts";
 
 /** how often the PC is measured */
 export const SAMPLE_MS = 15_000;
@@ -34,6 +35,9 @@ export const HYSTERESIS = 2;
 const CLK_TCK = 100;
 /** processes the status names, by CPU and by memory each */
 const TOP_EACH = 5;
+export const OOM_WINDOW_MS = 15 * 60_000;
+const OOM_POLL_MS = 60_000;
+const JOURNAL_LINES = 2000;
 
 /** filesystems that hold data; tmpfs, overlay, squashfs and the like are not disks to fill */
 const DISK_TYPES = new Set(["ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3", "jfs", "reiserfs"]);
@@ -75,6 +79,30 @@ export interface VpsReader {
   command(pid: number): string | null;
   userName(uid: number): string;
   ownUid(): number;
+  /** Recent kernel OOM kills; null means unreadable/unavailable, never a healthy measurement. */
+  oomKills?(signal?: AbortSignal): Promise<number | null>;
+}
+
+/** Read only kernel metadata/messages; an empty journal does not establish access to kernel logs. */
+export function parseKernelOom(text: string, now: number): number | null {
+  const lines = text.trim().split("\n").filter(Boolean);
+  if (!lines.length) return null;
+  let kills = 0;
+  let oldest = Infinity;
+  for (const line of lines) {
+    try {
+      const entry: unknown = JSON.parse(line);
+      if (!entry || typeof entry !== "object") return null;
+      const { MESSAGE: message, __REALTIME_TIMESTAMP: raw } = entry as Record<string, unknown>;
+      const at = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) / 1000 : NaN;
+      if (typeof message !== "string" || !Number.isFinite(at)) return null;
+      oldest = Math.min(oldest, at);
+      if (at >= now - OOM_WINDOW_MS && at <= now && /\bKilled process \d+\b/i.test(message)) kills++;
+    } catch { return null; }
+  }
+  // More than the bounded tail may fit in the window: positive evidence is useful, zero is not.
+  if (!kills && lines.length >= JOURNAL_LINES && oldest > now - OOM_WINDOW_MS) return null;
+  return kills;
 }
 
 function readText(path: string): string {
@@ -83,6 +111,12 @@ function readText(path: string): string {
 
 export class LinuxReader implements VpsReader {
   private users: Map<number, string> | null = null;
+
+  async oomKills(signal?: AbortSignal): Promise<number | null> {
+    const result = await run(["journalctl", "--kernel", "--boot", "--no-pager", "--output=json", `--lines=${JOURNAL_LINES}`], 3000, signal, 1024 ** 2);
+    if (result.code !== 0 || result.timedOut || result.truncated || result.stderr.trim()) return null;
+    return parseKernelOom(result.stdout, Date.now());
+  }
 
   supported(): boolean {
     if (process.platform !== "linux") return false;
@@ -140,7 +174,9 @@ export class LinuxReader implements VpsReader {
         const total = stats.blocks * block;
         if (total <= 0) continue;
         // as df counts it: the root reserve is neither used nor available
-        disks.push({ mount, device, fs_type: type, total_bytes: total, used_bytes: used, available_bytes: available, used_percent: percent(used, used + available) });
+        disks.push({ mount, device, fs_type: type, total_bytes: total, used_bytes: used, available_bytes: available, used_percent: percent(used, used + available),
+          ...(stats.files > 0 && stats.ffree >= 0 && stats.ffree <= stats.files ? { files: stats.files, ffree: stats.ffree } : {}),
+        });
       } catch {
         /* a mount that went away between the two reads */
       }
@@ -237,12 +273,30 @@ export interface IssueInput {
   cpu: VpsStatus["cpu"];
   /** the CPU average covers a whole window: a server minutes old does not judge the CPU */
   cpuJudged: boolean;
+  oomKills?: number | null;
+}
+
+function inodesKnown(disk: VpsDisk): disk is VpsDisk & { files: number; ffree: number } {
+  return typeof disk.files === "number" && Number.isFinite(disk.files) && disk.files > 0
+    && typeof disk.ffree === "number" && Number.isFinite(disk.ffree) && disk.ffree >= 0 && disk.ffree <= disk.files;
+}
+
+/** Absence is not recovery, including the first sample after a restart. */
+function measured(id: string, input: IssueInput): boolean {
+  if (id.startsWith("disk:")) return input.disks.some((disk) => disk.mount === id.slice(5) && disk.total_bytes > 0 && Number.isFinite(disk.used_percent));
+  if (id.startsWith("inodes:")) return input.disks.some((disk) => disk.mount === id.slice(7) && inodesKnown(disk));
+  if (id === "memory:oom") return typeof input.oomKills === "number" && Number.isFinite(input.oomKills) && input.oomKills >= 0;
+  if (id === "memory") return input.memory.total_bytes > 0 && Number.isFinite(input.memory.used_percent);
+  if (id === "swap") return input.memory.total_bytes > 0 && Number.isFinite(input.swap.total_bytes) && Number.isFinite(input.swap.used_percent);
+  if (id === "cpu") return input.cpuJudged && input.cpu.cores > 0 && Number.isFinite(input.cpu.average_percent);
+  return false;
 }
 
 /** Today's issues, given yesterday's (for hysteresis and for when each began). */
 export function evaluateIssues(input: IssueInput, thresholds: VpsThresholds, previous: ReadonlyMap<string, VpsIssue>, now: number): VpsIssue[] {
   const issues: VpsIssue[] = [];
   const add = (id: string, kind: VpsIssue["kind"], value: number, warning: number, critical: number, title: string, detail: string): void => {
+    if (!measured(id, input)) return;
     const prior = previous.get(id);
     const severity = levelOf(value, warning, critical, prior?.severity);
     if (severity === null) return;
@@ -252,6 +306,11 @@ export function evaluateIssues(input: IssueInput, thresholds: VpsThresholds, pre
     add(`disk:${disk.mount}`, "disk", disk.used_percent, thresholds.disk_warning, thresholds.disk_critical,
       `Disk ${disk.mount} is ${Math.round(disk.used_percent)}% full`,
       `${formatBytes(disk.available_bytes)} free of ${formatBytes(disk.total_bytes)}`);
+    if (inodesKnown(disk)) {
+      const used = percent(disk.files - disk.ffree, disk.files);
+      add(`inodes:${disk.mount}`, "disk", used, thresholds.disk_warning, thresholds.disk_critical,
+        `Disk ${disk.mount} has used ${Math.round(used)}% of its inodes`, `${disk.ffree} free of ${disk.files} inodes; new files need free inodes even when disk space remains`);
+    }
   }
   add("memory", "memory", input.memory.used_percent, thresholds.memory_warning, thresholds.memory_critical,
     `Memory is ${Math.round(input.memory.used_percent)}% used`,
@@ -266,6 +325,11 @@ export function evaluateIssues(input: IssueInput, thresholds: VpsThresholds, pre
       `CPU ${Math.round(input.cpu.average_percent)}% busy for 5 minutes`,
       `load ${input.cpu.load.map((value) => value.toFixed(2)).join(" ")} on ${input.cpu.cores} core${input.cpu.cores === 1 ? "" : "s"}`);
   }
+  if (typeof input.oomKills === "number" && input.oomKills > 0) {
+    issues.push({ id: "memory:oom", kind: "memory", severity: "critical", title: "The kernel killed processes for lack of memory",
+      detail: `${input.oomKills} OOM kill${input.oomKills === 1 ? "" : "s"} in the last 15 minutes`, since: previous.get("memory:oom")?.since ?? now });
+  }
+  for (const issue of previous.values()) if (!measured(issue.id, input)) issues.push(issue);
   return issues.sort((a, b) => RANK[b.severity] - RANK[a.severity] || a.id.localeCompare(b.id));
 }
 
@@ -284,6 +348,13 @@ export function vpsAlertMessage(issue: VpsIssue, host: string): PushPayload {
     body: `${issue.detail}. Open VPS status in herdr web ui to run the Doctor.`,
     tag: `herdr-vps-${issue.id}`,
   };
+}
+
+/** Same notification slot as the original alert, delivered only after a known recovery. */
+export function vpsResolvedMessage(id: string, host: string): PushPayload {
+  const label = id.startsWith("disk:") ? `Disk ${id.slice(5)}` : id.startsWith("inodes:") ? `Inodes on ${id.slice(7)}`
+    : id === "memory:oom" ? "Kernel OOM kills" : id === "cpu" ? "CPU" : id === "swap" ? "Swap" : "Memory";
+  return { pane_id: null, title: `${host}: ${label} recovered`, body: "New measurements confirm this VPS issue has cleared.", tag: `herdr-vps-${id}` };
 }
 
 function clamp(value: unknown, fallback: number): number {
@@ -350,12 +421,17 @@ export class VpsMonitor {
   private startedAt: number;
   private latest: VpsStatus | null = null;
   private issues = new Map<string, VpsIssue>();
-  private told: Map<string, { severity: VpsSeverity; at: number }>;
+  private told: Map<string, { severity: VpsSeverity; at: number; delivered: boolean }>;
   private configValue: VpsConfig;
+  private oomKills: number | null = null;
+  private nextOomAt = 0;
+  private oomFlight: Promise<void> | null = null;
+  private oomController: AbortController | null = null;
   /** CPU use per process over the last sample, by `pid:start` */
   private processCpu = new Map<string, number>();
   /** false: nobody could hear it (no device subscribed); it stays news and is tried at the next sample */
   onAlert: ((issue: VpsIssue, status: VpsStatus) => boolean | void) | null = null;
+  onResolved: ((id: string, status: VpsStatus) => boolean | void) | null = null;
 
   constructor(options: VpsMonitorOptions) {
     this.reader = options.reader ?? new LinuxReader();
@@ -367,9 +443,13 @@ export class VpsMonitor {
     this.configValue = parseConfig(readJsonFile(this.configPath));
     this.told = new Map();
     const stored = readJsonFile(this.alertsPath);
-    if (stored && typeof stored === "object") {
-      for (const [id, entry] of Object.entries(stored as Record<string, { severity?: unknown; at?: unknown }>)) {
-        if ((entry.severity === "warning" || entry.severity === "critical") && typeof entry.at === "number") this.told.set(id, { severity: entry.severity, at: entry.at });
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      for (const [id, value] of Object.entries(stored)) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const entry = value as Record<string, unknown>;
+        if ((entry.severity === "warning" || entry.severity === "critical") && typeof entry.at === "number" && Number.isFinite(entry.at) && entry.at >= 0) {
+          this.told.set(id, { severity: entry.severity, at: entry.at, delivered: entry.delivered === true });
+        }
       }
     }
   }
@@ -386,6 +466,27 @@ export class VpsMonitor {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.oomController?.abort();
+  }
+
+  /** Sampling stays synchronous; only one bounded journal reader runs at a time. */
+  refreshOom(): Promise<void> {
+    if (this.oomFlight) return this.oomFlight;
+    if (!this.reader.oomKills || this.now() < this.nextOomAt) return Promise.resolve();
+    const controller = new AbortController();
+    this.oomController = controller;
+    this.oomKills = null;
+    this.oomFlight = Promise.resolve().then(() => this.reader.oomKills!(controller.signal)).then((count) => {
+      if (!controller.signal.aborted && typeof count === "number" && Number.isFinite(count) && count >= 0) this.oomKills = count;
+    }).catch((error) => {
+      this.oomKills = null;
+      console.error(`vps journal: ${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => {
+      this.nextOomAt = this.now() + OOM_POLL_MS;
+      this.oomController = null;
+      this.oomFlight = null;
+    });
+    return this.oomFlight;
   }
 
   config(): VpsConfig {
@@ -427,6 +528,7 @@ export class VpsMonitor {
   /** Measures once, judges the issues and tells what is news. */
   sample(): VpsStatus {
     const reader = this.reader;
+    void this.refreshOom();
     const at = this.now();
     const cpu = reader.cpuTimes();
     const rows = reader.processes();
@@ -462,10 +564,14 @@ export class VpsMonitor {
     const cpuStatus = { cores: reader.cores(), usage_percent: usage, average_percent: average, load: reader.load() };
     const disks = reader.disks();
 
-    const issues = evaluateIssues(
-      { disks, memory, swap, cpu: cpuStatus, cpuJudged: at - this.startedAt >= CPU_WINDOW_MS - this.sampleMs },
-      this.configValue.thresholds, this.issues, at,
-    );
+    const input: IssueInput = { disks, memory, swap, cpu: cpuStatus, cpuJudged: at - this.startedAt >= CPU_WINDOW_MS - this.sampleMs, oomKills: this.oomKills };
+    // Persisted severity also supplies hysteresis on the first measured sample after restart.
+    const previous = new Map(this.issues);
+    for (const [id, told] of this.told) if (!previous.has(id) && measured(id, input)) {
+      const kind = id.startsWith("disk:") || id.startsWith("inodes:") ? "disk" : id === "cpu" ? "cpu" : id === "swap" ? "swap" : "memory";
+      if (told.severity !== "ok") previous.set(id, { id, kind, severity: told.severity, title: "", detail: "", since: told.at });
+    }
+    const issues = evaluateIssues(input, this.configValue.thresholds, previous, at);
     this.issues = new Map(issues.map((issue) => [issue.id, issue]));
 
     const own = reader.ownUid();
@@ -489,29 +595,40 @@ export class VpsMonitor {
     this.latest = {
       supported: true, hostname: osHostname(), sampled_at: at, uptime_seconds: reader.uptime(),
       cpu: cpuStatus, memory, swap, disks, top, issues, severity, config: this.configValue,
+      ...(reader.oomKills ? { oom_kills: this.oomKills } : {}),
     };
-    this.tell(issues, at);
+    this.tell(issues, at, input);
     return this.latest;
   }
 
-  private tell(issues: VpsIssue[], at: number): void {
+  private tell(issues: VpsIssue[], at: number, input: IssueInput): void {
     let changed = false;
     const present = new Set(issues.map((issue) => issue.id));
-    for (const id of [...this.told.keys()]) {
-      if (!present.has(id)) { this.told.delete(id); changed = true; }
+    for (const [id, told] of this.told) {
+      if (present.has(id) || !measured(id, input)) continue;
+      if (this.configValue.alerts && told.delivered && this.onResolved && this.latest) {
+        let heard = false;
+        try { heard = this.onResolved(id, this.latest) !== false; } catch (error) { console.error(`vps recovery: ${error instanceof Error ? error.message : String(error)}`); }
+        if (!heard) continue;
+      }
+      this.told.delete(id); changed = true;
     }
     for (const issue of issues) {
+      if (!measured(issue.id, input)) continue;
       const told = this.told.get(issue.id);
       // a lower level keeps the record of the higher one: going back up is not news again
       if (told && RANK[issue.severity] < RANK[told.severity] && at - told.at < REMIND_MS) continue;
       if (!shouldAlert(issue, told, at)) continue;
       // with alerts off an issue still counts as told, so turning them on does not replay it
-      if (this.configValue.alerts && this.onAlert && this.latest) {
-        let heard = true;
+      let delivered = told?.delivered ?? false;
+      if (this.configValue.alerts) {
+        if (!this.onAlert || !this.latest) continue;
+        let heard = false;
         try { heard = this.onAlert(issue, this.latest) !== false; } catch (error) { console.error(`vps alert: ${error instanceof Error ? error.message : String(error)}`); }
         if (!heard) continue;
+        delivered = true;
       }
-      this.told.set(issue.id, { severity: issue.severity, at });
+      this.told.set(issue.id, { severity: issue.severity, at, delivered });
       changed = true;
     }
     if (changed) {
