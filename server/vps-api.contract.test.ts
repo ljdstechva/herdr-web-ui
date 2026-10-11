@@ -1,7 +1,7 @@
 /** Run explicitly with HERDR_TEST_MODE=unit: the existing preload selects a nonexistent socket. */
 import "../scripts/test-herdr.ts";
 import { afterEach, expect, it } from "bun:test";
-import { mkdtemp, mkdir, writeFile, utimes, rm, lstat } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, writeFile, utimes, rm, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DEVICE_COOKIE, forgetAuthAttempts } from "./auth.ts";
@@ -21,12 +21,12 @@ afterEach(async () => {
 function deferred() { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; }
 
 async function fixture(extra: Partial<DoctorContext> = {}, absent = false) {
-  const dir = await mkdtemp("/tmp/vps-api-");
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "vps-api-")));
   const reader: VpsReader = {
     supported: () => true, cpuTimes: () => ({ total: 100, idle: 90 }), cores: () => 2,
     memInfo: () => ({ total_bytes: 100, available_bytes: 80, swap_total_bytes: 0, swap_free_bytes: 0 }),
     load: () => [0, 0, 0], uptime: () => 123, disks: () => [], processes: () => [], command: () => null,
-    ownUid: () => process.getuid!(), userName: () => "fixture",
+    ownUid: () => (process.getuid?.() ?? 0), userName: () => "fixture",
   };
   let now = Date.now();
   const monitor = new VpsMonitor({ stateDir: dir, reader, now: () => now });
@@ -151,4 +151,26 @@ it("returns not_available when no VPS monitor was supplied", async () => {
   const f = await fixture({}, true);
   for (const path of ["/status", "/config", "/doctor/options", "/doctor/processes"]) await error(await f.request(path), 404, "not_available");
   await error(await f.request("/doctor/disk/scan", {}), 404, "not_available");
+});
+
+it("defers the recovery callback while a page is active, without sending real push", async () => {
+  const f = await fixture();
+  // Valid subscription shape only; no push is sent in this test.
+  await writeFile(join(f.dir, "push-subscriptions.json"), JSON.stringify([{ endpoint: "https://push.invalid/fixture",
+    keys: { p256dh: Buffer.alloc(65).toString("base64url"), auth: Buffer.alloc(16).toString("base64url") } }]));
+  // Bun accepts request headers; lib.dom's WebSocket constructor only types protocols.
+  const Socket = globalThis.WebSocket as unknown as { new(url: string, options: { headers: Record<string, string> }): WebSocket };
+  const ws = new Socket(`${f.base.replace("http:", "ws:")}/ws`, { headers: f.headers });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Fixture presence was not acknowledged")), 2000);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "presence", active: true }));
+        ws.send(JSON.stringify({ type: "role", mode: "interact" }));
+      };
+      ws.onmessage = (event) => { if (JSON.parse(String(event.data)).type === "role-ack") { clearTimeout(timer); resolve(); } };
+      ws.onerror = () => { clearTimeout(timer); reject(new Error("Fixture websocket failed")); };
+    });
+    expect(f.monitor.onResolved!("disk:/", f.monitor.status())).toBe(false);
+  } finally { ws.close(); }
 });
