@@ -118,15 +118,26 @@ it("bounds the Claude history loop and rejects a partial plan", async () => {
 it("revalidates privileged file plans and never issues rm for a replacement", async () => {
   const calls: string[][] = [];
   let large = "";
-  const { doctor, reader, file } = await fixture({ command: async (argv) => { calls.push(argv); return { code: 0, stdout: argv.includes("find") ? `300000000\t${large}\n` : "", stderr: "" }; } });
+  const { doctor, reader, dir } = await fixture({ command: async (argv) => { calls.push(argv); return { code: 0, stdout: argv.includes("find") ? `300000000\t${large}\n` : "", stderr: "" }; } });
   // Ensure the fake system find has a root; no host directories or real commands are used.
-  const dir = dirs.at(-1)!; await mkdir(join(dir, "system", "tmp"), { recursive: true });
+  await mkdir(join(dir, "system", "tmp"), { recursive: true });
+  const file = join(dir, "system", "tmp", "large"); await writeFile(file, "fixture");
   reader.ownUid = () => -1; large = file;
   const scan = await doctor.scanDisk(30);
   expect(scan.candidates.find((item) => item.id === "file:0")?.root).toBe(true);
   await rename(file, `${file}.kept`); await writeFile(file, "replacement");
   expect((await doctor.cleanDisk(scan.scan_id, ["file:0"])).results[0]?.ok).toBe(false);
   expect(calls.some((argv) => argv.includes("rm"))).toBe(false);
+});
+
+it("refuses a large-file command row outside its configured scan roots", async () => {
+  let forged = "";
+  const { doctor, dir, file } = await fixture({ command: async (argv) => ({ code: 0, stdout: argv.includes("find") ? `300000000\t${forged}\n` : "", stderr: "" }) });
+  await mkdir(join(dir, "system", "tmp"), { recursive: true });
+  // A newline/tab in a filename can resemble another find row; the output is not deletion authority.
+  forged = file;
+  const scan = await doctor.scanDisk(30);
+  expect(scan.candidates.some((item) => item.id.startsWith("file:"))).toBe(false);
 });
 
 it("retains twenty private briefs, keeps unrelated files/symlinks and joins a launch double tap", async () => {

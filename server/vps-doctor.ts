@@ -455,8 +455,9 @@ export class VpsDoctor {
       const tab = line.indexOf("\t");
       if (tab <= 0) return [];
       const path = line.slice(tab + 1);
-      if (swaps.has(path) || underAny(path, PROTECTED_PREFIXES) || /^\/swap/.test(path)) return [];
-      return [{ path, bytes: Number(line.slice(0, tab)) }];
+      const bytes = Number(line.slice(0, tab));
+      if (!underAny(path, roots) || !Number.isFinite(bytes) || bytes < LARGE_FILE_BYTES || swaps.has(path) || underAny(path, PROTECTED_PREFIXES) || /^\/swap/.test(path)) return [];
+      return [{ path, bytes }];
     }).sort((a, b) => b.bytes - a.bytes).slice(0, LARGE_FILES);
   }
 
