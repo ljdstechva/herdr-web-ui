@@ -11,6 +11,7 @@ import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar } from "./AgentSidebar.tsx";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageMeters } from "./UsageMeters.tsx";
+import { VpsStatusRow } from "./VpsStatus.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
 
@@ -41,6 +42,8 @@ export function MachineSidebar(props: Props) {
       {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
       {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />{t("Install app")}</button>}
       {!installed && !canInstall && installHelpOpen && <p className="sidebar-install-help" role="status">{help}</p>}
+      {/* the health of the PC this app runs on, with its Doctor (components/VpsStatus.tsx) */}
+      <VpsStatusRow onSelect={props.onSelect} />
       <div className="sidebar-footer-row">
         <button className="btn btn-ghost sidebar-footer-action" title={t("Settings (⌘⇧,)")} onClick={props.actions.openSettings}><Settings aria-hidden="true" />{t("Settings")}</button>
         <UsageMeters />

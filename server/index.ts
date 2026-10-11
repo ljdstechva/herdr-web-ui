@@ -97,6 +97,9 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
 import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
+import { handleVpsRequest, type VpsServices } from "./vps-api.ts";
+import { VpsDoctor } from "./vps-doctor.ts";
+import { VpsMonitor, vpsAlertMessage } from "./vps.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
@@ -426,6 +429,8 @@ export function createServer(
     herdrUpdate?: HerdrUpdater;
     /** anonymous install and update counts (server/telemetry.ts); unset, the server sends none and answers 404. Only the real entrypoint passes one. */
     telemetry?: Telemetry;
+    /** this PC's health (server/vps.ts) and its Doctor; unset, /api/vps answers 404. Only the real entrypoint passes one. */
+    vps?: VpsMonitor;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
@@ -1464,6 +1469,20 @@ export function createServer(
     console.error(`web push: ${error instanceof Error ? error.message : String(error)}`);
   };
 
+  /** VPS status alerts go out through web push; the Doctor starts its agents like New workspace does */
+  let vps: VpsServices | undefined;
+  if (options.vps) {
+    const monitor = options.vps;
+    monitor.onAlert = (issue, status) => {
+      push.notifySystem(vpsAlertMessage(issue, status.hostname), issue.severity === "critical" ? "high" : "normal").catch(logPushError);
+    };
+    vps = {
+      monitor,
+      doctor: new VpsDoctor({ monitor, stateDir: options.stateDir ?? defaultStateDir(), codexHome: options.codexHome, launchAgent: agentLaunch }),
+      testAlert: () => push.notifySystem({ pane_id: null, title: `${monitor.status().hostname}: VPS alerts are on`, body: "This device will hear when the server runs short of disk, memory or CPU.", tag: "herdr-vps-test" }, "normal", true),
+    };
+  }
+
   /** Status of EVERY pane, attached or not: one collector feeds all connected clients and web push. */
   function omoChanged(paneId: string, derived: AgentStatus, background: number, turn: boolean, rest: OmoRest | undefined): void {
     // OmO's own turn, which herdr's status never shows: back at work, its form has had its answer
@@ -1725,6 +1744,7 @@ export function createServer(
       if (pathname === "/api/telemetry") return handleTelemetryRequest(request, options.telemetry);
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
+      if (pathname === "/api/vps" || pathname.startsWith("/api/vps/")) return handleVpsRequest(request, pathname, vps, (seconds) => bunServer.timeout(request, seconds));
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
 
@@ -3192,13 +3212,16 @@ if (import.meta.main) {
   const updates = connectUpdater();
   const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
-  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, registerBridge: true });
+  const vps = process.platform === "linux" ? new VpsMonitor({ stateDir: defaultStateDir() }) : undefined;
+  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, registerBridge: true });
   telemetry.start();
+  vps?.start();
   let stopping = false;
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
     telemetry.stop();
+    vps?.stop();
     instance.stop();
     // Attach sidecars need ~1.2s to release herdr's exclusive client slot.
     setTimeout(() => process.exit(0), 2000);

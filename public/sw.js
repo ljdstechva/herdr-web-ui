@@ -126,7 +126,8 @@ self.addEventListener("push", (event) => {
         tag: payload.tag || "herdr",
         renotify: !watching,
         silent: watching,
-        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local" },
+        // a VPS status alert (server/vps.ts) opens the VPS status dialog instead of a pane
+        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", vps: String(payload.tag || "").startsWith("herdr-vps-") },
         icon: "/icons/icon-192.png?v=ram1",
         // Android's status bar and small icon: white on transparent, or Chrome's bell
         badge: "/icons/badge-96.png?v=ram1",
@@ -144,14 +145,15 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const paneId = event.notification.data ? event.notification.data.pane_id : null;
   const machineId = event.notification.data?.machine_id || "local";
+  const vps = event.notification.data?.vps === true;
   // Remember the intent before any lookup: an older focus can finish while this one
   // is still finding its window.
-  latestNotificationSelection = paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat" } : null;
+  latestNotificationSelection = paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat" } : vps ? { type: "open-vps" } : null;
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       if (click !== latestNotificationClick) return;
-      const url = paneId ? `/?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}&view=chat` : "/";
+      const url = paneId ? `/?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}&view=chat` : vps ? "/?vps=1" : "/";
       const selectLatest = (client) => { if (client && latestNotificationSelection) client.postMessage(latestNotificationSelection); };
       const open = async () => {
         // An opening can also finish after a newer tap. Repair that returned
@@ -160,7 +162,10 @@ self.addEventListener("notificationclick", (event) => {
       };
       const target = windows.find((client) => client.focused) || windows[0];
       if (target) {
-        const select = () => { if (paneId) target.postMessage({ type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat" }); };
+        const select = () => {
+          if (paneId) target.postMessage({ type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat" });
+          else if (vps) target.postMessage({ type: "open-vps" });
+        };
         // Name the pane before focus(): a focus() that iOS refuses or resolves late must not
         // swallow it. A page frozen in the background may need the selection again
         // once its focus completes.

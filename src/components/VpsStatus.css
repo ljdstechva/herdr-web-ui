@@ -1,0 +1,743 @@
+/* VPS status: the sidebar row, the alert that drops in, and the dialog with the Doctor */
+
+/* ── sidebar row ── */
+.vps-row {
+  margin-bottom: var(--space-1);
+}
+
+.vps-chip {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 var(--space-2) 0 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+.vps-chip > svg {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-inline: calc((var(--side-box) - var(--icon-size)) / 2) 0;
+  color: var(--text-dim);
+}
+
+.vps-chip.is-warning > svg,
+.vps-chip.is-critical > svg {
+  color: var(--status-blocked);
+}
+
+@media (hover: hover) {
+  .vps-chip:hover { background: var(--side-hover); }
+}
+
+.vps-chip-name {
+  flex: 0 0 auto;
+}
+
+.vps-chip-wait {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-mini {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 1px 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vps-mini-label {
+  color: var(--text-dim);
+}
+
+.vps-mini-value {
+  color: var(--text);
+}
+
+.vps-mini-bar {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  left: 1px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(to right, var(--text-dim) var(--fill), var(--border-strong) var(--fill));
+}
+
+.vps-mini.is-warning .vps-mini-value,
+.vps-mini.is-critical .vps-mini-value {
+  color: var(--status-blocked);
+}
+
+.vps-mini.is-warning .vps-mini-bar,
+.vps-mini.is-critical .vps-mini-bar {
+  background: linear-gradient(to right, var(--status-blocked) var(--fill), var(--border-strong) var(--fill));
+}
+
+/* the severity in words: color alone never says it */
+.vps-word {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vps-word.is-ok { color: var(--status-done); }
+.vps-word.is-warning,
+.vps-word.is-critical { color: var(--status-blocked); }
+
+.vps-chip > .vps-word {
+  margin-left: auto;
+}
+
+@media (pointer: coarse) {
+  .vps-chip { height: var(--touch-target); }
+}
+
+/* ── the alert that drops in ── */
+.vps-toast {
+  position: fixed;
+  right: var(--space-4);
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-droplet);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(440px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--status-blocked);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-pop);
+}
+
+.vps-toast-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--status-blocked);
+}
+
+.vps-toast-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.vps-toast-text strong {
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+}
+
+.vps-toast-text span {
+  color: var(--text-dim);
+}
+
+.vps-toast-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+@media (max-width: 640px) {
+  .vps-toast {
+    right: var(--space-3);
+    left: var(--space-3);
+    width: auto;
+    flex-wrap: wrap;
+  }
+  .vps-toast-actions { margin-left: auto; }
+}
+
+/* ── dialog ── */
+.vps-modal {
+  width: min(100%, 720px);
+}
+
+.vps-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vps-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.vps-status,
+.vps-doctor,
+.vps-disk,
+.vps-processes,
+.vps-agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.vps-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.vps-heading {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+summary.vps-heading {
+  cursor: pointer;
+}
+
+.vps-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.vps-note.is-error {
+  color: var(--status-blocked);
+}
+
+.vps-note svg {
+  width: 16px;
+  height: 16px;
+}
+
+.vps-spin {
+  animation: vps-spin 0.8s steps(8) infinite;
+}
+
+@keyframes vps-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vps-spin { animation: none; }
+}
+
+.vps-ok,
+.vps-issue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+
+.vps-ok svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--status-done);
+}
+
+.vps-ok > span {
+  flex: 1 1 auto;
+}
+
+.vps-issue {
+  border-color: var(--status-blocked);
+  background: var(--status-blocked-tint);
+}
+
+.vps-issue.is-warning {
+  background: transparent;
+}
+
+.vps-issue-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--status-blocked);
+}
+
+.vps-issue-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vps-issue-text strong {
+  color: var(--text-strong);
+}
+
+.vps-issue-text > span {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-issue-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.vps-issue-line svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--status-blocked);
+}
+
+/* label and value on one line, the bar and the detail under them */
+.vps-meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: var(--space-1);
+  font-size: var(--fs-sm);
+}
+
+.vps-meter-label {
+  color: var(--text);
+}
+
+.vps-meter-value {
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.vps-meter-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.vps-meter-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--status-done);
+}
+
+.vps-meter.is-warning .vps-meter-bar > span,
+.vps-meter.is-critical .vps-meter-bar > span {
+  background: var(--status-blocked);
+}
+
+.vps-meter-detail {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-procs,
+.vps-folders ul,
+.vps-result-list,
+.vps-confirm-list,
+.vps-proc-list,
+.vps-preview ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vps-proc,
+.vps-folders li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.vps-folders li {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.vps-proc-name,
+.vps-folders li > span:first-child {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vps-proc-user {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-proc-num {
+  min-width: 6ch;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.vps-settings {
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.vps-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+
+.vps-thresholds {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 88px;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.vps-threshold-name {
+  font-size: var(--fs-sm);
+}
+
+.vps-number {
+  width: 100%;
+  font-family: var(--font-mono);
+}
+
+.vps-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.vps-actions .btn svg,
+.vps-ok .btn svg,
+.vps-issue .btn svg,
+.vps-toast .btn svg,
+.vps-disk-head .btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ── doctor ── */
+.vps-engines,
+.vps-tools {
+  flex-wrap: wrap;
+  align-self: flex-start;
+}
+
+.vps-agent-pickers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.vps-textarea {
+  height: auto;
+  min-height: 72px;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+  font: inherit;
+}
+
+.vps-disk-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-disk-head > span:first-child {
+  flex: 1 1 auto;
+}
+
+.vps-days {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.vps-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.vps-group > legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+}
+
+.vps-candidate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.vps-candidate.is-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.vps-candidate > input {
+  margin-top: 3px;
+}
+
+.vps-candidate-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vps-candidate-label {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vps-candidate-detail {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.vps-candidate-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.vps-candidate-size {
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.vps-risk {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.vps-risk.is-safe {
+  border-color: var(--status-done);
+  color: var(--status-done);
+}
+
+.vps-risk.is-danger {
+  border-color: var(--status-blocked);
+  color: var(--status-blocked);
+}
+
+.vps-confirm-list .vps-risk {
+  margin-right: var(--space-2);
+}
+
+.vps-preview {
+  font-size: var(--fs-xs);
+}
+
+.vps-preview summary {
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.vps-preview li {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the selection and its button stay in reach under a long list */
+.vps-sticky {
+  position: sticky;
+  bottom: calc(-1 * var(--space-4));
+  padding: var(--space-2) 0;
+  background: var(--bg-panel);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.vps-total {
+  margin-right: auto;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.vps-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.vps-confirm p {
+  margin: 0;
+}
+
+.vps-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.vps-result-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+}
+
+.vps-result-head svg,
+.vps-result-list svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.vps-result-head svg,
+.vps-result-list .is-ok svg {
+  color: var(--status-done);
+}
+
+.vps-result-list .is-failed svg {
+  color: var(--status-blocked);
+}
+
+.vps-result-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+
+.vps-proc-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.vps-proc-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.vps-proc-top .vps-proc-name {
+  flex: 1 1 auto;
+}
+
+.vps-proc-cmd {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vps-proc-pane {
+  color: var(--status-working);
+  font-size: var(--fs-xs);
+}
+
+.vps-proc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.vps-proc-outcome {
+  font-size: var(--fs-xs);
+}
+
+.vps-proc-outcome.is-ok { color: var(--status-done); }
+.vps-proc-outcome.is-failed { color: var(--status-blocked); }
+
+@media (max-width: 640px) {
+  .vps-agent-pickers { grid-template-columns: minmax(0, 1fr); }
+  .vps-thresholds { grid-template-columns: minmax(0, 1fr) 72px 72px; }
+  .vps-threshold-name .field-hint { display: none; }
+  .vps-issue { flex-wrap: wrap; }
+  .vps-issue > .btn { margin-left: auto; }
+}

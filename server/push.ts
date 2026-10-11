@@ -96,6 +96,11 @@ export interface PushService {
   /** Schedules the alert this change is worth, and calls off the one it overtakes. */
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
+  /**
+   * An alert about the PC itself (server/vps.ts) to every subscribed device, held back like the
+   * others while a window is in use (that window shows its own); `force` sends it anyway (the test).
+   */
+  notifySystem(message: PushPayload, urgency: "normal" | "high", force?: boolean): Promise<void>;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
 }
@@ -436,6 +441,12 @@ export function createPushService(options: PushServiceOptions): PushService {
       if (to.length === 0 || options.inUse?.()) return;
       // the pane may already be gone from herdr: the seeded title is what is left
       await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...(machineId === "local" ? {} : { machine_id: machineId }), tag: paneNotificationTag(paneId, machineId) }, "normal", to);
+    },
+
+    async notifySystem(message, urgency, force = false) {
+      if (!force && options.inUse?.()) return;
+      const to = [...store().values()];
+      if (to.length > 0) await broadcast(message, urgency, to);
     },
 
     async settled() {
