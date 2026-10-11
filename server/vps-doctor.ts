@@ -13,9 +13,9 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, type Stats } from "node:fs";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { run, type CommandResult } from "./vps-command.ts";
-import { capturePath, directory, isDirectory, oldFiles, ScanBudget, ScanStopped, validateEntry, validatePath, type PathPlan } from "./vps-doctor-files.ts";
+import { capturePath, directory, inodeKey, isDirectory, oldFiles, ScanBudget, ScanStopped, validateEntry, validatePath, type PathPlan } from "./vps-doctor-files.ts";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize, sep } from "node:path";
 
 import type {
   DiskCandidate,
@@ -95,11 +95,11 @@ const PROTECTED_PREFIXES = ["/proc", "/sys", "/dev", "/run", "/boot", "/usr", "/
 const TMP_SKIP = ["/tmp/claude-", "/tmp/systemd-private-", "/tmp/snap-private-tmp", "/tmp/.X11-unix", "/tmp/.ICE-unix", "/tmp/tmux-", "/tmp/node-compile-cache"];
 
 function underAny(path: string, prefixes: readonly string[]): boolean {
-  return prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+  return prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}${sep}`));
 }
 
 type Plan =
-  | { kind: "paths"; paths: PathPlan[]; root: boolean }
+  | { kind: "paths"; paths: PathPlan[]; root: boolean; unsafe: boolean }
   | { kind: "commands"; commands: string[][]; root: boolean };
 
 export const SCAN_TTL_MS = 30 * 60_000;
@@ -281,9 +281,10 @@ export class VpsDoctor {
           const captured = await capturePath(path, work, proposed.cutoff);
           if (captured) paths.push(captured);
         }
-        if (!paths.length) return;
-        plan = { kind: "paths", paths, root: proposed.root };
-        candidate.bytes = paths.reduce((total, path) => total + path.entries.reduce((size, entry) => size + entry.size, 0), 0);
+        if (!proposed.paths.length) return;
+        // Keep the measured estimate (du deduplicates hardlinks). An unsafe manifest
+        // remains visible, but cannot authorize even a partial cleanup of this item.
+        plan = { kind: "paths", paths, root: proposed.root, unsafe: paths.length !== proposed.paths.length };
       } else plan = proposed;
       if (candidate.bytes !== null && candidate.bytes <= 0) return;
       candidates.push({ ...candidate, selected: candidate.selected ?? candidate.risk === "safe" });
@@ -395,7 +396,7 @@ export class VpsDoctor {
       bytes += sum(await this.du(folders, false, work));
       paths.push(...folders);
       await add({ id: "claude-history", group: "history", label: `Claude Code conversations older than ${days} days`, detail: "Old Claude sessions can no longer be resumed or read in chat afterwards.", bytes, risk: "caution", root: false, selected: false, preview: paths.slice(0, 5).map((path) => path.replace(home, "~")) },
-        { kind: "paths", paths, root: false, cutoff });
+        { kind: "paths", paths, root: false });
     }
     {
       const dir = join(this.codexHome, "generated_images");
@@ -494,6 +495,7 @@ export class VpsDoctor {
     const available = (): number => this.ctx.monitor.sample().disks.reduce((total, disk) => total + disk.available_bytes, 0);
     const before = available();
     const results: DiskCleanItem[] = [];
+    const unlinked = new Map<string, number>();
     for (const { id, plan } of claimed) {
       if (!plan) { results.push({ id, ok: false, message: "Not in that scan (or already used)" }); continue; }
       if (plan.root && !root) { results.push({ id, ok: false, message: "Needs passwordless sudo" }); continue; }
@@ -506,12 +508,13 @@ export class VpsDoctor {
           }
           results.push({ id, ok: failures.length === 0, message: failures.length ? failures.join("; ") : "Done" });
         } else {
+          if (plan.unsafe) { results.push({ id, ok: false, message: "Unsafe or unreadable path in scan; kept. Scan again after reviewing it." }); continue; }
           let removed = 0;
           const errors: string[] = [];
           const work = new ScanBudget(300_000);
           try {
             for (const path of plan.paths) {
-              if (!this.deletable(path.path, plan.root) || !await validatePath(path, work)) { errors.push("Path changed, missing, unreadable or protected; kept"); continue; }
+              if (!this.deletable(path.path, plan.root) || !await validatePath(path, work, unlinked)) { errors.push("Path changed, missing, unreadable or protected; kept"); continue; }
               // No recursive rm: even a new child arriving after validation prevents rmdir.
               // Capture is pre-order: reversing it visits every child before its parent.
               const entries = [...path.entries].reverse();
@@ -519,12 +522,13 @@ export class VpsDoctor {
               let ok = true;
               for (const entry of entries) {
                 work.check();
-                if (!this.deletable(entry.path, plan.root) || !await validateEntry(path, entry, directories, !entry.directory)) { ok = false; errors.push("Path changed before deletion; kept"); break; }
+                if (!this.deletable(entry.path, plan.root) || !await validateEntry(path, entry, directories, work, unlinked)) { ok = false; errors.push("Path changed before deletion; kept"); break; }
                 if (plan.root) {
-                  const result = await this.command(["sudo", "-n", entry.directory ? "rmdir" : "rm", "--", entry.path], 30_000);
+                  const result = await this.command(["sudo", "-n", entry.directory ? "rmdir" : "rm", "--", entry.path], 30_000, work);
                   if (result.code !== 0) { ok = false; errors.push("Privileged deletion failed"); break; }
                 } else if (entry.directory) await rmdir(entry.path);
                 else await unlink(entry.path);
+                if (!entry.directory) unlinked.set(inodeKey(entry), (unlinked.get(inodeKey(entry)) ?? 0) + 1);
               }
               if (ok) removed++;
             }

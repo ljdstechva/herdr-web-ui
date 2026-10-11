@@ -1,11 +1,12 @@
 import { afterEach, expect, it } from "bun:test";
-import { mkdtemp, mkdir, writeFile, utimes, rename, symlink, rm } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, writeFile, utimes, rename, symlink, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { ScanBudget, oldFiles, capturePath, validatePath } from "./vps-doctor-files.ts";
 
 const fixtures: string[] = [];
 const budgets: ScanBudget[] = [];
-async function fixture() { const dir = await mkdtemp("/tmp/vps-files-"); fixtures.push(dir); return dir; }
+async function fixture() { const dir = await realpath(await mkdtemp(join(tmpdir(), "vps-files-"))); fixtures.push(dir); return dir; }
 function budget(ms = 5000, limit = 200_000) { const work = new ScanBudget(ms, limit); budgets.push(work); return work; }
 afterEach(async () => { budgets.splice(0).forEach((work) => work.close()); for (const dir of fixtures.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
@@ -34,7 +35,15 @@ it("stops a walk at its total deadline", async () => {
   await expect(oldFiles(dir, Date.now(), budget(0))).rejects.toMatchObject({ code: "scan_timeout" });
 });
 
-it("rejects symlink leaves and parents, replaced roots, modified content and new children", async () => {
+it("keeps completed old-file results while skipping beyond the historical depth limit", async () => {
+  const dir = await fixture();
+  const shallow = join(dir, "old"); await writeFile(shallow, "old"); await utimes(shallow, 1, 1);
+  const deep = join(dir, ...Array(14).fill("d")); await mkdir(deep, { recursive: true });
+  await writeFile(join(deep, "ignored"), "old");
+  expect(await oldFiles(dir, Date.now() + 1000, budget())).toEqual({ paths: [shallow], bytes: 3 });
+});
+
+it.skipIf(process.platform === "win32")("rejects symlink leaves and parents, replaced roots, modified content and new children", async () => {
   const dir = await fixture();
   const target = join(dir, "cache");
   await mkdir(target); await writeFile(join(target, "file"), "old");

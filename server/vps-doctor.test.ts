@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "bun:test";
-import { mkdtemp, mkdir, writeFile, utimes, rename, symlink, rm, lstat, readdir, readFile } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, writeFile, utimes, rename, symlink, link, rm, lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { SCAN_TTL_MS, VpsDoctor, type DoctorContext } from "./vps-doctor.ts";
 import { VpsMonitor, type VpsReader } from "./vps.ts";
 import type { run } from "./vps-command.ts";
@@ -11,15 +12,15 @@ afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recurs
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 
 async function fixture(extra: Partial<DoctorContext> = {}) {
-  const dir = await mkdtemp("/tmp/vps-doctor-"); dirs.push(dir);
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "vps-doctor-"))); dirs.push(dir);
   const reader: VpsReader = {
     supported: () => true, cpuTimes: () => ({ total: 100, idle: 90 }), cores: () => 1,
     memInfo: () => ({ total_bytes: 100, available_bytes: 90, swap_total_bytes: 0, swap_free_bytes: 0 }),
     load: () => [0, 0, 0], uptime: () => 1, disks: () => [], processes: () => [], command: () => null,
-    userName: () => "fixture", ownUid: () => process.getuid!(),
+    userName: () => "fixture", ownUid: () => (process.getuid?.() ?? 0),
   };
   const monitor = new VpsMonitor({ stateDir: dir, reader });
-  const command: typeof run = async () => ({ code: 0, stdout: "", stderr: "" });
+  const command: typeof run = async (argv) => ({ code: 0, stdout: argv.includes("-sb") ? argv.slice(argv.indexOf("--") + 1).map((path) => `1234\t${path}`).join("\n") : "", stderr: "" });
   const doctor = new VpsDoctor({ monitor, stateDir: dir, home: dir, codexHome: join(dir, ".codex"), systemRoot: join(dir, "system"), command, launchAgent: async () => { throw new Error("No agents in tests"); }, ...extra });
   const sessions = join(dir, ".codex", "sessions"); await mkdir(sessions, { recursive: true });
   const file = join(sessions, "old.jsonl"); await writeFile(file, "fixture history"); await utimes(file, 1, 1);
@@ -59,7 +60,7 @@ it("claims plans before awaiting, joins duplicate cleans, and expires plans with
 });
 
 for (const change of ["leaf-link", "parent-link", "replaced-root", "modified", "missing"] as const) {
-  it(`keeps a planned history file after ${change}`, async () => {
+  it.skipIf(process.platform === "win32" && change.endsWith("link"))(`keeps a planned history file after ${change}`, async () => {
     const { doctor, file, sessions, dir } = await fixture();
     const scan = await doctor.scanDisk(30);
     const outside = join(dir, "kept"); await writeFile(outside, "keep");
@@ -84,6 +85,74 @@ it("checks nested content before deleting a whole cache and can clean an unchang
   const next = await doctor.scanDisk(30);
   expect((await doctor.cleanDisk(next.scan_id, ["package-caches"])).results[0]?.ok).toBe(true);
   await expect(lstat(cache)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves measured cache bytes and cleans hardlinks without mistaking its own unlink for a write", async () => {
+  const { doctor, dir } = await fixture();
+  const cache = join(dir, ".cache", "pip"); await mkdir(cache, { recursive: true });
+  await writeFile(join(cache, "a"), "old"); await link(join(cache, "a"), join(cache, "b"));
+  const scan = await doctor.scanDisk(30);
+  expect(scan.candidates.find((item) => item.id === "package-caches")?.bytes).toBe(1234);
+  expect((await doctor.cleanDisk(scan.scan_id, ["package-caches"])).results[0]?.ok).toBe(true);
+  await expect(lstat(cache)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("cleans hardlinks selected as separate history paths, but rejects changed content", async () => {
+  const { doctor, file, sessions } = await fixture();
+  await link(file, join(sessions, "other.jsonl"));
+  const changed = await doctor.scanDisk(30);
+  await writeFile(file, "changed");
+  expect((await doctor.cleanDisk(changed.scan_id, ["codex-history"])).results[0]?.ok).toBe(false);
+  await utimes(file, 1, 1);
+  const next = await doctor.scanDisk(30);
+  expect((await doctor.cleanDisk(next.scan_id, ["codex-history"])).results[0]?.ok).toBe(true);
+  expect(await readdir(sessions)).toEqual([]);
+});
+
+it("cleans a broad cache while yielding to timers and bounding ancestor lookup work", async () => {
+  const { doctor, dir } = await fixture();
+  const cache = join(dir, ".cache", "pip"); await mkdir(cache, { recursive: true });
+  for (let i = 0; i < 400; i++) await writeFile(join(cache, `${i}`), "x");
+  const scan = await doctor.scanDisk(30);
+  let ticks = 0; const start = performance.now();
+  const timer = setInterval(() => ticks++, 1);
+  try {
+    expect((await doctor.cleanDisk(scan.scan_id, ["package-caches"])).results[0]?.ok).toBe(true);
+    expect(ticks).toBeGreaterThan(0);
+    expect(performance.now() - start).toBeLessThan(4000);
+  } finally { clearInterval(timer); }
+});
+
+it("rejects truncated command output without saving a partial plan or retaining the flight", async () => {
+  let truncate = true;
+  const { doctor } = await fixture({ command: async () => ({ code: null, stdout: "partial", stderr: "", truncated: truncate }) });
+  await expect(doctor.scanDisk(30)).rejects.toMatchObject({ code: "scan_limit" });
+  truncate = false;
+  expect((await doctor.scanDisk(30)).candidates.some((item) => item.id === "codex-history")).toBe(true);
+});
+
+it.skipIf(process.platform === "win32")("lists a measured cache with a descendant symlink but refuses cleanup without touching its target", async () => {
+  const { doctor, dir } = await fixture();
+  const cache = join(dir, ".cache", "pip"); await mkdir(cache, { recursive: true });
+  const kept = join(dir, "kept"); await writeFile(kept, "keep");
+  await symlink(kept, join(cache, "link"));
+  const scan = await doctor.scanDisk(30);
+  expect(scan.candidates.find((item) => item.id === "package-caches")?.bytes).toBe(1234);
+  expect((await doctor.cleanDisk(scan.scan_id, ["package-caches"])).results[0]?.ok).toBe(false);
+  expect(await readFile(kept, "utf8")).toBe("keep");
+  expect((await lstat(join(cache, "link"))).isSymbolicLink()).toBe(true);
+});
+
+it("keeps Claude session folders selected by their old jsonl even when their contents are newer", async () => {
+  const { doctor, dir } = await fixture();
+  const project = join(dir, ".claude", "projects", "fixture");
+  const folder = join(project, "session"); await mkdir(folder, { recursive: true });
+  const history = join(project, "session.jsonl"); await writeFile(history, "old"); await utimes(history, 1, 1);
+  await writeFile(join(folder, "tool-output"), "recent");
+  const scan = await doctor.scanDisk(30);
+  expect(scan.candidates.find((item) => item.id === "claude-history")?.bytes).toBe(1237);
+  expect((await doctor.cleanDisk(scan.scan_id, ["claude-history"])).results[0]?.ok).toBe(true);
+  await expect(lstat(folder)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("holds the flight until deadline cancellation has settled and retains only previous completed plans", async () => {
@@ -154,22 +223,24 @@ it("retains twenty private briefs, keeps unrelated files/symlinks and joins a la
     await writeFile(path, "old fixture"); await utimes(path, i, i);
   }
   const unrelated = join(briefs, "notes.md"); await writeFile(unrelated, "keep");
-  const link = join(briefs, "brief-2019-01-01T00-00-00-000.md"); await symlink(unrelated, link);
+  const link = join(briefs, "brief-2019-01-01T00-00-00-000.md"); if (process.platform !== "win32") await symlink(unrelated, link);
   const request = { engine: "codex" as const, model: null, effort: null, issue_id: null, note: "fixture" };
   const first = doctor.startAgent(request);
   expect(doctor.startAgent(request)).toBe(first);
   await entered.promise;
   await expect(doctor.startAgent({ ...request, note: "different" })).rejects.toMatchObject({ code: "doctor_busy" });
   const files = await readdir(briefs);
-  expect(files.filter((name) => name.startsWith("brief-"))).toHaveLength(21); // 20 regular files + untouched symlink
+  expect(files.filter((name) => name.startsWith("brief-"))).toHaveLength(process.platform === "win32" ? 20 : 21); // regular briefs + optional symlink
   expect(files.some((name) => name.endsWith(".tmp"))).toBe(false);
-  expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  if (process.platform !== "win32") expect((await lstat(link)).isSymbolicLink()).toBe(true);
   expect(await readFile(unrelated, "utf8")).toBe("keep");
   expect(files).not.toContain("brief-2020-01-01T00-00-00-000.md");
   release.resolve();
   const result = await first;
-  expect((await lstat(result.brief_path)).mode & 0o777).toBe(0o600);
-  expect((await lstat(briefs)).mode & 0o777).toBe(0o700);
+  if (process.platform !== "win32") {
+    expect((await lstat(result.brief_path)).mode & 0o777).toBe(0o600);
+    expect((await lstat(briefs)).mode & 0o777).toBe(0o700);
+  }
   expect(await readFile(result.brief_path, "utf8")).toContain("# VPS Doctor brief");
   expect(creates).toBe(1); expect(launches).toBe(1);
 });
