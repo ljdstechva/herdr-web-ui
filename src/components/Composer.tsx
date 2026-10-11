@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
+import { ArrowUp, ChevronDown, FileText, Plus, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -40,6 +40,7 @@ import {
 } from "../lib/compose.ts";
 import { paneStatus } from "../lib/status.ts";
 import { modelLabel } from "../lib/modelName.ts";
+import { pickerCommand, pickerReady } from "../lib/modelPicker.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
@@ -829,6 +830,13 @@ export function Composer({
   const hint = composerStatusHint({ uploading, connected, text });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
+  // the name and the level open the agent's own picker, answered as a card (lib/modelPicker.ts)
+  const modelCommand = pickerCommand(agent, "model");
+  const effortCommand = pickerCommand(agent, "effort");
+  const pickable = connected && !sending && pickerReady(agentStatus);
+  const pickTitle = (command: string, what: "model" | "effort"): string => pickable
+    ? t(what === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command })
+    : t("Available while the agent is not working");
   const usageDetail = usageWindows.map((window) => {
     const reset = formatResetIn(window.resets_at, Date.now());
     return `${windowLabel(window)} ${meterText(window, settings.usageCount)}${reset ? ` · ${t("Resets in {time}", { time: reset })}` : ""}`;
@@ -1042,25 +1050,37 @@ export function Composer({
             <span className="composer-agent-label visually-hidden">{agentLabel}</span>
             <span className="composer-status-separator visually-hidden" aria-hidden="true">·</span>
             <strong className="visually-hidden">{t(composerStatusWord(shownStatus))}</strong>
-            {/* the mark, the model, the level and the context ring as one quiet pill. It only shows: no role,
-                no focus, nothing to press but the ring inside it. A pane that names no model draws no pill
-                (.is-bare): the mark, a level if it has one, and the ring stand in the row as they are */}
+            {/* the mark, the model, the level and the context ring as one quiet pill. A pane that names no
+                model draws no pill (.is-bare): the mark, a level if it has one, and the ring stand in the row
+                as they are. For Claude Code and Codex the name and the level are buttons that open the
+                agent's own picker (lib/modelPicker.ts), drawn as the label they are */}
             <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
               {agent && <AgentMark agent={agent} size={14} />}
               {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
                 {/* a name only for an id modelLabel can name for certain; any other id is drawn as received, in the identifier face */}
-                <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? t("Model —")}</span>
+                {modelCommand
+                  ? <button type="button" className={`composer-model composer-pick${model ? model.named ? "" : " is-id" : " is-none"}`} title={pickTitle(modelCommand, "model")} disabled={!pickable} onClick={() => sendQuick(modelCommand)}>{model?.text ?? t("Model —")}</button>
+                  : <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? t("Model —")}</span>}
                 {/* behind a name the id as received is still read; a touch cannot reach the title */}
                 {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
                 {/* no level recorded: nothing is drawn for it, no dot and no dash; the sentence is still read */}
-                <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
-                  <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
-                  {metadata?.reasoning_effort && <>
+                {effortCommand && metadata?.reasoning_effort
+                  ? <button type="button" className="composer-reasoning composer-pick" title={pickTitle(effortCommand, "effort")} disabled={!pickable} onClick={() => sendQuick(effortCommand)}>
+                    <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata.reasoning_effort })}</span>
                     <span className="composer-reasoning-dot" aria-hidden="true">·</span>
                     <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>
-                  </>}
-                </span>
+                  </button>
+                  : <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
+                    <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
+                    {metadata?.reasoning_effort && <>
+                      <span className="composer-reasoning-dot" aria-hidden="true">·</span>
+                      <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>
+                    </>}
+                  </span>}
+                {modelCommand && <ChevronDown className="composer-pick-caret" aria-hidden="true" />}
               </span>}
+              {/* nothing recorded yet (a session before its first answer): the picker is still a tap away */}
+              {!modelShown && modelCommand && <button type="button" className="composer-model composer-pick is-none" title={pickTitle(modelCommand, "model")} disabled={!pickable} onClick={() => sendQuick(modelCommand)}>{t("Model")}<ChevronDown className="composer-pick-caret" aria-hidden="true" /></button>}
               {metadata?.context && <ContextRing context={metadata.context} shown={contextShown} readOnly={mobile} onToggle={() => setContextShown((open) => !open)} />}
               {usage !== undefined && usage.problem === null && usageLimit !== undefined && <span
                 className={`composer-usage${usageLimit.used_percent >= HIGH_PERCENT ? " is-high" : ""}${usage.problem ? " has-problem" : ""}`}

@@ -311,6 +311,56 @@
   text-transform: uppercase;
 }
 
+/* Claude Code's and Codex's name and level open the agent's own picker (Composer.tsx): buttons
+   drawn as the label they are, with a caret after them that says so. The pill clips a finger's
+   larger hit area to its own height */
+.composer-pick {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.composer-pick:disabled {
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .composer-pick:not(:disabled):hover {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+}
+
+@media (pointer: coarse) {
+  .composer-pick::after {
+    content: "";
+    position: absolute;
+    inset: calc(-1 * var(--space-3)) calc(-1 * var(--space-1));
+  }
+}
+
+.composer-pick-caret {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-left: calc(-1 * var(--space-1));
+  color: var(--text-dim);
+}
+
+.composer-model.composer-pick .composer-pick-caret {
+  margin-left: var(--space-1);
+  vertical-align: middle;
+}
+
+.composer-pick:disabled ~ .composer-pick-caret,
+.composer-pick:disabled .composer-pick-caret {
+  opacity: 0.5;
+}
+
 /* what is left of the context: plain until a compaction is near */
 /* Context left: desktop can reveal its number; mobile keeps an inert ring. */
 .composer-context {
