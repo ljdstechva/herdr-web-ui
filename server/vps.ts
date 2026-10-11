@@ -134,7 +134,7 @@ export class LinuxReader implements VpsReader {
       const mount = rawMount.replace(/\\040/g, " ");
       try {
         const stats = statfsSync(mount);
-        const block = stats.frsize || stats.bsize;
+        const block = stats.bsize;
         const used = (stats.blocks - stats.bfree) * block;
         const available = stats.bavail * block;
         const total = stats.blocks * block;
@@ -478,7 +478,9 @@ export class VpsMonitor {
       own: row.uid === own,
       start_ticks: row.start_ticks,
     });
-    const byCpu = [...rows].sort((a, b) => (cpuNow.get(`${b.pid}:${b.start_ticks}`) ?? 0) - (cpuNow.get(`${a.pid}:${a.start_ticks}`) ?? 0)).slice(0, TOP_EACH);
+    // before a second read nothing has a CPU figure: the memory list alone speaks then
+    const byCpu = rows.filter((row) => (cpuNow.get(`${row.pid}:${row.start_ticks}`) ?? 0) > 0)
+      .sort((a, b) => (cpuNow.get(`${b.pid}:${b.start_ticks}`) ?? 0) - (cpuNow.get(`${a.pid}:${a.start_ticks}`) ?? 0)).slice(0, TOP_EACH);
     const byMemory = [...rows].sort((a, b) => b.rss_bytes - a.rss_bytes).slice(0, TOP_EACH);
     const top = [...new Map([...byCpu, ...byMemory].map((row) => [row.pid, row])).values()].map(pick);
 

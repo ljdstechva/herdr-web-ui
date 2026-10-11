@@ -550,7 +550,7 @@ export class VpsDoctor {
     const own = reader.ownUid();
     const cpu = (row: ProcessRow): number => monitor.cpuOf(row.pid, row.start_ticks);
     const byMemory = [...rows].sort((a, b) => b.rss_bytes - a.rss_bytes).slice(0, 12);
-    const byCpu = [...rows].sort((a, b) => cpu(b) - cpu(a)).slice(0, 8);
+    const byCpu = rows.filter((row) => cpu(row) > 0).sort((a, b) => cpu(b) - cpu(a)).slice(0, 8);
     const picked = [...new Map([...byMemory, ...byCpu].map((row) => [row.pid, row])).values()];
     const processes: DoctorProcess[] = picked.map((row) => ({
       pid: row.pid,
@@ -617,7 +617,9 @@ export class VpsDoctor {
     const briefPath = join(dir, `brief-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
     writeFileSync(briefPath, brief, { mode: 0o600 });
 
-    const created = await workspaceCreate({ cwd: this.home, label: "VPS Doctor" });
+    // its own folder, where the briefs are: the agent's one-time trust question is for that
+    // folder, not for the whole home directory
+    const created = await workspaceCreate({ cwd: dir, label: "VPS Doctor" });
     const paneId = created.root_pane.pane_id;
     const prompt = `You are the VPS Doctor for this server. Read ${briefPath} and follow it.`;
     const args = request.engine === "claude"

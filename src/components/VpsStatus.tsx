@@ -98,7 +98,7 @@ export function VpsStatusRow({ onSelect }: { onSelect: Select }) {
           <Mini label="CPU" value={status.cpu.usage_percent} level={meterLevel(status.cpu.average_percent, t.cpu_warning, t.cpu_critical)} />
           <Mini label="RAM" value={status.memory.used_percent} level={meterLevel(status.memory.used_percent, t.memory_warning, t.memory_critical)} />
           {disk && <Mini label="Disk" value={disk.used_percent} level={meterLevel(disk.used_percent, t.disk_warning, t.disk_critical)} />}
-        </> : <span className="vps-chip-wait">{error ? "unavailable" : "â€¦"}</span>}
+        </> : <span className="vps-chip-wait">{error ? "unavailable" : "…"}</span>}
         <span className={`vps-word is-${severity}`}>{SEVERITY_WORD[severity]}</span>
       </button>
     </div>
@@ -121,7 +121,7 @@ function VpsToast({ host, issues, onOpen, onDismiss }: { host: string; issues: V
     <TriangleAlert aria-hidden="true" className="vps-toast-icon" />
     <div className="vps-toast-text">
       <strong>{host}: {first.title}</strong>
-      <span>{first.detail}{issues.length > 1 ? ` Â· +${issues.length - 1} more` : ""}</span>
+      <span>{first.detail}{issues.length > 1 ? ` · +${issues.length - 1} more` : ""}</span>
     </div>
     <div className="vps-toast-actions">
       <button type="button" className="btn btn-primary" onClick={onOpen}><Stethoscope aria-hidden="true" />Open</button>
@@ -152,7 +152,7 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
   const closeFromScrim = (event: MouseEvent<HTMLDivElement>): void => {
     if (!busy && event.target === event.currentTarget) onClose();
   };
-  const title = view.kind === "status" ? `VPS status${status ? ` Â· ${status.hostname}` : ""}` : `Doctor Â· ${view.issue?.title ?? "check-up"}`;
+  const title = view.kind === "status" ? `VPS status${status ? ` · ${status.hostname}` : ""}` : `Doctor · ${view.issue?.title ?? "check-up"}`;
 
   return <div className="modal-scrim vps-scrim" onMouseDown={closeFromScrim}>
     <div ref={surface} className="modal vps-modal" role="dialog" aria-modal="true" aria-labelledby="vps-title" tabIndex={-1}>
@@ -163,7 +163,7 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
         <button type="button" className="icon-button" aria-label="Close dialog" disabled={busy} onClick={onClose}><X aria-hidden="true" /></button>
       </header>
       <div className="modal-body vps-body">
-        {!status ? <p className="vps-note" role="status">{error ?? "Measuringâ€¦"}</p>
+        {!status ? <p className="vps-note" role="status">{error ?? "Measuring…"}</p>
           : view.kind === "status" ? <StatusView status={status} refresh={refresh} onDoctor={(issue) => setView({ kind: "doctor", issue })} />
           : <DoctorView status={status} issue={view.issue} setBusy={setBusy} refresh={refresh} onStarted={(paneId) => { onClose(); onSelect("local", paneId); }} />}
       </div>
@@ -171,7 +171,7 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
   </div>;
 }
 
-// â”€â”€ status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── status ──────────────────────────────────────────────────────────────────────────────
 
 function StatusView({ status, refresh, onDoctor }: { status: VpsStatus; refresh(): void; onDoctor(issue: VpsIssue | null): void }) {
   const t = status.config.thresholds;
@@ -192,22 +192,24 @@ function StatusView({ status, refresh, onDoctor }: { status: VpsStatus; refresh(
         <TriangleAlert aria-hidden="true" className="vps-issue-icon" />
         <div className="vps-issue-text">
           <strong>{issue.title}</strong>
-          <span>{issue.detail} Â· <span className={`vps-word is-${issue.severity}`}>{SEVERITY_WORD[issue.severity]}</span> since {new Date(issue.since).toLocaleString()}</span>
+          <span>{issue.detail} · <span className={`vps-word is-${issue.severity}`}>{SEVERITY_WORD[issue.severity]}</span> since {new Date(issue.since).toLocaleString()}</span>
         </div>
         <button type="button" className="btn btn-primary" onClick={() => onDoctor(issue)}><Stethoscope aria-hidden="true" />Doctor</button>
       </div>)}
+      {/* something the thresholds do not catch: the same Doctor, without an issue to start from */}
+      {status.issues.length > 0 && <div className="vps-actions"><button type="button" className="btn btn-ghost" onClick={() => onDoctor(null)}><Stethoscope aria-hidden="true" />General check-up</button></div>}
     </section>
 
     <section className="vps-section" aria-label="Resources">
       <h3 className="vps-heading">Resources</h3>
       <Meter label="CPU" value={status.cpu.usage_percent} level={meterLevel(status.cpu.average_percent, t.cpu_warning, t.cpu_critical)}
-        detail={`${status.cpu.average_percent}% over 5 min Â· load ${status.cpu.load.map((value) => value.toFixed(2)).join(" ")} Â· ${status.cpu.cores} cores`} />
+        detail={`${status.cpu.average_percent}% over 5 min · load ${status.cpu.load.map((value) => value.toFixed(2)).join(" ")} · ${status.cpu.cores} cores`} />
       <Meter label="Memory" value={status.memory.used_percent} level={meterLevel(status.memory.used_percent, t.memory_warning, t.memory_critical)}
-        detail={`${formatBytes(status.memory.total_bytes - status.memory.available_bytes)} used Â· ${formatBytes(status.memory.available_bytes)} available of ${formatBytes(status.memory.total_bytes)}`} />
+        detail={`${formatBytes(status.memory.total_bytes - status.memory.available_bytes)} used · ${formatBytes(status.memory.available_bytes)} available of ${formatBytes(status.memory.total_bytes)}`} />
       {status.swap.total_bytes > 0 && <Meter label="Swap" value={status.swap.used_percent} level={meterLevel(status.swap.used_percent, t.swap_warning, t.swap_critical)}
         detail={`${formatBytes(status.swap.used_bytes)} of ${formatBytes(status.swap.total_bytes)}`} />}
       {status.disks.map((disk) => <Meter key={disk.mount} label={`Disk ${disk.mount}`} value={disk.used_percent} level={meterLevel(disk.used_percent, t.disk_warning, t.disk_critical)}
-        detail={`${formatBytes(disk.used_bytes)} used Â· ${formatBytes(disk.available_bytes)} free of ${formatBytes(disk.total_bytes)} Â· ${disk.device}`} />)}
+        detail={`${formatBytes(disk.used_bytes)} used · ${formatBytes(disk.available_bytes)} free of ${formatBytes(disk.total_bytes)} · ${disk.device}`} />)}
     </section>
 
     <section className="vps-section" aria-label="Top processes">
@@ -291,7 +293,7 @@ function ThresholdRow({ row, draft, setDraft }: { row: (typeof THRESHOLD_ROWS)[n
   </>;
 }
 
-// â”€â”€ doctor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── doctor ──────────────────────────────────────────────────────────────────────────────
 
 type Engine = "builtin" | "claude" | "codex";
 const DOCTOR_KEY = "herdr-web-ui:vps-doctor";
@@ -329,7 +331,7 @@ function DoctorView({ status, issue, setBusy, refresh, onStarted }: { status: Vp
   const engineInfo = options?.engines.find((entry) => entry.engine === choice.engine) ?? null;
 
   return <div className="vps-doctor">
-    {issue && <p className={`vps-issue-line is-${issue.severity}`}><TriangleAlert aria-hidden="true" />{issue.title} Â· {issue.detail}</p>}
+    {issue && <p className={`vps-issue-line is-${issue.severity}`}><TriangleAlert aria-hidden="true" />{issue.title} · {issue.detail}</p>}
     <div className="field">
       <span className="field-label">Fix with</span>
       <div className="segmented vps-engines" role="group" aria-label="Fix with">
@@ -339,7 +341,7 @@ function DoctorView({ status, issue, setBusy, refresh, onStarted }: { status: Vp
       </div>
       <span className="field-hint">{choice.engine === "builtin"
         ? "Fixed, reviewed actions: you pick exactly what is deleted or stopped."
-        : "Starts an agent in a new â€œVPS Doctorâ€ workspace. It investigates, then asks you what to do before changing anything."}</span>
+        : "Starts an agent in a new “VPS Doctor” workspace. It investigates, then asks you what to do before changing anything. The first time, its card asks whether to trust the Doctor's folder: answer yes."}</span>
     </div>
     {error && <p className="vps-note is-error" role="alert">{error}</p>}
     {choice.engine === "builtin" ? <>
@@ -351,7 +353,7 @@ function DoctorView({ status, issue, setBusy, refresh, onStarted }: { status: Vp
         ? <DiskDoctor root={options?.root ?? false} setBusy={setBusy} refresh={refresh} />
         : <ProcessDoctor sortBy={issue?.kind === "cpu" ? "cpu" : "memory"} setBusy={setBusy} refresh={refresh} />}
     </> : engineInfo ? <AgentDoctor engine={engineInfo} issue={issue} status={status} choice={choice} update={update} setBusy={setBusy} onStarted={onStarted} />
-      : <p className="vps-note" role="status">Loadingâ€¦</p>}
+      : <p className="vps-note" role="status">Loading…</p>}
   </div>;
 }
 
@@ -428,7 +430,7 @@ function AgentDoctor({ engine, issue, status, choice, update, setBusy, onStarted
     {error && <p className="vps-note is-error" role="alert">{error}</p>}
     <div className="vps-actions">
       {started && <button type="button" className="btn" onClick={() => onStarted(started)}>Open the workspace</button>}
-      <button type="button" className="btn btn-primary" disabled={pending} onClick={() => void start()}><Bot aria-hidden="true" />{pending ? `Starting ${engine.label}â€¦ up to 60s` : `Start ${engine.label} Doctor`}</button>
+      <button type="button" className="btn btn-primary" disabled={pending} onClick={() => void start()}><Bot aria-hidden="true" />{pending ? `Starting ${engine.label}… up to 60s` : `Start ${engine.label} Doctor`}</button>
     </div>
   </div>;
 }
@@ -491,24 +493,24 @@ function DiskDoctor({ root, setBusy, refresh }: { root: boolean; setBusy(busy: b
     return [...map.entries()];
   }, [scan]);
 
-  if (phase === "scanning") return <p className="vps-note" role="status"><RefreshCw aria-hidden="true" className="vps-spin" />Scanning the diskâ€¦ this can take a minute.</p>;
+  if (phase === "scanning") return <p className="vps-note" role="status"><RefreshCw aria-hidden="true" className="vps-spin" />Scanning the disk… this can take a minute.</p>;
   if (phase === "done" && result) return <div className="vps-result">
-    <p className="vps-result-head"><CircleCheck aria-hidden="true" />Freed {formatBytes(result.freed_bytes)}{result.disk ? ` Â· disk ${result.disk.mount} now ${result.disk.used_percent}% used, ${formatBytes(result.disk.available_bytes)} free` : ""}</p>
+    <p className="vps-result-head"><CircleCheck aria-hidden="true" />Freed {formatBytes(result.freed_bytes)}{result.disk ? ` · disk ${result.disk.mount} now ${result.disk.used_percent}% used, ${formatBytes(result.disk.available_bytes)} free` : ""}</p>
     <ul className="vps-result-list">
       {result.results.map((item) => {
         const candidate = scan?.candidates.find((entry) => entry.id === item.id);
-        return <li key={item.id} className={item.ok ? "is-ok" : "is-failed"}>{item.ok ? <CircleCheck aria-hidden="true" /> : <CircleX aria-hidden="true" />}<span><strong>{candidate?.label ?? item.id}</strong> â€” {item.message}</span></li>;
+        return <li key={item.id} className={item.ok ? "is-ok" : "is-failed"}>{item.ok ? <CircleCheck aria-hidden="true" /> : <CircleX aria-hidden="true" />}<span><strong>{candidate?.label ?? item.id}</strong> — {item.message}</span></li>;
       })}
     </ul>
     <div className="vps-actions"><button type="button" className="btn" onClick={() => void runScan()}>Scan again</button></div>
   </div>;
   if (phase === "confirm" || phase === "cleaning") return <div className="vps-confirm">
     <p><strong>Delete these {chosen.length} item{chosen.length === 1 ? "" : "s"}?</strong> About {formatBytes(total)} is freed. This cannot be undone.</p>
-    <ul className="vps-confirm-list">{chosen.map((candidate) => <li key={candidate.id}><span className={`vps-risk is-${candidate.risk}`}>{RISK_WORD[candidate.risk]}</span>{candidate.label} Â· {formatBytes(candidate.bytes)}</li>)}</ul>
+    <ul className="vps-confirm-list">{chosen.map((candidate) => <li key={candidate.id}><span className={`vps-risk is-${candidate.risk}`}>{RISK_WORD[candidate.risk]}</span>{candidate.label} · {formatBytes(candidate.bytes)}</li>)}</ul>
     {chosen.some((candidate) => candidate.risk !== "safe") && <p className="vps-note is-error">Some of these cannot be brought back: old conversations stop being resumable, and large files are gone for good.</p>}
     <div className="vps-actions">
       <button type="button" className="btn btn-ghost" disabled={phase === "cleaning"} onClick={() => setPhase("idle")}>Back</button>
-      <button type="button" className="btn btn-danger" disabled={phase === "cleaning"} onClick={() => void clean()}><Trash2 aria-hidden="true" />{phase === "cleaning" ? "Deletingâ€¦" : `Delete ${chosen.length} item${chosen.length === 1 ? "" : "s"}`}</button>
+      <button type="button" className="btn btn-danger" disabled={phase === "cleaning"} onClick={() => void clean()}><Trash2 aria-hidden="true" />{phase === "cleaning" ? "Deleting…" : `Delete ${chosen.length} item${chosen.length === 1 ? "" : "s"}`}</button>
     </div>
   </div>;
 
@@ -546,8 +548,8 @@ function DiskDoctor({ root, setBusy, refresh }: { root: boolean; setBusy(busy: b
       <ul>{scan.folders.map((folder) => <li key={folder.path}><span title={folder.path}>{folder.path}</span><span className="vps-proc-num">{formatBytes(folder.bytes)}</span></li>)}</ul>
     </details>}
     <div className="vps-actions vps-sticky">
-      <span className="vps-total">{chosen.length} selected Â· about {formatBytes(total)}</span>
-      <button type="button" className="btn btn-danger" disabled={chosen.length === 0} onClick={() => setPhase("confirm")}><Trash2 aria-hidden="true" />Clean selectedâ€¦</button>
+      <span className="vps-total">{chosen.length} selected · about {formatBytes(total)}</span>
+      <button type="button" className="btn btn-danger" disabled={chosen.length === 0} onClick={() => setPhase("confirm")}><Trash2 aria-hidden="true" />Clean selected…</button>
     </div>
   </div>;
 }
@@ -584,11 +586,11 @@ function ProcessDoctor({ sortBy, setBusy, refresh }: { sortBy: "memory" | "cpu";
     }
   };
 
-  if (!data) return <p className="vps-note" role="status">{error ?? "Reading the process tableâ€¦"}</p>;
+  if (!data) return <p className="vps-note" role="status">{error ?? "Reading the process table…"}</p>;
   const processes = [...data.processes].sort((a, b) => order === "cpu" ? b.cpu_percent - a.cpu_percent : b.rss_bytes - a.rss_bytes);
   return <div className="vps-processes">
     <p className="vps-disk-head">
-      <span>Memory {data.memory.used_percent}% Â· swap {data.swap.used_percent}% Â· CPU {data.cpu.average_percent}% (5 min)</span>
+      <span>Memory {data.memory.used_percent}% · swap {data.swap.used_percent}% · CPU {data.cpu.average_percent}% (5 min)</span>
       <span className="segmented" role="group" aria-label="Sort by">
         <button type="button" aria-pressed={order === "memory"} onClick={() => setOrder("memory")}>By memory</button>
         <button type="button" aria-pressed={order === "cpu"} onClick={() => setOrder("cpu")}>By CPU</button>
@@ -604,12 +606,12 @@ function ProcessDoctor({ sortBy, setBusy, refresh }: { sortBy: "memory" | "cpu";
         return <li key={`${proc.pid}:${proc.start_ticks}`} className="vps-proc-card">
           <div className="vps-proc-top">
             <strong className="vps-proc-name">{proc.name}</strong>
-            <span className="vps-proc-user">{proc.user} Â· pid {proc.pid}</span>
+            <span className="vps-proc-user">{proc.user} · pid {proc.pid}</span>
             <span className="vps-proc-num">{proc.cpu_percent}% CPU</span>
             <span className="vps-proc-num">{formatBytes(proc.rss_bytes)}</span>
           </div>
           <code className="vps-proc-cmd" title={proc.command}>{proc.command}</code>
-          {proc.pane && <span className="vps-proc-pane">herdr: {proc.pane.workspace} Â· {proc.pane.title}{proc.pane.agent ? ` Â· ${proc.pane.agent} (${proc.pane.status})` : ""}</span>}
+          {proc.pane && <span className="vps-proc-pane">herdr: {proc.pane.workspace} · {proc.pane.title}{proc.pane.agent ? ` · ${proc.pane.agent} (${proc.pane.status})` : ""}</span>}
           {done ? <span className={`vps-proc-outcome ${done.ok ? "is-ok" : "is-failed"}`} role="status">{done.message}</span>
             : actions.length > 0 ? <div className="vps-proc-actions">
               {actions.map((action) => {
