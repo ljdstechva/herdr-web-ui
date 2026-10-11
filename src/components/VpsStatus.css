@@ -742,12 +742,14 @@ summary.vps-heading {
   .vps-issue > .btn { margin-left: auto; }
 }
 
-/* a phone's bar is at the bottom (styles.css "phone"): the alert sits above it */
+/* a phone keeps its controls at the bottom (styles.css "phone"): the alert drops in at the top,
+   as the agents' alerts do, and steps aside while the drawer is open (its VPS row says the same) */
 @media (max-width: 640px) {
   .vps-toast {
-    bottom: calc(var(--header-h) + env(safe-area-inset-bottom, 0px) + var(--space-3));
+    top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
+    bottom: auto;
   }
-  html[data-keyboard] .vps-toast {
-    bottom: var(--space-3);
+  body:has(.sidebar.is-open) .vps-toast {
+    display: none;
   }
 }
