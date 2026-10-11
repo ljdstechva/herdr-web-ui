@@ -749,6 +749,10 @@ summary.vps-heading {
     top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
     bottom: auto;
   }
+}
+
+/* wherever the sidebar is a drawer it would sit over the drawer's footer */
+@media (max-width: 768px) {
   body:has(.sidebar.is-open) .vps-toast {
     display: none;
   }
