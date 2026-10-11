@@ -11,7 +11,7 @@ import type { VpsMonitor } from "./vps.ts";
 
 export interface VpsServices {
   monitor: VpsMonitor;
-  doctor: VpsDoctor;
+  doctor: Pick<VpsDoctor, "options" | "scanDisk" | "cleanDisk" | "processes" | "processAction" | "startAgent">;
   /** sends a test VPS alert to every subscribed device */
   testAlert(): Promise<void>;
 }
@@ -50,8 +50,9 @@ export async function handleVpsRequest(request: Request, pathname: string, servi
       case "POST /api/vps/doctor/disk/scan": {
         const payload = await body(request);
         if (payload instanceof Response) return payload;
+        const days = payload["older_than_days"] === undefined ? 30 : payload["older_than_days"];
+        if (typeof days !== "number" || !Number.isInteger(days) || days < 1 || days > 3650) return badRequest("invalid_body", "older_than_days must be an integer from 1 to 3650");
         timeout(300);
-        const days = typeof payload["older_than_days"] === "number" ? payload["older_than_days"] : 30;
         return jsonResponse(await doctor.scanDisk(days));
       }
       case "POST /api/vps/doctor/disk/clean": {
@@ -59,8 +60,9 @@ export async function handleVpsRequest(request: Request, pathname: string, servi
         if (payload instanceof Response) return payload;
         const scanId = payload["scan_id"];
         const ids = payload["ids"];
-        if (typeof scanId !== "string" || !Array.isArray(ids) || !ids.every((id) => typeof id === "string") || ids.length === 0) {
-          return badRequest("invalid_body", "scan_id and a non-empty ids list are required");
+        if (typeof scanId !== "string" || !scanId.length || scanId.length > 128 || !Array.isArray(ids)
+          || !ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128) || ids.length === 0 || ids.length > 100) {
+          return badRequest("invalid_body", "scan_id and 1 to 100 non-empty candidate ids are required");
         }
         timeout(300);
         return jsonResponse(await doctor.cleanDisk(scanId, ids as string[]));
@@ -71,7 +73,7 @@ export async function handleVpsRequest(request: Request, pathname: string, servi
         const payload = await body(request);
         if (payload instanceof Response) return payload;
         const { pid, start_ticks: startTicks, action } = payload;
-        if (typeof pid !== "number" || typeof startTicks !== "number" || typeof action !== "string" || !PROCESS_ACTIONS.has(action as ProcessAction)) {
+        if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 1 || typeof startTicks !== "number" || !Number.isSafeInteger(startTicks) || startTicks < 0 || typeof action !== "string" || !PROCESS_ACTIONS.has(action as ProcessAction)) {
           return badRequest("invalid_body", "pid, start_ticks and action (terminate, kill or close-pane) are required");
         }
         return jsonResponse(await doctor.processAction(pid, startTicks, action as ProcessAction));

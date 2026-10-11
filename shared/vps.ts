@@ -15,6 +15,19 @@
  *
  * Every POST needs `x-herdr-vps: 1` beside the app's same-origin check; a watch device is
  * refused every one of them by the central read-only gate.
+ * Scan age defaults to 30 and otherwise must be an integer 1..3650. Equivalent in-flight
+ * scans join; another age, or scan/clean overlap, answers 409 doctor_busy. A scan has one
+ * 240-second deadline (408 scan_timeout) and a 200,000-entry/output budget (409 scan_limit).
+ * Failed scans save no plans; completed scans remain usable for 30 minutes, checked at clean.
+ * Clean accepts a scan_id and 1..100 candidate ids, claims them once before awaiting, and
+ * joins identical in-flight requests. Other simultaneous cleans answer 409 doctor_busy;
+ * expired scans answer 409 scan_expired. Missing/used/changed paths are per-item failures,
+ * never authority to delete replacement content. Path plans are held only in this process.
+ * Process pid and start_ticks must be safe integers (pid >= 1, start_ticks >= 0).
+ * An identical in-flight AI Doctor launch joins; another request answers 409 doctor_busy.
+ * Briefs are private atomic files, retaining the newest 20 regular Doctor briefs.
+ * Status may include inode counts and recent kernel OOM kills; missing evidence cannot
+ * resolve a known issue. Delivered alerts resolve once, using their original notification tag.
  */
 
 export type VpsSeverity = "ok" | "warning" | "critical";

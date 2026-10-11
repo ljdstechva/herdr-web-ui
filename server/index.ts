@@ -431,6 +431,8 @@ export function createServer(
     telemetry?: Telemetry;
     /** this PC's health (server/vps.ts) and its Doctor; unset, /api/vps answers 404. Only the real entrypoint passes one. */
     vps?: VpsMonitor;
+    /** Controlled Doctor operations for fixtures; defaults to the host Doctor when VPS is enabled. */
+    vpsDoctor?: VpsServices["doctor"];
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
@@ -1486,7 +1488,7 @@ export function createServer(
     };
     vps = {
       monitor,
-      doctor: new VpsDoctor({ monitor, stateDir: options.stateDir ?? defaultStateDir(), codexHome: options.codexHome, launchAgent: agentLaunch }),
+      doctor: options.vpsDoctor ?? new VpsDoctor({ monitor, stateDir: options.stateDir ?? defaultStateDir(), codexHome: options.codexHome, launchAgent: agentLaunch }),
       testAlert: () => push.notifySystem({ pane_id: null, title: `${monitor.status().hostname}: VPS alerts are on`, body: "This device will hear when the server runs short of disk, memory or CPU.", tag: "herdr-vps-test" }, "normal", true),
     };
   }
