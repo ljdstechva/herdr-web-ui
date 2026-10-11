@@ -421,7 +421,7 @@ export class VpsMonitor {
   private startedAt: number;
   private latest: VpsStatus | null = null;
   private issues = new Map<string, VpsIssue>();
-  private told: Map<string, { severity: VpsSeverity; at: number; delivered: boolean }>;
+  private told: Map<string, { severity: VpsSeverity; at: number; delivered: boolean; recovered?: boolean }>;
   private configValue: VpsConfig;
   private oomKills: number | null = null;
   private nextOomAt = 0;
@@ -448,7 +448,11 @@ export class VpsMonitor {
         if (!value || typeof value !== "object" || Array.isArray(value)) continue;
         const entry = value as Record<string, unknown>;
         if ((entry.severity === "warning" || entry.severity === "critical") && typeof entry.at === "number" && Number.isFinite(entry.at) && entry.at >= 0) {
-          this.told.set(id, { severity: entry.severity, at: entry.at, delivered: entry.delivered === true });
+          // Legacy records have no delivered flag. With alerts enabled they were
+          // accepted by the old callback; preserve their recovery notification.
+          this.told.set(id, { severity: entry.severity, at: entry.at,
+            delivered: entry.delivered === undefined ? this.configValue.alerts : entry.delivered === true,
+            recovered: entry.recovered === true });
         }
       }
     }
@@ -567,7 +571,7 @@ export class VpsMonitor {
     const input: IssueInput = { disks, memory, swap, cpu: cpuStatus, cpuJudged: at - this.startedAt >= CPU_WINDOW_MS - this.sampleMs, oomKills: this.oomKills };
     // Persisted severity also supplies hysteresis on the first measured sample after restart.
     const previous = new Map(this.issues);
-    for (const [id, told] of this.told) if (!previous.has(id) && measured(id, input)) {
+    for (const [id, told] of this.told) if (!told.recovered && !previous.has(id) && measured(id, input)) {
       const kind = id.startsWith("disk:") || id.startsWith("inodes:") ? "disk" : id === "cpu" ? "cpu" : id === "swap" ? "swap" : "memory";
       if (told.severity !== "ok") previous.set(id, { id, kind, severity: told.severity, title: "", detail: "", since: told.at });
     }
@@ -606,6 +610,9 @@ export class VpsMonitor {
     const present = new Set(issues.map((issue) => issue.id));
     for (const [id, told] of this.told) {
       if (present.has(id) || !measured(id, input)) continue;
+      // Recovery is an observed state, independent of whether a device can hear
+      // its replacement push yet. Persist it so recurrence is news after restart too.
+      if (!told.recovered) { told.recovered = true; changed = true; }
       if (this.configValue.alerts && told.delivered && this.onResolved && this.latest) {
         let heard = false;
         try { heard = this.onResolved(id, this.latest) !== false; } catch (error) { console.error(`vps recovery: ${error instanceof Error ? error.message : String(error)}`); }
@@ -615,6 +622,7 @@ export class VpsMonitor {
     }
     for (const issue of issues) {
       if (!measured(issue.id, input)) continue;
+      if (this.told.get(issue.id)?.recovered) { this.told.delete(issue.id); changed = true; }
       const told = this.told.get(issue.id);
       // a lower level keeps the record of the higher one: going back up is not news again
       if (told && RANK[issue.severity] < RANK[told.severity] && at - told.at < REMIND_MS) continue;

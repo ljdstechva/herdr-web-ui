@@ -1482,7 +1482,9 @@ export function createServer(
       return true;
     };
     monitor.onResolved = (id, status) => {
-      if (!push.hasSubscribers()) return false;
+      // notifySystem steps aside while the app is open. Keep the replacement
+      // pending instead of recording a suppressed recovery as delivered.
+      if (present.size > 0 || !push.hasSubscribers()) return false;
       push.notifySystem(vpsResolvedMessage(id, status.hostname), "normal").catch(logPushError);
       return true;
     };

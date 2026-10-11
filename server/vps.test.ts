@@ -252,6 +252,50 @@ it("resolves once with the original tag after valid recovery, including restart 
   expect(resolved).toHaveLength(1);
 });
 
+for (const restart of [false, true]) it(`treats recurrence as news after an unheard recovery${restart ? " across restart" : ""}`, () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  const reader = new FakeReader(); reader.usedDisk = 90;
+  let subscribed = true; const alerts: string[] = []; const resolved: string[] = [];
+  const wire = (monitor: VpsMonitor) => {
+    monitor.onAlert = (issue) => { if (!subscribed) return false; alerts.push(issue.severity); return true; };
+    monitor.onResolved = (id) => { if (!subscribed) return false; resolved.push(id); return true; };
+    return monitor;
+  };
+  let monitor = wire(new VpsMonitor({ stateDir, reader })); monitor.sample();
+  subscribed = false; reader.usedDisk = 50; monitor.sample();
+  if (restart) monitor = wire(new VpsMonitor({ stateDir, reader }));
+  reader.usedDisk = 90; monitor.sample();
+  subscribed = true; monitor.sample(); monitor.sample();
+  expect(alerts).toEqual(["warning", "warning"]);
+  expect(resolved).toEqual([]);
+});
+
+it("does not resurrect old critical hysteresis while a recovery push is deferred", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  const reader = new FakeReader(); reader.usedDisk = 95;
+  const monitor = new VpsMonitor({ stateDir, reader });
+  const alerts: string[] = [];
+  monitor.onAlert = (issue) => { alerts.push(issue.severity); return true; };
+  monitor.onResolved = () => false; // foreground app or no subscriber
+  monitor.sample(); reader.usedDisk = 50; monitor.sample();
+  reader.usedDisk = 92;
+  expect(monitor.sample().issues[0]?.severity).toBe("warning");
+  expect(alerts).toEqual(["critical", "warning"]);
+});
+
+it("migrates legacy delivered alerts using the saved alerts setting", () => {
+  for (const enabled of [true, false]) {
+    const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+    writeFileSync(join(stateDir, "vps.json"), JSON.stringify({ alerts: enabled }));
+    writeFileSync(join(stateDir, "vps-alerts.json"), JSON.stringify({ "disk:/": { severity: "critical", at: 1 } }));
+    const monitor = new VpsMonitor({ stateDir, reader: new FakeReader() });
+    const resolved: string[] = [];
+    monitor.onResolved = (id) => { resolved.push(id); return true; };
+    monitor.sample(); monitor.sample();
+    expect(resolved).toEqual(enabled ? ["disk:/"] : []);
+  }
+});
+
 it("does not resolve unheard or disabled alerts, or replay an issue on enabling alerts", () => {
   for (const disabled of [true, false]) {
     const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
