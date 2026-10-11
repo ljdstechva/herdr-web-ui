@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, ChevronDown, FileText, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Brain, ChevronDown, FileText, Gauge, Plus, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -40,7 +40,8 @@ import {
 } from "../lib/compose.ts";
 import { paneStatus } from "../lib/status.ts";
 import { modelLabel } from "../lib/modelName.ts";
-import { pickerCommand, pickerReady } from "../lib/modelPicker.ts";
+import { pickerChoices, pickerCommand, pickerReady } from "../lib/modelPicker.ts";
+import { RowMenu } from "./RowMenu.tsx";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
@@ -254,6 +255,8 @@ export function Composer({
   /** the card's own width: a narrow one shows the task chip's count */
   const [cardWidth, setCardWidth] = useState(0);
   const [contextShown, setContextShown] = useState(false);
+  /** the model name a tap opened the which-picker menu from (Claude Code), or null */
+  const [pickMenu, setPickMenu] = useState<HTMLElement | null>(null);
   const composingRef = useRef(false);
   // the chat lens's input surface takes the keyboard when it appears (a pane switch remounts
   // it), as the grid does in the terminal lens: a pane picked from the drawer is typed into
@@ -834,6 +837,12 @@ export function Composer({
   const modelCommand = pickerCommand(agent, "model");
   const effortCommand = pickerCommand(agent, "effort");
   const pickable = connected && !sending && pickerReady(agentStatus);
+  // a tap on the name: Claude Code asks which picker (its level often does not fit a phone's row), Codex opens its one list
+  const openPicker = (anchor: HTMLElement): void => {
+    if (!modelCommand) return;
+    if (pickerChoices(agent).length > 1) setPickMenu(anchor);
+    else sendQuick(modelCommand);
+  };
   const pickTitle = (command: string, what: "model" | "effort"): string => pickable
     ? t(what === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command })
     : t("Available while the agent is not working");
@@ -1059,7 +1068,7 @@ export function Composer({
               {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
                 {/* a name only for an id modelLabel can name for certain; any other id is drawn as received, in the identifier face */}
                 {modelCommand
-                  ? <button type="button" className={`composer-model composer-pick${model ? model.named ? "" : " is-id" : " is-none"}`} title={pickTitle(modelCommand, "model")} disabled={!pickable} onClick={() => sendQuick(modelCommand)}>{model?.text ?? t("Model —")}</button>
+                  ? <button type="button" className={`composer-model composer-pick${model ? model.named ? "" : " is-id" : " is-none"}`} title={pickTitle(modelCommand, "model")} disabled={!pickable} aria-haspopup={pickerChoices(agent).length > 1 ? "menu" : undefined} onClick={(event) => openPicker(event.currentTarget)}>{model?.text ?? t("Model —")}</button>
                   : <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? t("Model —")}</span>}
                 {/* behind a name the id as received is still read; a touch cannot reach the title */}
                 {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
@@ -1080,7 +1089,7 @@ export function Composer({
                 {modelCommand && <ChevronDown className="composer-pick-caret" aria-hidden="true" />}
               </span>}
               {/* nothing recorded yet (a session before its first answer): the picker is still a tap away */}
-              {!modelShown && modelCommand && <button type="button" className="composer-model composer-pick is-none" title={pickTitle(modelCommand, "model")} disabled={!pickable} onClick={() => sendQuick(modelCommand)}>{t("Model")}<ChevronDown className="composer-pick-caret" aria-hidden="true" /></button>}
+              {!modelShown && modelCommand && <button type="button" className="composer-model composer-pick is-none" title={pickTitle(modelCommand, "model")} disabled={!pickable} aria-haspopup={pickerChoices(agent).length > 1 ? "menu" : undefined} onClick={(event) => openPicker(event.currentTarget)}>{t("Model")}<ChevronDown className="composer-pick-caret" aria-hidden="true" /></button>}
               {metadata?.context && <ContextRing context={metadata.context} shown={contextShown} readOnly={mobile} onToggle={() => setContextShown((open) => !open)} />}
               {usage !== undefined && usage.problem === null && usageLimit !== undefined && <span
                 className={`composer-usage${usageLimit.used_percent >= HIGH_PERCENT ? " is-high" : ""}${usage.problem ? " has-problem" : ""}`}
@@ -1142,6 +1151,24 @@ export function Composer({
       )}
       {/* above the whole composer: inside the surface it would cover the text being dictated */}
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
+      {/* which of Claude Code's pickers: a popover, or the phone's bottom sheet; each item sends its command */}
+      {pickMenu && <RowMenu
+        anchor={pickMenu}
+        title={t("Model and reasoning")}
+        align="end"
+        items={pickerChoices(agent).flatMap((kind) => {
+          const command = pickerCommand(agent, kind);
+          if (!command) return [];
+          return [{
+            id: kind,
+            label: t(kind === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command }),
+            hint: kind === "model" ? model?.text : metadata?.reasoning_effort ?? undefined,
+            icon: kind === "model" ? Brain : Gauge,
+            run: () => sendQuick(command),
+          }];
+        })}
+        onClose={() => setPickMenu(null)}
+      />}
     </div>
   );
 }

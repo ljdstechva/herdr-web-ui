@@ -13,6 +13,17 @@ export function pickerCommand(agent: string | null | undefined, kind: PickerKind
   return null;
 }
 
+/**
+ * What a tap on the model name offers. Claude Code has a picker for each, so the tap asks which
+ * (a menu: the level's own label often steps out of a phone's narrow row, Composer.css
+ * data-model="no-effort"); Codex has one list for both, which the tap opens at once.
+ */
+export function pickerChoices(agent: string | null | undefined): PickerKind[] {
+  if (agent === "claude") return ["model", "effort"];
+  if (agent === "codex") return ["model"];
+  return [];
+}
+
 /** Only an agent at rest takes the command: working, it would queue it; asking, a card is already up. */
 export function pickerReady(status: string | null | undefined): boolean {
   return status !== "working" && status !== "blocked";

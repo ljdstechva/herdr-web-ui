@@ -1,5 +1,11 @@
 import { expect, it } from "bun:test";
-import { pickerCommand, pickerReady } from "./modelPicker.ts";
+import { pickerChoices, pickerCommand, pickerReady } from "./modelPicker.ts";
+
+it("asks Claude Code users which picker, and opens Codex's one list at once", () => {
+  expect(pickerChoices("claude")).toEqual(["model", "effort"]);
+  expect(pickerChoices("codex")).toEqual(["model"]);
+  expect(pickerChoices("pi")).toEqual([]);
+});
 
 it("opens Claude Code's model list and effort slider, and Codex's model lists for both", () => {
   expect(pickerCommand("claude", "model")).toBe("/model");
