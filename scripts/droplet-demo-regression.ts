@@ -79,18 +79,21 @@ try {
           // decides, and reports the numbers.
           await page.waitForFunction(() => {
             const top = document.querySelector(".droplet-card")!.getBoundingClientRect().top;
-            const header = document.querySelector(".app-header")!.getBoundingClientRect().bottom;
+            // what holds the top of the screen: the header, or the tab strip over a phone's bottom bar
+            const header = document.querySelector(".app-header")!.getBoundingClientRect();
+            const clear = header.top < innerHeight / 2 ? header.bottom : document.querySelector(".tab-strip")?.getBoundingClientRect().bottom ?? 0;
             const safe = parseFloat(getComputedStyle(document.querySelector(".droplet-probe")!).paddingTop) || 0;
-            return Math.abs(top - (Math.max(safe, header) + 12)) <= 2;
+            return Math.abs(top - (Math.max(safe, clear) + 12)) <= 2;
           }, undefined, { timeout: 5_000 }).catch(() => undefined);
           const geometry = await page.evaluate(() => {
             const card = document.querySelector<HTMLElement>(".droplet-card")!;
             const rect = card.getBoundingClientRect();
             const header = document.querySelector(".app-header")!.getBoundingClientRect();
+            const clear = header.top < innerHeight / 2 ? header.bottom : document.querySelector(".tab-strip")?.getBoundingClientRect().bottom ?? 0;
             const safe = parseFloat(getComputedStyle(document.querySelector(".droplet-probe")!).paddingTop) || 0;
             const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-            return { top: rect.top, left: rect.left, right: rect.right, width: innerWidth, bottom: rect.bottom,
-              headerBottom: header.bottom, safe, hit: hit === card || card.contains(hit),
+            return { top: rect.top, left: rect.left, right: rect.right, width: innerWidth, height: innerHeight, bottom: rect.bottom,
+              headerBottom: clear, safe, hit: hit === card || card.contains(hit),
               phase: document.querySelector(".droplet")?.getAttribute("data-phase") };
           });
           assert.equal(geometry.phase, "in", `${label}: card still interactive`);
@@ -98,6 +101,7 @@ try {
           assert.ok(Math.abs(geometry.top - (Math.max(geometry.safe, geometry.headerBottom) + 12)) <= 2,
             `${label}: card top ${geometry.top}, header ${geometry.headerBottom}, safe ${geometry.safe}`);
           assert.ok(geometry.left >= 0 && geometry.right <= geometry.width, `${label}: horizontal bounds ${JSON.stringify(geometry)}`);
+          assert.ok(geometry.top >= 0 && geometry.bottom <= geometry.height, `${label}: the card is on the screen ${JSON.stringify(geometry)}`);
           assert.ok(geometry.hit, `${label}: card center receives pointer events`);
           console.log(`PASS ${label}: rendered card clears header and inset and is hit-testable`);
         };

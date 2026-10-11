@@ -58,15 +58,19 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     await card.waitFor({ state: "visible" });
     assert.match((await card.getAttribute("aria-label")) ?? "", /Needs input/);
     assert.equal(await droplet.getAttribute("data-kind"), "blocked");
-    // the compact drop and expanded card clear both native UI and header controls
+    // the compact drop and expanded card clear both native UI and what holds the top of the screen:
+    // the header, or the tab strip over a phone's bottom bar (lib/droplet.ts dropletTop)
     await Bun.sleep(1_000);
     const box = (await card.boundingBox())!;
     const clearance = await page.evaluate(() => {
       const probe = document.querySelector(".droplet-probe")!;
       const safeTop = Number.parseFloat(getComputedStyle(probe).paddingTop) || 0;
-      return Math.max(safeTop, document.querySelector(".app-header")?.getBoundingClientRect().bottom ?? 0) + 12;
+      const header = document.querySelector(".app-header")?.getBoundingClientRect();
+      const top = header && header.top < innerHeight / 2 ? header.bottom : document.querySelector(".tab-strip")?.getBoundingClientRect().bottom ?? 0;
+      return Math.max(safeTop, top) + 12;
     });
     assert.ok(Math.abs(box.y - clearance) <= 2, `card top ${box.y}, clearance ${clearance}`);
+    assert.ok(box.y >= 0 && box.y + box.height <= 844, `the card is on a phone's screen: ${box.y}..${box.y + box.height}`);
     assert.ok(Math.abs(box.x + box.width / 2 - 195) <= 1, `card centre ${box.x + box.width / 2}`);
     // the phone layout's card: one line, as wide as its text, and the shape under it the same width
     assert.ok(box.height === 44 && box.width < 300, `phone card ${box.width}x${box.height}`);

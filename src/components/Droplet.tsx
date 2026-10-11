@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { flickVelocity, onDroplet, type PressSample, type QueuedDroplet } from "../lib/droplet.ts";
+import { dropletTop, flickVelocity, onDroplet, type PressSample, type QueuedDroplet } from "../lib/droplet.ts";
 import { useT } from "../lib/i18n.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import "./Droplet.css";
 
 /**
  * The in-app alert (lib/droplet.ts): a pill appears and spreads into a card,
- * below the native safe area and app header, without imitating the physical camera cutout.
+ * below the native safe area and what holds the top of the screen (the app header, or a phone's
+ * tab strip: dropletTop), without imitating the physical camera cutout.
  * One shows at a time; a newer one folds the current one away and takes its place.
  * A tap opens the pane, a flick up puts it away, and it leaves by itself after a while.
  */
@@ -47,12 +48,14 @@ export function Droplet({ onOpen }: { onOpen: (machineId: string, paneId: string
   const dragged = useRef(false);
   const press = useRef<{ id: number; y: number; samples: PressSample[]; moved: boolean } | null>(null);
 
+  const measureTop = useRef<() => void>(() => {});
   useLayoutEffect(() => {
     const header = document.querySelector<HTMLElement>(".app-header");
     const measure = () => {
       const safeTop = Number.parseFloat(getComputedStyle(probe.current!).paddingTop) || 0;
-      setTop(Math.max(safeTop, header?.getBoundingClientRect().bottom ?? 0) + 12);
+      setTop(dropletTop(safeTop, header?.getBoundingClientRect() ?? null, document.querySelector(".tab-strip")?.getBoundingClientRect() ?? null, window.innerHeight));
     };
+    measureTop.current = measure;
     measure();
     const observer = new ResizeObserver(measure);
     if (header) observer.observe(header);
@@ -64,6 +67,8 @@ export function Droplet({ onOpen }: { onOpen: (machineId: string, paneId: string
       window.visualViewport?.removeEventListener("resize", measure);
     };
   }, []);
+  // the tab strip comes and goes with the pane shown: measured again as each card arrives
+  useLayoutEffect(() => { if (current !== null) measureTop.current(); }, [current]);
 
   // the phone layout's card is as wide as its text: the shape under it takes that width
   useLayoutEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { DROPLET_REPEAT_MS, FLICK_WINDOW_MS, LONG_TURN_MS, dropletAllows, endedTurn, flickVelocity, onDroplet, seedStatuses, showDroplet, trackTurn, type DropletNotice, type QueuedDroplet } from "./droplet.ts";
+import { DROPLET_REPEAT_MS, FLICK_WINDOW_MS, LONG_TURN_MS, dropletAllows, dropletTop, endedTurn, flickVelocity, onDroplet, seedStatuses, showDroplet, trackTurn, type DropletNotice, type QueuedDroplet } from "./droplet.ts";
 import { shouldNotifyStatus } from "../../shared/notify-policy.ts";
 import type { AgentStatus } from "../../shared/protocol.ts";
 
@@ -164,5 +164,24 @@ describe("seedStatuses", () => {
     expect(known.size).toBe(0);
     seedStatuses(known, roster(["p1", "idle"]));
     expect(known.get("p1")).toBe("idle");
+  });
+});
+
+describe("dropletTop", () => {
+  it("clears a header that holds the top of the screen, or the safe area when that is deeper", () => {
+    expect(dropletTop(0, { top: 0, bottom: 46 }, null, 800)).toBe(58);
+    expect(dropletTop(59, { top: 0, bottom: 46 }, { top: 46, bottom: 90 }, 800)).toBe(71);
+  });
+
+  it("on a phone, whose bar sits at the bottom, clears the tab strip and stays on the screen", () => {
+    const bar = { top: 788, bottom: 844 };
+    expect(dropletTop(0, bar, { top: 0, bottom: 44 }, 844)).toBe(56);
+    // no strip drawn (a short landscape phone with one tab): the safe area alone
+    expect(dropletTop(24, bar, null, 844)).toBe(36);
+    expect(dropletTop(0, bar, null, 844)).toBe(12);
+  });
+
+  it("clears nothing before the app has drawn its header", () => {
+    expect(dropletTop(0, null, null, 800)).toBe(12);
   });
 });
