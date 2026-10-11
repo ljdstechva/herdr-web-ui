@@ -1474,7 +1474,10 @@ export function createServer(
   if (options.vps) {
     const monitor = options.vps;
     monitor.onAlert = (issue, status) => {
+      // no device subscribed: not told yet, so the first device that turns alerts on hears it
+      if (!push.hasSubscribers()) return false;
       push.notifySystem(vpsAlertMessage(issue, status.hostname), issue.severity === "critical" ? "high" : "normal").catch(logPushError);
+      return true;
     };
     vps = {
       monitor,

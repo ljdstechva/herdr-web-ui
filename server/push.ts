@@ -101,6 +101,8 @@ export interface PushService {
    * others while a window is in use (that window shows its own); `force` sends it anyway (the test).
    */
   notifySystem(message: PushPayload, urgency: "normal" | "high", force?: boolean): Promise<void>;
+  /** whether any device would get a push at all */
+  hasSubscribers(): boolean;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
 }
@@ -448,6 +450,8 @@ export function createPushService(options: PushServiceOptions): PushService {
       const to = [...store().values()];
       if (to.length > 0) await broadcast(message, urgency, to);
     },
+
+    hasSubscribers: () => store().size > 0,
 
     async settled() {
       while (inFlight.size > 0) await Promise.all([...inFlight]);

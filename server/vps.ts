@@ -354,7 +354,8 @@ export class VpsMonitor {
   private configValue: VpsConfig;
   /** CPU use per process over the last sample, by `pid:start` */
   private processCpu = new Map<string, number>();
-  onAlert: ((issue: VpsIssue, status: VpsStatus) => void) | null = null;
+  /** false: nobody could hear it (no device subscribed); it stays news and is tried at the next sample */
+  onAlert: ((issue: VpsIssue, status: VpsStatus) => boolean | void) | null = null;
 
   constructor(options: VpsMonitorOptions) {
     this.reader = options.reader ?? new LinuxReader();
@@ -504,11 +505,14 @@ export class VpsMonitor {
       // a lower level keeps the record of the higher one: going back up is not news again
       if (told && RANK[issue.severity] < RANK[told.severity] && at - told.at < REMIND_MS) continue;
       if (!shouldAlert(issue, told, at)) continue;
+      // with alerts off an issue still counts as told, so turning them on does not replay it
+      if (this.configValue.alerts && this.onAlert && this.latest) {
+        let heard = true;
+        try { heard = this.onAlert(issue, this.latest) !== false; } catch (error) { console.error(`vps alert: ${error instanceof Error ? error.message : String(error)}`); }
+        if (!heard) continue;
+      }
       this.told.set(issue.id, { severity: issue.severity, at });
       changed = true;
-      if (this.configValue.alerts && this.onAlert && this.latest) {
-        try { this.onAlert(issue, this.latest); } catch (error) { console.error(`vps alert: ${error instanceof Error ? error.message : String(error)}`); }
-      }
     }
     if (changed) {
       try { writeJsonPrivate(this.alertsPath, Object.fromEntries(this.told)); } catch (error) { console.error(`vps alerts: ${error instanceof Error ? error.message : String(error)}`); }

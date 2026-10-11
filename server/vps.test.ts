@@ -113,7 +113,7 @@ it("alerts once per issue, again when it gets worse, and remembers across a rest
   const reader = new FakeReader();
   const alerts: string[] = [];
   const monitor = new VpsMonitor({ stateDir, reader, now: () => now });
-  monitor.onAlert = (issue) => alerts.push(`${issue.id}:${issue.severity}`);
+  monitor.onAlert = (issue) => { alerts.push(`${issue.id}:${issue.severity}`); };
   monitor.sample();
   expect(alerts).toEqual([]);
   reader.usedDisk = 88;
@@ -132,7 +132,7 @@ it("alerts once per issue, again when it gets worse, and remembers across a rest
   // a new server (an app update) does not repeat a standing alert
   const restarted = new VpsMonitor({ stateDir, reader, now: () => now });
   const after: string[] = [];
-  restarted.onAlert = (issue) => after.push(issue.id);
+  restarted.onAlert = (issue) => { after.push(issue.id); };
   restarted.sample();
   expect(after).toEqual([]);
 
@@ -144,13 +144,31 @@ it("alerts once per issue, again when it gets worse, and remembers across a rest
   expect(after).toEqual(["disk:/"]);
 });
 
+it("keeps an alert nobody could hear as news until a device subscribes", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
+  let now = 0;
+  const reader = new FakeReader();
+  reader.usedDisk = 90;
+  const monitor = new VpsMonitor({ stateDir, reader, now: () => now });
+  let subscribed = false;
+  const heard: string[] = [];
+  monitor.onAlert = (issue) => { if (!subscribed) return false; heard.push(issue.id); return true; };
+  monitor.sample();
+  now += 15_000; monitor.sample();
+  expect(heard).toEqual([]);
+  subscribed = true;
+  now += 15_000; monitor.sample();
+  now += 15_000; monitor.sample();
+  expect(heard).toEqual(["disk:/"]);
+});
+
 it("sends nothing while alerts are off, and judges the CPU only after a full window", () => {
   const stateDir = mkdtempSync(join(tmpdir(), "vps-"));
   let now = 0;
   const reader = new FakeReader();
   const monitor = new VpsMonitor({ stateDir, reader, now: () => now });
   const alerts: string[] = [];
-  monitor.onAlert = (issue) => alerts.push(issue.id);
+  monitor.onAlert = (issue) => { alerts.push(issue.id); };
   monitor.setConfig({ alerts: false });
   reader.usedDisk = 99;
   now += 15_000; monitor.sample();
