@@ -20,7 +20,7 @@ import { rosterPanes } from "../lib/dagPane.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useTabReorder } from "../lib/useTabReorder.ts";
-import { watchTabSwipe, type TabSwipeOptions } from "../lib/tabSwipe.ts";
+import { swipeTarget, watchTabSwipe, type TabSwipeOptions } from "../lib/tabSwipe.ts";
 import { paneStatus, rollupStatus } from "../lib/status.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
@@ -192,7 +192,9 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
 
   if (!shown || (cramped && tabs.length === 1)) { swipe.current = null; return null; }
 
-  const panesOf = (tab: HerdrTab): PaneInfo[] => panes.filter((pane) => pane.tab_id === tab.tab_id);
+  // a tab of another workspace (a stroke past this row's end leads there) is read from that workspace's own roster
+  const panesOf = (tab: HerdrTab): PaneInfo[] => (tab.workspace_id === workspace.workspace_id ? panes
+    : rosterPanes(snapshot.panes.filter((pane) => pane.workspace_id === tab.workspace_id))).filter((pane) => pane.tab_id === tab.tab_id);
   const paneFor = (tab: HerdrTab): PaneInfo | undefined => {
     const own = panesOf(tab);
     const pick = (id: string | null | undefined) => (id ? own.find((pane) => pane.pane_id === id) : undefined);
@@ -202,14 +204,20 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
       ?? own[0];
   };
 
-  // the tab beside the open one, when it has a pane to open; not under a name field, a menu or a move still on its way
-  const besideOpen = (step: -1 | 1): HerdrTab | null => {
-    const tab = tabs[tabs.findIndex((candidate) => candidate.tab_id === selectedPane.tab_id) + step];
-    return tab && paneFor(tab) ? tab : null;
-  };
+  // Where a stroke leads: the tab beside the open one, or past this row's end the workspace
+  // beside this one (lib/tabSwipe.ts swipeTarget), when it has a pane to open. Not under a name
+  // field, a menu or a move still on its way.
+  const besideOpen = (step: -1 | 1) => swipeTarget(snapshot.workspaces, snapshot.tabs, selectedPane.tab_id, step, (tab) => paneFor(tab) !== undefined);
   swipe.current = editing || picker || confirm || reorder.moving || reorder.drag ? null : {
-    beside: (step) => { const tab = besideOpen(step); return tab ? nameOf(tab) : null; },
-    open: (step) => { const tab = besideOpen(step); const pane = tab ? paneFor(tab) : undefined; if (pane) onSelectPane(pane.pane_id); },
+    beside: (step) => {
+      const target = besideOpen(step);
+      if (!target) return null;
+      if (target.workspace === null) return nameOf(target.tab);
+      // another workspace is named first; its tab too, where it has more than the one
+      const theirs = snapshot.tabs.filter((tab) => tab.workspace_id === target.tab.workspace_id);
+      return theirs.length > 1 ? `${target.workspace.label} · ${tabLabel(target.tab, t, theirs.indexOf(target.tab) + 1)}` : target.workspace.label;
+    },
+    open: (step) => { const target = besideOpen(step); const pane = target ? paneFor(target.tab) : undefined; if (pane) onSelectPane(pane.pane_id); },
   };
 
   const focusTab = (tabId: string): void => {

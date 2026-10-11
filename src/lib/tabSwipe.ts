@@ -1,6 +1,7 @@
 /*
  * A touch screen's tabs follow the finger: a sideways stroke over the pane opens the tab beside
- * the open one, as a tap on its name in the strip does. The pane moves a little with the finger
+ * the open one, as a tap on its name in the strip does, and past the row's first or last tab the
+ * workspace before or after this one (swipeTarget). The pane moves a little with the finger
  * and the name of the tab it is going to stands at the edge it comes from, so the stroke says
  * what it will do before the finger lifts; let go short of TAB_SWIPE_PX and nothing changes.
  *
@@ -48,6 +49,32 @@ export function tabSwipeStep(dx: number, elapsedMs: number): -1 | 0 | 1 {
 /** How far the pane is drawn from its place for a finger `dx` from where it came down. */
 export function tabSwipeOffset(dx: number, hasTab: boolean): number {
   return Math.round(dx * (hasTab ? FOLLOW : RESIST));
+}
+
+/**
+ * Where a stroke from the open tab leads: the tab beside it in its workspace, and past either
+ * end of that row the workspace beside this one, entered at the end the stroke comes from (its
+ * last tab going back, its first going on), so that the same stroke the other way returns.
+ * `opens` says whether a tab has a pane to show: a workspace with none to show is passed over.
+ * Null at the first tab of the first workspace going back, and the last of the last going on.
+ */
+export function swipeTarget<W extends { workspace_id: string }, T extends { tab_id: string; workspace_id: string }>(
+  workspaces: readonly W[], tabs: readonly T[], openTabId: string, step: -1 | 1, opens: (tab: T) => boolean = () => true,
+): { tab: T; workspace: W | null } | null {
+  const open = tabs.find((tab) => tab.tab_id === openTabId);
+  if (!open) return null;
+  const row = tabs.filter((tab) => tab.workspace_id === open.workspace_id);
+  const beside = row[row.findIndex((tab) => tab.tab_id === openTabId) + step];
+  if (beside) return opens(beside) ? { tab: beside, workspace: null } : null;
+  const from = workspaces.findIndex((workspace) => workspace.workspace_id === open.workspace_id);
+  if (from < 0) return null;
+  for (let at = from + step; at >= 0 && at < workspaces.length; at += step) {
+    const workspace = workspaces[at]!;
+    const theirs = tabs.filter((tab) => tab.workspace_id === workspace.workspace_id);
+    const entry = step === 1 ? theirs.find(opens) : [...theirs].reverse().find(opens);
+    if (entry) return { tab: entry, workspace };
+  }
+  return null;
 }
 
 /** A dialog, the palette or a sheet is up: a stroke there is theirs. */

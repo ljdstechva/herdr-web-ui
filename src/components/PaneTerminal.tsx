@@ -384,6 +384,12 @@ export function PaneTerminal({
       ? (current?.pane === pane && current.value === value ? current : { pane, value })
       : current?.pane === pane ? null : current);
   }, []);
+  // a Codex pane's Fast mode as its screen last showed it (ChatView's prompt read): a read that
+  // cannot tell (a picker over the status line) leaves the last word standing
+  const [chatFast, setChatFast] = useState<{ pane: string; value: boolean } | null>(null);
+  const onChatFast = useCallback((pane: string, value: boolean | null) => {
+    if (value !== null) setChatFast((current) => current?.pane === pane && current.value === value ? current : { pane, value });
+  }, []);
   // a typed pick of an approval's option, shown in the card until Confirm or Cancel
   const [pendingAnswer, setPendingAnswer] = useState<{ pane: string; promptId: string; answer: TypedAnswer } | null>(null);
   // where the chat draws its prompt card: on the composer's column, between the held messages and
@@ -2271,6 +2277,7 @@ export function PaneTerminal({
             onPrompt={onChatPrompt}
             onSuggestion={onChatSuggestion}
             onRestored={onChatRestored}
+            onFast={onChatFast}
             promptRefreshKey={promptRefresh}
             pendingAnswer={pendingAnswer !== null && pendingAnswer.pane === paneId ? pendingAnswer : null}
             onPendingAnswerDone={clearPendingAnswer}
@@ -2390,6 +2397,10 @@ export function PaneTerminal({
           // no suggestion under any card, a fallback or queued one included
           suggestion={chatPrompt?.pane !== paneId && chatSuggestion?.pane === paneId ? chatSuggestion.value : null}
           restored={chatPrompt?.pane !== paneId && chatRestored?.pane === paneId ? chatRestored.value : null}
+          // Codex alone has a Fast mode: its screen says it at once, its session record where the screen cannot
+          fast={agent === "codex" ? (chatFast?.pane === paneId ? chatFast.value : chatMetadata?.pane === paneId ? chatMetadata.value?.fast ?? false : false) : null}
+          // Codex redraws its status line with the key: read the screen again now, and once more behind a slow redraw
+          onFastToggled={() => { for (const ms of [400, 1500]) window.setTimeout(() => setPromptRefresh((key) => key + 1), ms); }}
           greeting={greetingDue ? (
             <div className={`composer-greeting${greeted ? "" : " is-out"}`} ref={greetingRef} aria-hidden={greeted ? undefined : true}>
               <p className="composer-greeting-title">{t("What should {agent} do in {folder}?", { agent: agentDisplayLabel(agent), folder })}</p>

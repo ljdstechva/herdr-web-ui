@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 
 import "./UsageMeters.css";
 
@@ -8,6 +8,11 @@ import { useT, type Translate } from "../lib/i18n.ts";
 import { useSettings, type UsageCount, type UsageGlance } from "../lib/settings.ts";
 import { formatPercent, formatResetIn, glanceWindow, HIGH_PERCENT, meterPercent, meterText, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
+
+/** Where the sidebar is the workspace drawer (styles.css): there the limits are a panel in it, not a strip beside Settings. */
+const DRAWER_QUERY = "(max-width: 768px)";
+const LEFT_FOLDED_KEY = "herdr-web-ui:usage-left-folded";
 
 /** chips the strip beside Settings holds before the rest fold into "+N" */
 const MAX_CHIPS = 4;
@@ -83,7 +88,9 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
 export function UsageMeters() {
   const t = useT();
   const { settings } = useSettings();
-  const { report, loading, refresh } = useUsage(settings.showUsage);
+  // in the drawer the limits are UsageLeft's panel: no strip, and no second reader of the report
+  const drawer = useMediaQuery(DRAWER_QUERY);
+  const { report, loading, refresh } = useUsage(settings.showUsage && !drawer);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement>(null);
@@ -119,7 +126,7 @@ export function UsageMeters() {
   const count = settings.usageCount;
   // an account hidden in Settings is left out of the strip and the popover alike
   const shown = report ? orderProviders(report.providers, settings.usageOrder).filter((usage) => !settings.usageHidden.includes(usage.key)) : [];
-  if (!settings.showUsage || shown.length === 0) return null;
+  if (drawer || !settings.showUsage || shown.length === 0) return null;
   const folded = shown.length > MAX_CHIPS ? shown.length - (MAX_CHIPS - 1) : 0;
   const chips = folded > 0 ? shown.slice(0, MAX_CHIPS - 1) : shown;
   const summary = shown.map((usage) => {
@@ -154,5 +161,71 @@ export function UsageMeters() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * What is left of each plan, in the workspace drawer a phone opens from its menu button: every
+ * provider with each of its limits, how much of it is left and when it resets, read without
+ * another tap. It always counts what is left, whatever the strip's meters are set to count: the
+ * question asked of a drawer opened in passing is how much there is to work with. Folded, it is
+ * one line naming each plan's limit chosen in Settings. Off until the plan limits are switched
+ * on (they send this PC's sign-ins out to their providers): then it is the one row that offers to.
+ */
+export function UsageLeft() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const drawer = useMediaQuery(DRAWER_QUERY);
+  const { report, loading, refresh } = useUsage(settings.showUsage && drawer);
+  const [now, setNow] = useState(() => Date.now());
+  const [folded, setFolded] = useState(() => { try { return window.localStorage.getItem(LEFT_FOLDED_KEY) === "1"; } catch { return false; } });
+  const shows = drawer && settings.showUsage;
+  useEffect(() => {
+    if (!shows) return;
+    setNow(Date.now());
+    const tick = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(tick);
+  }, [shows]);
+
+  if (!drawer) return null;
+  if (!settings.showUsage) return (
+    <section className="usage-left is-off" aria-label={t("Usage left")}>
+      <span className="usage-left-title">{t("Usage left")}</span>
+      <button type="button" className="btn btn-ghost usage-left-show" onClick={() => update({ showUsage: true })}>{t("Show plan limits")}</button>
+    </section>
+  );
+  const shown = report ? orderProviders(report.providers, settings.usageOrder).filter((usage) => !settings.usageHidden.includes(usage.key)) : [];
+  if (shown.length === 0) return null;
+  const fold = (): void => {
+    setFolded(!folded);
+    try { if (folded) window.localStorage.removeItem(LEFT_FOLDED_KEY); else window.localStorage.setItem(LEFT_FOLDED_KEY, "1"); } catch { /* folded until reload */ }
+  };
+  const summary = shown.map((usage) => {
+    const window = glanceWindow(usage, settings.usageGlance);
+    return { key: usage.key, mark: PROVIDER_MARK[usage.id], name: PROVIDER_NAME[usage.id], window };
+  });
+  return (
+    <section className="usage-left" aria-label={t("Usage left")}>
+      <header className="usage-left-head">
+        <button type="button" className="usage-left-fold" aria-expanded={!folded} aria-controls="usage-left-body" onClick={fold}>
+          {folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+          <span className="usage-left-title">{t("Usage left")}</span>
+          {/* folded: each plan's chosen limit on the one line */}
+          {folded && <span className="usage-left-summary">
+            {summary.map((item) => <span key={item.key} className={`usage-left-chip${level(item.window)}`}>
+              <AgentMark agent={item.mark} size={14} />
+              <span className="visually-hidden">{item.name} </span>
+              {item.window ? meterText(item.window, "left") : "—"}
+            </span>)}
+          </span>}
+        </button>
+        {!folded && <button type="button" className="icon-button usage-left-refresh" aria-label={t("Refresh")} title={t("Refresh")} aria-busy={loading} onClick={() => { if (!loading) refresh(); }}>
+          <RefreshCw aria-hidden="true" className={loading ? "is-spinning" : undefined} />
+        </button>}
+      </header>
+      {!folded && <div className="usage-left-body" id="usage-left-body">
+        {shown.map((usage) => <Provider key={usage.key} usage={usage} now={now} count="left" />)}
+      </div>}
+    </section>
   );
 }

@@ -39,6 +39,22 @@ describe("recorded conversation model settings", () => {
       .toEqual({ model: "collaboration-model", reasoning_effort: null });
   });
 
+  it("follows Codex's thread settings between turns: the model, the level and Fast mode as they are set", () => {
+    const applied = (settings: Record<string, unknown>) => ({ type: "event_msg", payload: { type: "thread_settings_applied", thread_settings: settings } });
+    const turn = { type: "turn_context", payload: { model: "gpt-6-astra", effort: "max" } };
+    // a session that never recorded a tier says nothing of Fast mode
+    expect(parseConversationMetadata(jsonl(turn), "codex-transcript")).toEqual({ model: "gpt-6-astra", reasoning_effort: "max" });
+    expect(parseConversationMetadata(jsonl(turn, applied({ model: "gpt-6-astra", reasoning_effort: "max", service_tier: "priority" })), "codex-transcript"))
+      .toEqual({ model: "gpt-6-astra", reasoning_effort: "max", fast: true });
+    // turned off again, and the level raised, with no turn in between
+    expect(parseConversationMetadata(jsonl(turn, applied({ service_tier: "priority" }), applied({ model: "gpt-6.1-sol", reasoning_effort: "ultra", service_tier: "default" })), "codex-transcript"))
+      .toEqual({ model: "gpt-6.1-sol", reasoning_effort: "ultra", fast: false });
+    // the next turn's own snapshot does not undo what the settings said of Fast mode
+    expect(parseConversationMetadata(jsonl(applied({ service_tier: "fast" }), turn), "codex-transcript").fast).toBe(true);
+    // picked up where an earlier part of the file stopped
+    expect(parseConversationMetadata(jsonl(turn), "codex-transcript", { model: "gpt-6-astra", reasoning_effort: "max", fast: true }).fast).toBe(true);
+  });
+
   it("does not carry an old effort into a Codex context that no longer reports one", () => {
     expect(parseConversationMetadata(jsonl(
       { type: "turn_context", payload: { model: "first", effort: "high" } },

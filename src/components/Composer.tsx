@@ -13,12 +13,13 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, Brain, ChevronDown, FileText, Gauge, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Brain, ChevronDown, FileText, Gauge, Plus, Square, X, Zap } from "lucide-react";
 
 import "./Composer.css";
 
 import type { AgentStatus, ConversationMetadata, SlashCommand } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { ApiError } from "../lib/api.ts";
 import { composerDrafts } from "../lib/composerDraft.ts";
 import { outbox } from "../lib/outbox.ts";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -73,6 +74,10 @@ export interface ComposerProps {
   suggestion?: string | null;
   /** a cancelled send the agent put back in its input box: the empty box takes it again, for editing and resending */
   restored?: string | null;
+  /** Codex's Fast mode: on or off as the pane last showed it; null for an agent that has none (no bolt, no toggle) */
+  fast?: boolean | null;
+  /** Fast mode was toggled from here: the pane's screen is worth reading again */
+  onFastToggled?: () => void;
   /** an empty chat's greeting: it stands over the composer's column and takes no row of its own */
   greeting?: ReactNode;
   /** true: sent; a SendQueued: taken into the bridge's waiting list, which shows it; false: not sent,
@@ -93,6 +98,8 @@ const MAX_IMAGES_PER_ACTION = 4;
  */
 const PREVIEW_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] as const;
 const COMMAND_CACHE_MS = 60_000;
+/** How long a Fast mode toggle may take to show on the pane (the screen is read every 2s) before it is said not to have taken. */
+const FAST_SETTLE_MS = 7_000;
 const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
 /** One height for every pane on this device: it is the screen, not the conversation, that decides it. */
 const COMPOSER_HEIGHT_KEY = "herdr-web-ui:composer-height";
@@ -236,6 +243,8 @@ export function Composer({
   answerHint = null,
   suggestion = null,
   restored = null,
+  fast = null,
+  onFastToggled,
   greeting = null,
   onSend,
   onAbort,
@@ -245,7 +254,7 @@ export function Composer({
   const activeRef = useRef(active);
   activeRef.current = active;
   const machineId = useMachineId();
-  const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
+  const { fetchPaneCommands, fetchPaneFiles, togglePaneFast } = useMachineApi();
   const { settings } = useSettings();
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
@@ -452,11 +461,11 @@ export function Composer({
   /**
    * Two things the controls row asks of the layout itself, since what fits depends on the
    * model's name, the mic, the chip and the language, not on a width.
-   * - The model label: measured with everything drawn, then drawn as composerModelDraw says
-   *   (stepped out whole while Queue shows, the effort word alone without it). Stepping out is
-   *   CSS on the mark's attribute, so the label is still read. It runs after every render of the
-   *   composer, which is why the context ring's open number is this component's state: opening it
-   *   takes room from the label without changing the card's size.
+   * - The model label: measured with everything drawn beside the controls, then drawn as
+   *   composerModelDraw says: there, or on a row of its own where it does not fit, so the name
+   *   and the level are always drawn. It runs after every render of the composer, which is why
+   *   the context ring's open number is this component's state: opening it takes room from the
+   *   label without changing the card's size.
    * - The sentence is never cut. Where it does not fit beside the model it wraps to a line of its
    *   own (CSS); there it is marked, so it takes the whole line and drops the dot that separated
    *   it from the model. The sentence alone wraps: the rest stays one row (.composer-status-meta),
@@ -466,6 +475,7 @@ export function Composer({
     const status = statusRef.current;
     if (!status) return;
     status.removeAttribute("data-model");
+    surfaceRef.current?.removeAttribute("data-status-row");
     status.removeAttribute("data-hint-alone");
     status.removeAttribute("data-meta-empty");
     const clipped = (selector: string): boolean => {
@@ -476,7 +486,9 @@ export function Composer({
       modelClipped: clipped(".composer-model"),
       effortClipped: clipped(".composer-reasoning"),
     });
-    if (draw !== "full") status.setAttribute("data-model", draw);
+    // the model and its level are always drawn: where they do not fit beside the controls, the
+    // status takes a row of its own over them (Composer.css), the card's whole width
+    if (draw === "row") { status.setAttribute("data-model", draw); surfaceRef.current?.setAttribute("data-status-row", ""); }
     const hint = hintRef.current;
     if (!hint) return;
     // with the label stepped out and no ring, the row beside the sentence draws nothing: it gives
@@ -876,17 +888,39 @@ export function Composer({
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
   // the name and the level open the agent's own picker, answered as a card (lib/modelPicker.ts)
   const modelCommand = pickerCommand(agent, "model");
-  const effortCommand = pickerCommand(agent, "effort");
   const pickable = connected && !sending && !delivering && pickerReady(agentStatus);
-  // a tap on the name: Claude Code asks which picker (its level often does not fit a phone's row), Codex opens its one list
-  const openPicker = (anchor: HTMLElement): void => {
-    if (!modelCommand) return;
-    if (pickerChoices(agent).length > 1) setPickMenu(anchor);
-    else sendQuick(modelCommand);
-  };
-  const pickTitle = (command: string, what: "model" | "effort"): string => pickable
-    ? t(what === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command })
-    : t("Available while the agent is not working");
+  // The whole label is the control: a tap anywhere on it lists what can be changed for this agent,
+  // each item opening the agent's own picker (or, for Codex's Fast mode, pressing its toggle).
+  const pickTitle = pickable ? t("Change model or reasoning") : t("Available while the agent is not working");
+  // Fast mode as drawn: what the pane says, or for a moment what a toggle just asked for
+  const [fastAsked, setFastAsked] = useState<{ from: boolean; at: number } | null>(null);
+  const fastOn = fastAsked !== null && fast === fastAsked.from ? !fastAsked.from : fast === true;
+  useEffect(() => {
+    if (fastAsked === null) return;
+    // the pane agrees: the asking is over
+    if (fast !== fastAsked.from) { setFastAsked(null); return; }
+    // it never did: the key reached a Codex that does not have it bound (one started before the
+    // key was set keeps its old keymap), and saying it is on would be a lie
+    const timer = window.setTimeout(() => {
+      setFastAsked(null);
+      if (mounted.current) setNote(t("Fast mode did not change. A Codex that was already running when the key was set needs a restart to take it."));
+    }, Math.max(0, fastAsked.at + FAST_SETTLE_MS - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [fast, fastAsked]);
+  const toggleFast = useCallback((): void => {
+    if (fast === null || !connected) return;
+    const from = fast;
+    setNote(null);
+    setFastAsked({ from, at: Date.now() });
+    void togglePaneFast(paneId).then(() => { onFastToggled?.(); }, (cause: unknown) => {
+      if (!mounted.current) return;
+      setFastAsked(null);
+      setNote(cause instanceof ApiError && cause.code === "fast_unbound"
+        ? t("Fast mode needs a key in Codex. In the terminal run /keymap, find Toggle Fast Mode and set a key such as F9.")
+        : cause instanceof ApiError && cause.code === "agent_blocked" ? t("Not sent: the agent is waiting for an answer in the terminal. Answer it first.")
+        : t("Fast mode could not be changed: {reason}", { reason: cause instanceof ApiError ? cause.detail : cause instanceof Error ? cause.message : String(cause) }));
+    });
+  }, [connected, fast, onFastToggled, paneId, togglePaneFast, t]);
   const usageDetail = usageWindows.map((window) => {
     const reset = formatResetIn(window.resets_at, Date.now());
     return `${windowLabel(window)} ${meterText(window, settings.usageCount)}${reset ? ` · ${t("Resets in {time}", { time: reset })}` : ""}`;
@@ -1104,35 +1138,34 @@ export function Composer({
             <strong className="visually-hidden">{t(composerStatusWord(shownStatus))}</strong>
             {/* the mark, the model, the level and the context ring as one quiet pill. A pane that names no
                 model draws no pill (.is-bare): the mark, a level if it has one, and the ring stand in the row
-                as they are. For Claude Code and Codex the name and the level are buttons that open the
-                agent's own picker (lib/modelPicker.ts), drawn as the label they are */}
+                as they are. For Claude Code and Codex the label is one button, mark and caret included, that
+                lists what can be changed (lib/modelPicker.ts); the ring beside it keeps its own press */}
             <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
-              {agent && <AgentMark agent={agent} size={14} />}
-              {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
-                {/* a name only for an id modelLabel can name for certain; any other id is drawn as received, in the identifier face */}
-                {modelCommand
-                  ? <button type="button" className={`composer-model composer-pick${model ? model.named ? "" : " is-id" : " is-none"}`} title={pickTitle(modelCommand, "model")} disabled={!pickable} aria-haspopup={pickerChoices(agent).length > 1 ? "menu" : undefined} onClick={(event) => openPicker(event.currentTarget)}>{model?.text ?? t("Model —")}</button>
-                  : <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? t("Model —")}</span>}
-                {/* behind a name the id as received is still read; a touch cannot reach the title */}
-                {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
-                {/* no level recorded: nothing is drawn for it, no dot and no dash; the sentence is still read */}
-                {effortCommand && metadata?.reasoning_effort
-                  ? <button type="button" className="composer-reasoning composer-pick" title={pickTitle(effortCommand, "effort")} disabled={!pickable} onClick={() => sendQuick(effortCommand)}>
-                    <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata.reasoning_effort })}</span>
-                    <span className="composer-reasoning-dot" aria-hidden="true">·</span>
-                    <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>
-                  </button>
-                  : <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
-                    <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
-                    {metadata?.reasoning_effort && <>
-                      <span className="composer-reasoning-dot" aria-hidden="true">·</span>
-                      <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>
-                    </>}
+              {(() => {
+                const label = <>
+                  {agent && <AgentMark agent={agent} size={14} />}
+                  {(modelShown || modelCommand) && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
+                    {/* a name only for an id modelLabel can name for certain; any other id is drawn as received, in the identifier face */}
+                    <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? (modelCommand ? t("Model") : t("Model —"))}</span>
+                    {/* behind a name the id as received is still read; a touch cannot reach the title */}
+                    {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
+                    {/* no level recorded: nothing is drawn for it, no dot and no dash; the sentence is still read */}
+                    <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
+                      <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
+                      {metadata?.reasoning_effort && <>
+                        <span className="composer-reasoning-dot" aria-hidden="true">·</span>
+                        <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>
+                      </>}
+                    </span>
                   </span>}
-                {modelCommand && <ChevronDown className="composer-pick-caret" aria-hidden="true" />}
-              </span>}
-              {/* nothing recorded yet (a session before its first answer): the picker is still a tap away */}
-              {!modelShown && modelCommand && <button type="button" className="composer-model composer-pick is-none" title={pickTitle(modelCommand, "model")} disabled={!pickable} aria-haspopup={pickerChoices(agent).length > 1 ? "menu" : undefined} onClick={(event) => openPicker(event.currentTarget)}>{t("Model")}<ChevronDown className="composer-pick-caret" aria-hidden="true" /></button>}
+                  {/* Codex's Fast mode: the bolt is drawn only while it is on */}
+                  {fastOn && <span className="composer-fast" title={t("Fast mode is on")}><Zap aria-hidden="true" /><span className="visually-hidden">{t("Fast mode is on")}</span></span>}
+                </>;
+                return modelCommand
+                  ? <button type="button" className="composer-pick composer-pill-button" title={pickTitle} disabled={!pickable} aria-haspopup="menu" aria-expanded={pickMenu !== null}
+                      onClick={(event) => setPickMenu(event.currentTarget)}>{label}<ChevronDown className="composer-pick-caret" aria-hidden="true" /></button>
+                  : label;
+              })()}
               {metadata?.context && <ContextRing context={metadata.context} shown={contextShown} readOnly={mobile} onToggle={() => setContextShown((open) => !open)} />}
               {usage !== undefined && usage.problem === null && usageLimit !== undefined && <span
                 className={`composer-usage${usageLimit.used_percent >= HIGH_PERCENT ? " is-high" : ""}${usage.problem ? " has-problem" : ""}`}
@@ -1194,22 +1227,34 @@ export function Composer({
       )}
       {/* above the whole composer: inside the surface it would cover the text being dictated */}
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
-      {/* which of Claude Code's pickers: a popover, or the phone's bottom sheet; each item sends its command */}
+      {/* what the label's tap offers: a popover, or the phone's bottom sheet. Each picker item sends the
+          agent's own command, whose list comes back as a card; Fast mode presses Codex's toggle */}
       {pickMenu && <RowMenu
         anchor={pickMenu}
         title={t("Model and reasoning")}
         align="end"
-        items={pickerChoices(agent).flatMap((kind) => {
-          const command = pickerCommand(agent, kind);
-          if (!command) return [];
-          return [{
-            id: kind,
-            label: t(kind === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command }),
-            hint: kind === "model" ? model?.text : metadata?.reasoning_effort ?? undefined,
-            icon: kind === "model" ? Brain : Gauge,
-            run: () => sendQuick(command),
-          }];
-        })}
+        items={[
+          ...pickerChoices(agent).flatMap((kind) => {
+            const command = pickerCommand(agent, kind);
+            if (!command) return [];
+            // Codex picks its level inside the same lists: its one item names both
+            const both = kind === "model" && pickerChoices(agent).length === 1;
+            return [{
+              id: kind,
+              label: t(both ? "Change model and reasoning ({command})" : kind === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command }),
+              hint: both ? [model?.text, metadata?.reasoning_effort].filter(Boolean).join(" · ") || undefined : kind === "model" ? model?.text : metadata?.reasoning_effort ?? undefined,
+              icon: kind === "model" ? Brain : Gauge,
+              run: () => sendQuick(command),
+            }];
+          }),
+          ...(fast !== null ? [{
+            id: "fast",
+            label: t(fastOn ? "Turn Fast mode off" : "Turn Fast mode on"),
+            hint: t(fastOn ? "On" : "Off"),
+            icon: Zap,
+            run: toggleFast,
+          }] : []),
+        ]}
         onClose={() => setPickMenu(null)}
       />}
     </div>

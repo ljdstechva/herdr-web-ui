@@ -366,7 +366,7 @@ describe("mutation body validation", () => {
     for (const path of [
       "/api/workspace/create", "/api/tab/create", "/api/tab/rename", "/api/tab/close", "/api/tab/move", "/api/workspace/rename", "/api/workspace/move", "/api/workspace/close",
       "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/move", "/api/pane/image",
-      "/api/pane/scroll", "/api/agent/rename",
+      "/api/pane/scroll", "/api/pane/fast", "/api/agent/rename",
     ]) {
       for (const body of [null, [], "text", 42, true]) {
         const response = await fetch(`${base()}${path}`, {
@@ -382,6 +382,7 @@ describe("mutation body validation", () => {
     for (const [path, body, code] of [
       ["/api/pane/input", { pane_id: true, text: "echo bad" }, "missing_pane_id"],
       ["/api/pane/close", { pane_id: 5 }, "missing_pane_id"],
+      ["/api/pane/fast", { pane_id: "" }, "missing_pane_id"],
       ["/api/pane/keys", { pane_id: "unknown", keys: [null] }, "missing_keys"],
       ["/api/pane/image", { pane_id: "unknown", content_type: "image/png", data_base64: {} }, "invalid_image"],
       ["/api/workspace/create", { agent: { kind: "claude", args: "--help" } }, "invalid_agent"],
@@ -392,6 +393,34 @@ describe("mutation body validation", () => {
       expect(response.status).toBe(400);
       expect(((await response.json()) as ApiError).error.code).toBe(code);
     }
+  });
+});
+
+// Codex's Fast mode is toggled by a key Codex itself binds (server/codex-fast.ts): nothing is
+// pressed into a pane that runs no Codex, and a pane that is gone answers as any other call does.
+describe("Fast mode toggle", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-fast-")));
+  let workspaceId: string | null = null;
+  let shell = "";
+  beforeAll(async () => {
+    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-fast" });
+    workspaceId = created.workspace.workspace_id;
+    shell = created.root_pane.pane_id;
+  });
+  afterAll(async () => {
+    if (workspaceId) await workspaceClose(workspaceId).catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  });
+  const post = (body: unknown) => fetch(`${base()}/api/pane/fast`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  it("is a POST, for a pane that exists and runs Codex", async () => {
+    expect((await fetch(`${base()}/api/pane/fast`)).status).toBe(400);
+    const missing = await post({ pane_id: "unknown:p9" });
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as ApiError).error.code).toBe("pane_not_found");
+    const refused = await post({ pane_id: shell });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as ApiError).error.code).toBe("not_codex");
   });
 });
 

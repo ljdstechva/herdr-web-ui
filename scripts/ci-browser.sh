@@ -79,6 +79,7 @@ run_script scripts/composer-fit-demo-regression.ts
 run_script scripts/held-rows-demo-regression.ts
 run_script scripts/instant-send-demo-regression.ts
 run_script scripts/tab-swipe-demo-regression.ts
+run_script scripts/model-label-demo-regression.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-spacing-demo-regression.ts
 run_script scripts/workspace-touch-reorder-demo-regression.ts

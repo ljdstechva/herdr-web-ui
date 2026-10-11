@@ -649,13 +649,20 @@ export async function fetchPanePrompt(paneId: string, machineId = "local"): Prom
 }
 
 /** The waiting prompt, and with none, the next prompt the agent suggests; restored is a send the agent put back in its input box when it was cancelled (older servers send neither). */
-export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; restored: string | null }> {
-  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null; restored?: string | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
+export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; restored: string | null; fast: boolean | null }> {
+  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null; restored?: string | null; fast?: boolean }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
   return {
     prompt: body.prompt,
     suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null,
     restored: typeof body.restored === "string" && body.restored !== "" ? body.restored : null,
+    // a Codex pane's Fast mode as its screen shows it now; null where the screen does not say (or the bridge is older)
+    fast: typeof body.fast === "boolean" ? body.fast : null,
   };
+}
+
+/** POST /api/pane/fast: presses Codex's own Fast mode toggle. ApiError 409 `fast_unbound` when Codex binds no key to it on that PC. */
+export async function togglePaneFast(paneId: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/fast"), "POST", { pane_id: paneId });
 }
 
 /** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */

@@ -57,6 +57,8 @@ const local = machines[0]!;
 const snapshot = (): SessionSnapshot => local.snapshot!;
 /** pane id -> fixture key ("api", "web", …) */
 const keyOfPane = new Map<string, string>(Object.entries(panesFixture as Record<string, string>).map(([key, paneId]) => [paneId, key]));
+/** Codex panes with Fast mode on (POST /api/pane/fast) */
+const fastPanes = new Set<string>();
 const chats = new Map<string, { turns: ConversationTurn[]; metadata: { model: string; reasoning_effort: string } }>(
   Object.entries(CHATS).map(([key, chat]) => [key, structuredClone(chat)]),
 );
@@ -654,9 +656,21 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const agent = agentOf(paneId);
     if (!chat) return json({ source: "scrollback", turns: [] });
     const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "devin" ? "devin-transcript" : agent === "hermes" ? "hermes-transcript" : "omp-transcript";
-    return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null });
+    return json({ source, turns: chat.turns, metadata: agent === "codex" ? { ...chat.metadata, fast: fastPanes.has(paneId) } : chat.metadata, cursor: null });
   }
-  if (path === "/api/pane/prompt") return json({ prompt: keyOfPane.get(paneId) === "web" && promptOpen ? { ...PROMPT, id: promptId } : null });
+  if (path === "/api/pane/prompt") {
+    return json({ prompt: keyOfPane.get(paneId) === "web" && promptOpen ? { ...PROMPT, id: promptId } : null, ...(agentOf(paneId) === "codex" ? { fast: fastPanes.has(paneId) } : {}) });
+  }
+  // Codex's Fast mode: the demo's Codex has the toggle bound, and turns it at once
+  if (path === "/api/pane/fast") {
+    const target = String((await bodyOf(init, input))["pane_id"] ?? "");
+    if (!target) return error("missing_pane_id", "pane_id is required", 400);
+    if (agentOf(target) !== "codex") return error("not_codex", "Fast mode is Codex's: this pane runs no Codex", 409);
+    if (paneOf(target)?.agent_status === "blocked") return error("agent_blocked", "The terminal is waiting for an answer; Fast mode was left as it is", 409);
+    if (fastPanes.has(target)) fastPanes.delete(target); else fastPanes.add(target);
+    conversationChanged(target);
+    return json({ ok: true });
+  }
   if (path === "/api/pane/prompt/answer") {
     const body = await bodyOf(init, input);
     const target = String(body["pane_id"] ?? "");

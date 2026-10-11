@@ -171,11 +171,11 @@ describe("composer presentation helpers", () => {
     expect(composerStatusHint({ uploading: true, connected: false, text: "draft" })).toBe("offline");
   });
 
-  it("removes the effort word before shortening the model", () => {
+  it("moves a label that does not fit to a row of its own, where the model and the level are both drawn", () => {
     expect(composerModelDraw({ modelClipped: false, effortClipped: false })).toBe("full");
-    expect(composerModelDraw({ modelClipped: false, effortClipped: true })).toBe("no-effort");
-    expect(composerModelDraw({ modelClipped: true, effortClipped: true })).toBe("no-effort");
-    expect(composerModelDraw({ modelClipped: true, effortClipped: false })).toBe("no-effort");
+    expect(composerModelDraw({ modelClipped: false, effortClipped: true })).toBe("row");
+    expect(composerModelDraw({ modelClipped: true, effortClipped: true })).toBe("row");
+    expect(composerModelDraw({ modelClipped: true, effortClipped: false })).toBe("row");
   });
 
   it("turns machine agent ids into labels", () => {

@@ -645,6 +645,8 @@ One set for both themes: the card is island black wherever it shows.
   flick, the pill takes `--accent` on its edge and `--text-strong`, and letting go opens the tab,
   which comes in over `--dur-base` from that edge. Short of it the canvas goes back over
   `--dur-base`. Reduced motion keeps the pill and drops the movement.
+  Past the row's first or last tab the stroke leads to the workspace before or after this one,
+  and the pill names that workspace (and its tab, where it has several).
 - Mouse dragging previews an accent insertion line, with edge scrolling for an overflowing strip.
   The snapshot's tab order is authoritative: a tab's stable `number` is not its place. A drop calls
   `tab.move` with an insertion boundary before removal, within that workspace and PC. The visible
@@ -942,9 +944,16 @@ One set for both themes: the card is island black wherever it shows.
   `--fw-medium`; the level follows a middle dot in `--text-dim`, as the agent's own words with
   only the first letter drawn as a capital (`::first-letter`, the text is not rewritten); a pane
   that records no level draws no dot and no dash, only the name. On the
-  fill the ring's track is `--border-strong`; a ring left bare on the card keeps `--border`. It is display only: a `span` with no role, no
-  focus, no hover or pressed state, no pointer cursor and no chevron; the ring inside it is the
-  one thing to press on desktop; mobile keeps the ring inert. The `title` of the model is the id as received, and the level's is its
+  fill the ring's track is `--border-strong`; a ring left bare on the card keeps `--border`. The pill itself is a `span` with no role, no
+  focus and no pointer cursor. For an agent with a picker (Claude Code, Codex) the label inside it
+  is ONE button (`.composer-pill-button`): the mark, the name, the level, the bolt and a caret,
+  out to the pill's left edge and as tall as the pill, so a finger need not find the words or the
+  caret. Pressed or open it takes `--bg-elevated`; with a mouse the name takes a dotted underline.
+  It opens a menu (a sheet on a phone) of what can be changed: Claude Code's model and its effort,
+  Codex's model and reasoning, and Codex's Fast mode with `On` / `Off` as its hint. Any other
+  agent's label is display only. The ring beside the label keeps its own press on desktop; mobile
+  keeps the ring inert. Codex's Fast mode is a bolt (`--accent`, filled, `--fs-sm`) after the
+  level, drawn only while Fast mode is on: off, nothing stands in its place. The `title` of the model is the id as received, and the level's is its
   sentence; behind a name the id is also repeated as `.visually-hidden` text, since a touch
   cannot reach a title. A pane that names no model draws no pill: the mark and the ring stand
   alone, with a dim `Model —` and the level between them if the pane records only a level.
@@ -961,10 +970,12 @@ One set for both themes: the card is island black wherever it shows.
   `--font-mono` at regular weight (`.composer-model.is-id`), so it reads as an identifier and no
   suffix is dropped.
 - What does not fit the row gives way in this order: the task chip's words (icon and count below
-  a `640px` card), then the reasoning level and model name according to the measured row. A long
-  identifier can shorten inside the pill; the context ring remains visible. The row is measured
-  again after fonts arrive and the context label opens or closes. The input card keeps one row
-  of controls on desktop and phones.
+  a `640px` card), then the opened context number, which shortens before anything else moves.
+  The model and its reasoning level are always drawn: where they still do not fit beside the
+  controls, the status content takes a row of its own between the message and the controls, the
+  card's whole width (`data-status-row`), right-aligned over Send. Only there may a long
+  identifier shorten inside the pill, and never the level; the context ring remains visible. The
+  row is measured again after fonts arrive and the context label opens or closes.
 - Every agent has one primary control: Stop while working with an empty draft, Send with text,
   and Send at rest. Uploads and in-flight sends disable Send without clearing its text. There
   is no separate Queue button or send menu. The placeholder is `Message <agent>…`; message text

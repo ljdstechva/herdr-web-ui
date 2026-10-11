@@ -177,18 +177,15 @@ export function composerStatusHint(state: { uploading: boolean; connected: boole
  * row. Asked of the layout, not of a width: what fits depends on the name's length, the mic, the
  * task chip, the language and the font. `modelClipped` and `effortClipped` are measured with
  * everything drawn.
- * - "full": all of it fits.
- * - "out": while Queue is showing, a label that does not fit steps out whole (read, not drawn),
- *   so Queue keeps its word and no name is cut mid-word. It is back once the draft is sent, held
- *   or cleared.
- * - "no-effort": without Queue the effort word steps out whole before the name gives a letter,
- *   so a sliver of a word is never drawn. A name still too long is ellipsized as the last resort.
+ * - "full": all of it fits beside the controls.
+ * - "row": it does not. The name and the level are always drawn, so the status takes a row of
+ *   its own over the controls, the card's whole width (Composer.css, data-status-row). A name too
+ *   long even for that is ellipsized as the last resort; the level never is.
  */
-export type ComposerModelDraw = "full" | "no-effort" | "out";
+export type ComposerModelDraw = "full" | "row";
 
 export function composerModelDraw(state: { modelClipped: boolean; effortClipped: boolean }): ComposerModelDraw {
-  if (!state.modelClipped && !state.effortClipped) return "full";
-  return "no-effort";
+  return state.modelClipped || state.effortClipped ? "row" : "full";
 }
 
 /** Herdr agent ids are machine-friendly; the composer presents a short human label. */

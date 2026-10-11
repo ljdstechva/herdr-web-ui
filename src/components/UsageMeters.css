@@ -224,14 +224,123 @@
   background: var(--status-blocked);
 }
 
+/* What is left of each plan, in the workspace drawer (UsageLeft): the popover's own rows, drawn
+   in the drawer itself over its footer rows. It never takes the list's room: past a third of the
+   screen it scrolls inside its box, and it folds to one line. */
+.usage-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.usage-left.is-off {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.usage-left-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.usage-left-fold {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-h);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.usage-left-fold svg {
+  flex: 0 0 auto;
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+
+.usage-left-title {
+  flex: 0 0 auto;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.usage-left-summary {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+
+.usage-left-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-left-chip.is-high {
+  color: var(--status-blocked);
+}
+
+.usage-left-refresh svg.is-spinning {
+  animation: usage-spin 0.8s steps(8) infinite;
+}
+
+.usage-left-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 34vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* the first provider needs no rule over it: the panel's own head is there */
+.usage-left-body > .usage-provider:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.usage-left-show {
+  flex: 0 0 auto;
+}
+
 @media (pointer: coarse) {
   .usage-strip {
     height: var(--touch-target);
   }
+
+  .usage-left-fold {
+    min-height: var(--touch-target);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .usage-popover-head .icon-button svg.is-spinning {
+  .usage-popover-head .icon-button svg.is-spinning,
+  .usage-left-refresh svg.is-spinning {
     animation: none;
   }
 }

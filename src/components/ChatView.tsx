@@ -81,6 +81,8 @@ export interface ChatViewProps {
   onSuggestion?: (paneId: string, suggestion: string | null) => void;
   /** a cancelled send the agent put back in its input box: the composer fills it again, and it is no sent turn here either */
   onRestored?: (paneId: string, restored: string | null) => void;
+  /** a Codex pane's Fast mode as each prompt read finds its screen; null where the screen does not say */
+  onFast?: (paneId: string, fast: boolean | null) => void;
   /** bumped after the composer answered: read the prompt again now */
   promptRefreshKey?: number;
   /** a typed pick of an approval's option, waiting in the card for Confirm */
@@ -579,7 +581,7 @@ function FallbackTurn({ paneId, message }: { paneId: string; message: Transcript
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, onFast, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript, peekPaneConversation } = useMachineApi();
   // The conversation as this page last read it (lib/api.ts keeps the answer for its 304s): a chat
@@ -630,6 +632,8 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   // is filtered out of the rendered turns (the terminal shows no sent turn for it either)
   const onRestoredRef = useRef(onRestored);
   onRestoredRef.current = onRestored;
+  const onFastRef = useRef(onFast);
+  onFastRef.current = onFast;
   const [restored, setRestored] = useState<string | null>(null);
   // a read begun before the latest send answers for the turn before it: its suggestion is dropped
   const sentKeyRef = useRef(sentKey);
@@ -894,6 +898,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         const next = await fetchPanePromptState(paneId);
         if (!cancelled) {
           setPrompt((current) => current?.id === next.prompt?.id ? current : next.prompt);
+          onFastRef.current?.(paneId, next.fast);
           if (sentKeyRef.current === sent) {
             onSuggestionRef.current?.(paneId, next.suggestion);
             setRestored(next.restored);

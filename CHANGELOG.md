@@ -8,6 +8,19 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Usage left, in the phone's drawer.** Opening the workspace list on a phone shows what is left
+  of each plan: every provider with each of its limits, how much is left and when it resets. It
+  folds to one line and stays folded. With plan limits off it is one row that switches them on.
+- **The model label is one button.** A tap anywhere on it (the mark, the name, the level, the
+  caret) lists what can be changed: Claude Code's model and effort, Codex's model and reasoning.
+  The model and its level are always drawn: where they do not fit beside the controls they take a
+  row of their own.
+- **Codex Fast mode from the chat.** The label's menu turns Fast mode on or off, and a bolt stands
+  in the label only while it is on. Codex has no command for it: the chat presses the key Codex's
+  own keymap binds to *Toggle Fast Mode* (`/keymap` in Codex), says so where none is bound, and
+  says when a Codex started before the key was set did not take it.
+- **Swipe past the last tab into the next workspace.** At a workspace's first or last tab the
+  same stroke leads to the workspace before or after it, named by the hint.
 - **Chat: Send is felt at once.** The message box empties and the message stands in the chat
   the moment Send is pressed, marked **Sending…** and then **Sent**, instead of waiting in the
   box until the pane answered. The next message can be typed and sent right away; it follows the

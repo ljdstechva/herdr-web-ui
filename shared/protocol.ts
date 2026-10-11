@@ -153,7 +153,10 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         known yet. server_time: that PC's clock, which the times are on)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
- *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null, restored: string | null }
+ *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null, restored: string | null, fast?: boolean }
+ *                                            `fast`: a Codex pane's Fast mode as its status line shows it now; absent where the screen does not say
+ *  POST   /api/pane/fast  { pane_id }   -> { ok: true }   presses the key Codex's config binds to its Fast mode toggle
+ *                                            409 fast_unbound: Codex binds no key to it on this PC; 409 not_codex / agent_blocked
  *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
  *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box, and
  *         `restored`: the chat's last message when Claude Code put it back as typed text in that box,
@@ -419,6 +422,12 @@ export interface ConversationMetadata {
    * response reports its usage. `window` is null when the transcript does not say it.
    */
   context?: { used: number; window: number | null };
+  /**
+   * Codex's Fast mode, as its session last recorded its service tier; absent for an agent that
+   * has no such mode, or a session that has recorded no settings yet (before its first turn the
+   * prompt read's `fast` says it, from the screen).
+   */
+  fast?: boolean;
 }
 
 /** One background task of an OmO session, or one subagent of a Claude Code session (GET /api/pane/omo-tasks), from OmO's task record or the subagent's files. */

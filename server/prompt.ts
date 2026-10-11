@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { HerdrPane, InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
 import { codexTranscriptPath, paneCodexHome, unansweredCodexQuestions, type QueuedQuestion } from "./codex.ts";
+import { codexFastOnScreen } from "./codex-fast.ts";
 import { HerdrError, paneRead, paneScrollInfo, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
 import { omoTranscriptForPane } from "./omo.ts";
 import { OmoAskReader, omoAsksAfter, type OmoAskCall, type OmoAsks } from "./omo-ask.ts";
@@ -3262,6 +3263,10 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       const paneId = url.searchParams.get("pane_id")?.trim();
       if (!paneId) return badRequest("missing_pane_id", "pane_id is required.");
       const { agent, status, prompt } = await readPrompt(paneId, options.codexHome);
+      // Codex's Fast mode as its status line shows it now (codex-fast.ts): a session has no record
+      // of it before its first turn. Like the suggestion below, only a nicety: a read that fails
+      // or shows no status line says nothing, and the prompt answer goes out as it is.
+      const fast = agent === "codex" ? await liveScreen(paneId).then(codexFastOnScreen, () => null) : null;
       // no menu up: what Claude suggests typing next, for the composer's placeholder, and the chat's
       // own last message where Claude put it back into the box on a cancel. Only a nicety: it is read
       // only while Claude waits for the next prompt (a working agent shows none), and a failed or
@@ -3275,6 +3280,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         prompt,
         suggestion: box === null ? null : parseClaudeSuggestion(box),
         restored: box === null ? null : await restoredOnLiveScreen(paneId, box).catch(() => null),
+        ...(fast === null ? {} : { fast }),
       });
     }
 

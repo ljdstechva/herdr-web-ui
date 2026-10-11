@@ -22,7 +22,7 @@ const LONG_MODEL = "gpt-5.6-sol-codex-preview-2026-10";
 const NAMED = ["gpt-5.6", "claude-opus-5-5"] as const;
 
 interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean }
-type Draw = "full" | "no-effort" | "out";
+type Draw = "full" | "row";
 
 const measure = (page: Page) => page.evaluate(() => {
   const status = document.querySelector<HTMLElement>(".composer-status")!;
@@ -49,6 +49,9 @@ const measure = (page: Page) => page.evaluate(() => {
   const surface = document.querySelector(".composer-surface")!.getBoundingClientRect();
   return {
     draw: status.getAttribute("data-model") ?? "full", hintAlone: status.hasAttribute("data-hint-alone"),
+    // the status content over the controls, not between them
+    ownRow: document.querySelector(".composer-surface")!.hasAttribute("data-status-row")
+      && status.getBoundingClientRect().bottom <= document.querySelector(".composer-controls-right")!.getBoundingClientRect().top + 0.5,
     card: { width: surface.width, height: surface.height }, status: status.getBoundingClientRect().height,
     pill: (() => {
       const pill = document.querySelector<HTMLElement>(".composer-pill")!;
@@ -98,13 +101,13 @@ const drawn = async (page: Page, draw: Draw, what: string): Promise<Row> => {
   const row = await measure(page);
   // a label that is drawn whole is whole; with Queue it is never drawn in part
   if (draw === "full" || row.queue) assert.ok(!row.model?.clipped && !row.effort?.clipped, `${what}: no word of the model label is cut: ${JSON.stringify(row)}`);
-  if (draw === "no-effort") assert.ok((row.effort?.width ?? 0) <= 1, `${what}: the level is read, not drawn: ${JSON.stringify(row)}`);
-  if (draw === "out") assert.ok((row.label?.width ?? 0) <= 1, `${what}: the name and the level are read, not drawn: ${JSON.stringify(row)}`);
-  // the pill goes with the label: no empty pill is left around the ring. Drawn, it holds the mark, the name and the ring
-  if (draw === "out") assert.equal(row.pill.width, 0, `${what}: no pill is drawn without its label: ${JSON.stringify(row)}`);
-  else assert.ok(row.pill.width > 1 && row.pill.inRow && row.pill.holds && row.pill.inert, `${what}: the mark, the name and the ring sit in one pill that is not a control: ${JSON.stringify(row)}`);
-  // the ring's track is the stronger one only on the pill's fill: bare on the card it is the bare ring's
-  if (row.track) assert.equal(row.track.stroke, draw === "out" ? row.track.bare : row.track.onFill, `${what}: the ring's track is the one for where it stands: ${JSON.stringify(row.track)}`);
+  // a label that does not fit beside the controls takes a row of its own, where the level is drawn whole
+  assert.equal(row.ownRow, draw === "row", `${what}: the status has a row of its own exactly when the label does not fit beside the controls: ${JSON.stringify(row)}`);
+  if (draw === "row") assert.ok(!row.effort?.clipped, `${what}: the level is never the part that is cut: ${JSON.stringify(row)}`);
+  // the pill holds the mark, the name and the ring, and is itself no control: the label inside it is
+  assert.ok(row.pill.width > 1 && row.pill.inRow && row.pill.holds && row.pill.inert, `${what}: the mark, the name and the ring sit in one pill that is not a control: ${JSON.stringify(row)}`);
+  // the ring's track is the stronger one on the pill's fill
+  if (row.track) assert.equal(row.track.stroke, row.track.onFill, `${what}: the ring's track is the one for where it stands: ${JSON.stringify(row.track)}`);
   assert.deepEqual(row.overlaps, [], `${what}: nothing overlaps its neighbour`);
   assert.equal(row.overflowing, false, `${what}: the page does not scroll sideways`);
   return row;

@@ -123,16 +123,26 @@ try {
           await stroke(cdp, middle, { x: -130, y: -6 });
           await openIs(page, third);
           await atRest(page);
-          // the row's end: the pane gives a little and nothing opens
-          const end = await stroke(cdp, middle, { x: -130, y: 0 }, { hold: true });
-          const pulled = await stripOf(page);
-          assert.equal(pulled.swipe, "end");
-          assert.equal(pulled.hint, null, "no tab lies that way: none is named");
-          assert.ok(pulled.offset < 0 && pulled.offset > -30, `the pane resists (${pulled.offset}px)`);
-          await end();
+          // past the row's last tab the stroke leads on, to the workspace after this one: the hint names it
+          const paneOf = (): Promise<string | null> => page.evaluate(() => new URLSearchParams(location.search).get("pane"));
+          const here = await paneOf();
+          const onward = await stroke(cdp, middle, { x: -130, y: 0 }, { hold: true });
+          const next = await stripOf(page);
+          assert.equal(next.swipe, "armed", "a stroke past the last tab is still the tabs'");
+          assert.equal(next.hint, "docs-site", "it names the workspace it leads to");
+          assert.equal(next.hintSide, "end");
+          await onward();
+          await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, panes.docs, { timeout: 5_000 });
           await atRest(page);
-          assert.equal((await stripOf(page)).open, third);
-          console.log("PASS at the row's end the pane resists and stays on its tab");
+          // and the same stroke the other way returns, to the tab it left: the workspace's last
+          const back = await stroke(cdp, middle, { x: 130, y: 0 }, { hold: true });
+          assert.equal((await stripOf(page)).hint, `infra · ${third}`, "going back, the workspace before is entered at its last tab, and both are named");
+          assert.equal((await stripOf(page)).hintSide, "start");
+          await back();
+          await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, here, { timeout: 5_000 });
+          await openIs(page, third);
+          await atRest(page);
+          console.log("PASS past a workspace's last tab a stroke opens the next workspace, and the stroke back returns to the tab it left");
 
           await stroke(cdp, middle, { x: 130, y: 0 });
           await openIs(page, second);

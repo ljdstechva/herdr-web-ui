@@ -158,12 +158,11 @@
    side. It can share that row because the agent's name and the state word are no longer drawn
    (.visually-hidden: the mark stays, and the state is told by Stop, the live row and the prompt
    card). What does not fit gives way in this order: the task chip's words (BackgroundTasks.css,
-   by the card's width); then the model label, as composerModelDraw says of the measured row
-   (Composer.tsx marks data-model): while Queue is showing the mark, the name and the level step
-   out whole and their pill with them, without it the level alone does, each read and not drawn,
-   so no word is drawn in part; then, with no Queue, the model's name and the opened context
-   text. Nothing overlaps its neighbour, and the context ring at the end is never the part that
-   is cut. */
+   by the card's width); then the model label moves, as composerModelDraw says of the measured
+   row (Composer.tsx marks data-model="row" and the card data-status-row): the mark, the name and
+   the level are always drawn, so they take a row of their own over the controls; only there may
+   the name give letters to an ellipsis, and the opened context text. Nothing overlaps its
+   neighbour, and the context ring at the end is never the part that is cut. */
 .composer-status {
   grid-area: status;
   display: flex;
@@ -244,8 +243,7 @@
 }
 
 /* stepped out: read, not drawn (the properties of .visually-hidden, set from the measured row) */
-.composer-status[data-model="out"] .composer-model-info,
-.composer-status[data-model="no-effort"] .composer-reasoning {
+.composer-status[data-model="out"] .composer-model-info {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -297,6 +295,26 @@
   white-space: nowrap;
 }
 
+/* on its own row the level is never the part that gives way: the name is */
+.composer-status[data-model="row"] .composer-reasoning {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+/* Codex's Fast mode, drawn only while it is on */
+.composer-fast {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--accent);
+}
+
+.composer-fast svg {
+  width: var(--fs-sm);
+  height: var(--fs-sm);
+  fill: currentColor;
+}
+
 .composer-reasoning-dot {
   margin-right: var(--space-2);
 }
@@ -311,9 +329,9 @@
   text-transform: uppercase;
 }
 
-/* Claude Code's and Codex's name and level open the agent's own picker (Composer.tsx): buttons
-   drawn as the label they are, with a caret after them that says so. The pill clips a finger's
-   larger hit area to its own height */
+/* Claude Code's and Codex's label opens what can be changed (Composer.tsx): one button drawn as
+   the label it is, with a caret after it that says so. The pill clips a finger's larger hit area
+   to its own height */
 .composer-pick {
   position: relative;
   margin: 0;
@@ -328,8 +346,45 @@
   cursor: default;
 }
 
+/* the whole label is the control: the mark, the name, the level, the bolt and the caret, from the
+   pill's own edge (its padding is the button's here) and as tall as the pill, so a finger does
+   not have to find the words or the caret */
+.composer-pill-button {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  align-self: stretch;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-left: calc(-1 * var(--space-3));
+  padding-left: var(--space-3);
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.composer-pill-button:last-child {
+  margin-right: calc(-1 * var(--space-3));
+  padding-right: var(--space-3);
+}
+
+.composer-pill-button:active:not(:disabled),
+.composer-pill-button[aria-expanded="true"] {
+  background: var(--bg-elevated);
+}
+
+/* no pill around it (no model named yet): the button keeps a control's height of its own */
+.composer-pill.is-bare .composer-pill-button {
+  align-self: center;
+  height: var(--control-h);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+}
+
 @media (hover: hover) {
-  .composer-pick:not(:disabled):hover {
+  .composer-pick:not(:disabled):hover .composer-model {
     text-decoration: underline dotted;
     text-underline-offset: 3px;
   }
@@ -351,11 +406,6 @@
   color: var(--text-dim);
 }
 
-.composer-model.composer-pick .composer-pick-caret {
-  margin-left: var(--space-1);
-  vertical-align: middle;
-}
-
 .composer-pick:disabled ~ .composer-pick-caret,
 .composer-pick:disabled .composer-pick-caret {
   opacity: 0.5;
@@ -365,7 +415,9 @@
 /* Context left: desktop can reveal its number; mobile keeps an inert ring. */
 .composer-context {
   display: inline-flex;
-  flex: 0 1 auto;
+  /* its opened number is the first thing to give way: the label beside it is not moved to a row
+     of its own, nor the card made taller, for a number the ring already draws */
+  flex: 0 1000 auto;
   min-width: 14px;
   align-items: center;
   gap: var(--space-1);
@@ -480,6 +532,21 @@
   transition:
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out);
+}
+
+/* The model label did not fit beside the controls (Composer.tsx, composerModelDraw "row"): the
+   status content is a row of its own between the message and the controls, the card's whole
+   width, so the model and its level are always drawn. */
+.composer-surface[data-status-row] {
+  grid-template-areas:
+    "attachments attachments attachments"
+    "text text text"
+    "status status status"
+    "left . right";
+}
+
+.composer-surface[data-status-row] > .composer-status {
+  padding: 0 var(--space-3) 0;
 }
 
 /* focus is the surface's: the accent border on the rounded box, not a rectangle on the

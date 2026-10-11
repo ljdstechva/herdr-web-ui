@@ -132,7 +132,8 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await context.close();
   }
 
-  // on a phone the popover opens inside the drawer and stays on screen
+  // on a phone the drawer itself says what is left of each plan: a panel over its footer rows,
+  // every provider with its limits, with no strip and no popover to open
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "en-US" });
   try {
     await staged(phone);
@@ -140,16 +141,27 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     const page = await phone.newPage();
     await page.goto(origin);
     await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
-    await page.locator(".usage-strip").click();
-    const popover = page.getByRole("dialog", { name: "Subscription usage", exact: true });
-    await popover.waitFor();
-    const box = await popover.boundingBox();
-    assert.ok(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= 390, "the popover stays inside the phone's screen");
+    const panel = page.getByRole("region", { name: "Usage left", exact: true });
+    await panel.waitFor();
+    assert.equal(await page.locator(".usage-strip").count(), 0, "the drawer draws the panel, not the strip");
+    const box = await panel.boundingBox();
+    assert.ok(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= 390 && box.y + box.height <= 844, "the panel stays inside the phone's screen");
+    assert.ok(box.height <= 844 * 0.34 + 80, `the panel leaves the list its room (${box.height}px)`);
+    assert.equal(await panel.locator(".usage-provider").count(), 7, "every account shown in Settings is in it");
+    const values = await panel.locator(".usage-row-value").allTextContents();
+    assert.ok(values.length > 0 && values.every((value) => /^\d+(?:\.\d)?% left$/.test(value)), `each limit says what is left, whatever the meters count: ${JSON.stringify(values)}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-popover-phone.png") });
+    if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-left-phone.png") });
+    // folded it is one line, a limit per plan, and stays folded on this device
+    await panel.getByRole("button", { name: /Usage left/ }).click();
+    assert.equal(await panel.locator(".usage-provider").count(), 0);
+    assert.equal(await panel.locator(".usage-left-chip").count(), 7);
+    assert.ok(((await panel.boundingBox())?.height ?? 999) <= 120, "folded, the panel is a line or two");
+    assert.equal(await page.evaluate(() => localStorage.getItem("herdr-web-ui:usage-left-folded")), "1");
+    await panel.getByRole("button", { name: /Usage left/ }).click();
+    await panel.locator(".usage-provider").first().waitFor();
 
     // Settings on the phone: every account row fits its card, controls included
-    await page.keyboard.press("Escape");
     await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
     await openSettingsPage(page, "Subscription usage");
     const accounts = page.locator(".usage-accounts");
@@ -162,5 +174,5 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
   } finally {
     await phone.close();
   }
-  console.log("PASS plan meters beside Settings: accounts, order, hiding, used or left, overflow, popover, refresh, Escape, off switch and phone fit");
+  console.log("PASS plan meters beside Settings: accounts, order, hiding, used or left, overflow, popover, refresh, Escape, off switch, and a phone's drawer panel of what is left");
 }
