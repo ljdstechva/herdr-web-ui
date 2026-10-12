@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { WorktreeEntry, WorktreeListing, WorktreeStatus } from "../../shared/protocol.ts";
-import { formatBytes, isGeneratedBranch, mergeBlock, tabWorktreeSignature, tabWorktrees, worktreeSpent, worktreeTabLabel } from "./tabWorktrees.ts";
+import { checkoutInUseElsewhere, formatBytes, isGeneratedBranch, mergeBlock, tabWorktreeSignature, tabWorktrees, worktreeSpent, worktreeTabLabel } from "./tabWorktrees.ts";
 
 const entry = (path: string, branch: string | null, linked: boolean, extra: Partial<WorktreeEntry> = {}): WorktreeEntry => ({
   path, branch, label: branch ?? "detached", is_linked_worktree: linked, is_bare: false, is_detached: branch === null, is_prunable: false, open_workspace_id: null, ...extra,
@@ -67,10 +67,30 @@ describe("tabWorktrees", () => {
     expect(tabWorktrees(tabs, panes, listing(entry("/code/app", "main", false), entry("/gone/tree", null, true))).get("t2")).toEqual({ path: "/gone/tree", branch: null, isDetached: true });
   });
 
+  it("marks nothing, and does not throw, on a listing that lacks what it needs", () => {
+    const panes = [{ tab_id: "t1", cwd: "/tmp/project/linked" }];
+    // an entry without the linked flag is not known to be a worktree; a source without its checkout excludes nothing
+    const partial = { source: { repo_key: "repo", source_workspace_id: "w1" }, worktrees: [{ path: "/tmp/project/linked", branch: "feature", is_detached: false, open_workspace_id: "w1" }] } as unknown as WorktreeListing;
+    expect(tabWorktrees(tabs, panes, partial).size).toBe(0);
+    expect(tabWorktrees(tabs, panes, { worktrees: [{ branch: "x", is_linked_worktree: true }, null] } as unknown as WorktreeListing).size).toBe(0);
+    expect(tabWorktrees(tabs, panes, {} as unknown as WorktreeListing).size).toBe(0);
+  });
+
   it("reads a checkout herdr lists without a workspace field, as it does for one no workspace is on", () => {
     const unopened = entry("/trees/a", "a", true) as Partial<WorktreeEntry>;
     delete unopened.open_workspace_id;
     expect(tabWorktrees(tabs, [{ tab_id: "t1", cwd: "/trees/a" }], listing(entry("/code/app", "main", false), unopened as WorktreeEntry)).get("t1")?.branch).toBe("a");
+  });
+});
+
+describe("checkoutInUseElsewhere", () => {
+  it("finds a pane of another tab or another workspace in the checkout, and not the tab's own", () => {
+    const panes = [{ tab_id: "t2", cwd: "/trees/a/src" }, { tab_id: "t2", cwd: "/trees/a" }];
+    expect(checkoutInUseElsewhere(panes, "t2", "/trees/a")).toBeFalse();
+    expect(checkoutInUseElsewhere([...panes, { tab_id: "t3", cwd: "/trees/a/" }], "t2", "/trees/a")).toBeTrue();
+    // a pane of another workspace has another tab id too
+    expect(checkoutInUseElsewhere([...panes, { tab_id: "w9:t1", cwd: "/trees/a/docs" }], "t2", "/trees/a")).toBeTrue();
+    expect(checkoutInUseElsewhere([...panes, { tab_id: "t3", cwd: "/trees/ab" }, { tab_id: "t4", cwd: null }], "t2", "/trees/a")).toBeFalse();
   });
 });
 
@@ -101,7 +121,7 @@ describe("worktree tab names and branches", () => {
 describe("mergeBlock", () => {
   const status = (over: Partial<WorktreeStatus> = {}): WorktreeStatus => ({
     path: "/trees/a", branch: "work", target: { path: "/code/app", branch: "main", changed: 0, busy: false },
-    changed: 0, changed_files: [], ahead: 2, behind: 0, conflicts: [], size_bytes: null, ...over,
+    busy: false, changed: 0, changed_files: [], ahead: 2, behind: 0, conflicts: [], size_bytes: null, ...over,
   });
 
   it("lets a branch with commits merge, with or without a conflict reading", () => {
@@ -113,6 +133,8 @@ describe("mergeBlock", () => {
     expect(mergeBlock(status({ branch: null, conflicts: ["a"] }), false)).toBe("detached");
     expect(mergeBlock(status({ target: { path: "/code/app", branch: null, changed: 0, busy: true } }), false)).toBe("target-detached");
     expect(mergeBlock(status({ target: { path: "/code/app", branch: "main", changed: 0, busy: true }, conflicts: ["a"] }), false)).toBe("target-busy");
+    // an unfinished merge in the worktree comes before anything a commit could do
+    expect(mergeBlock(status({ busy: true, changed: 1 }), true)).toBe("busy");
     expect(mergeBlock(status({ conflicts: ["a.ts"] }), false)).toBe("conflicts");
     expect(mergeBlock(status({ ahead: 0 }), false)).toBe("nothing");
   });

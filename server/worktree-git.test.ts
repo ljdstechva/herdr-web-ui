@@ -77,6 +77,31 @@ describe("worktreeAdd", () => {
     expect(await refusal(worktreeAdd(main, { branch: "once", path: join(checkouts, "twice") }))).toBe("worktree_add_failed");
   });
 
+  it("checks out the branch only a remote has, tracking it, instead of starting a new one of that name", async () => {
+    const { main, checkouts } = repository();
+    // a second repository stands in for the remote, with a branch this one does not have locally
+    const remote = join(checkouts, "..", "remote.git");
+    expect(Bun.spawnSync(["git", "clone", "-q", "--bare", main, remote]).exitCode).toBe(0);
+    sh(main, "remote", "add", "origin", remote);
+    const theirs = join(checkouts, "..", "theirs");
+    expect(Bun.spawnSync(["git", "clone", "-q", remote, theirs]).exitCode).toBe(0);
+    sh(theirs, "config", "user.name", "Fixture");
+    sh(theirs, "config", "user.email", "fixture@example.invalid");
+    sh(theirs, "checkout", "-q", "-b", "colleague");
+    commit(theirs, "theirs.txt", "theirs\n", "theirs");
+    sh(theirs, "push", "-q", "origin", "colleague");
+    sh(main, "fetch", "-q", "origin");
+    commit(main, "ahead.txt", "ahead\n", "main moved on");
+
+    const made = await worktreeAdd(main, { branch: "colleague", path: join(checkouts, "colleague") });
+    expect(made.createdBranch).toBeTrue();
+    expect(sh(made.path, "rev-parse", "HEAD")).toBe(sh(theirs, "rev-parse", "HEAD"));
+    expect(sh(made.path, "rev-parse", "--abbrev-ref", "colleague@{upstream}")).toBe("origin/colleague");
+    // an explicit base still wins over the guess
+    const based = await worktreeAdd(main, { branch: "mine", base: "main", path: join(checkouts, "mine") });
+    expect(sh(based.path, "rev-parse", "HEAD")).toBe(sh(main, "rev-parse", "HEAD"));
+  });
+
   it("takes a checkout back with the branch made for it, and keeps a branch that was there", async () => {
     const { main, checkouts } = repository();
     const made = await worktreeAdd(main, { branch: "gone", path: join(checkouts, "gone") });
@@ -99,6 +124,7 @@ describe("worktreeStatus", () => {
     const status = await worktreeStatus(main, made.path);
     expect(status).toMatchObject({ path: made.path, branch: "fresh", changed: 0, changed_files: [], ahead: 0, behind: 0, conflicts: [] });
     expect(status.target).toEqual({ path: main, branch: "main", changed: 0, busy: false });
+    expect(status.busy).toBeFalse();
     expect(status.size_bytes === null || status.size_bytes > 0).toBeTrue();
   });
 
@@ -119,6 +145,21 @@ describe("worktreeStatus", () => {
     expect(status.changed_files.sort()).toEqual(["renamed.txt", "untracked.txt"]);
     expect(status.conflicts).toEqual([]);
     expect(status.target.changed).toBe(1);
+  });
+
+  it("keeps the whole name of a file changed and not staged, and counts one whose name is a single letter", async () => {
+    const { main, checkouts } = repository();
+    commit(main, "Makefile", "all:\n", "makefile");
+    commit(main, "a", "a\n", "a");
+    const made = await worktreeAdd(main, { branch: "work", path: join(checkouts, "work") });
+    // an unstaged change is listed with a leading space, which is the first thing in git's output
+    writeFileSync(join(made.path, "Makefile"), "all: build\n");
+    expect((await worktreeStatus(main, made.path)).changed_files).toEqual(["Makefile"]);
+    sh(made.path, "checkout", "-q", "--", "Makefile");
+    writeFileSync(join(made.path, "a"), "changed\n");
+    writeFileSync(join(main, "a"), "changed here too\n");
+    const status = await worktreeStatus(main, made.path);
+    expect([status.changed, status.changed_files, status.target.changed]).toEqual([1, ["a"], 1]);
   });
 
   it("names the files a merge would conflict in, without touching either checkout", async () => {
@@ -211,6 +252,48 @@ describe("worktreeMerge", () => {
     expect((await worktreeStatus(main, made.path)).target.busy).toBeFalse();
   });
 
+  it("leaves a worktree that is mid-merge alone: its conflict is not committed and carried into the main checkout", async () => {
+    const { main, checkouts } = repository();
+    const made = await worktreeAdd(main, { branch: "feat", path: join(checkouts, "feat") });
+    commit(made.path, "f.txt", "feat\n", "feat");
+    sh(main, "branch", "other");
+    const other = await worktreeAdd(main, { branch: "other", path: join(checkouts, "other") });
+    commit(other.path, "f.txt", "other\n", "other");
+    // the worktree's agent started a merge and has not resolved it
+    expect(Bun.spawnSync(["git", "-C", made.path, "merge", "--no-edit", "other"]).exitCode).not.toBe(0);
+    const before = sh(main, "rev-parse", "HEAD");
+
+    const status = await worktreeStatus(main, made.path);
+    expect(status.busy).toBeTrue();
+    expect(status.changed).toBe(1);
+    expect(await refusal(worktreeMerge(main, made.path, { commitMessage: "Work from feat" }))).toBe("worktree_busy");
+    expect(await refusal(worktreeMerge(main, made.path))).toBe("worktree_busy");
+    expect(sh(main, "rev-parse", "HEAD")).toBe(before);
+    // the agent's merge is still its to finish
+    expect(sh(made.path, "status", "--porcelain")).toStartWith("AA f.txt");
+    expect(existsSync(join(main, "f.txt"))).toBeFalse();
+  });
+
+  it("says a commit was made when the merge after it conflicts", async () => {
+    const { main, checkouts } = repository();
+    const made = await worktreeAdd(main, { branch: "feat", path: join(checkouts, "feat") });
+    commit(main, "README.md", "ours\n", "ours");
+    // not committed yet, so no reading could have named the conflict
+    writeFileSync(join(made.path, "README.md"), "theirs\n");
+    const before = sh(main, "rev-parse", "HEAD");
+    let message = "";
+    try { await worktreeMerge(main, made.path, { commitMessage: "Work from feat" }); } catch (error) {
+      expect((error as WorktreeGitError).code).toBe("merge_conflict");
+      message = (error as WorktreeGitError).message;
+    }
+    expect(message).toContain("main was not changed");
+    expect(message).toContain("now a commit on feat");
+    expect(message).not.toContain("nothing was changed");
+    expect(sh(main, "rev-parse", "HEAD")).toBe(before);
+    expect(sh(main, "status", "--porcelain")).toBe("");
+    expect(sh(made.path, "log", "-1", "--format=%s")).toBe("Work from feat");
+  });
+
   it("answers git's refusal when the main checkout has its own changes to a merged file", async () => {
     const { main, checkouts } = repository();
     const made = await worktreeAdd(main, { branch: "work", path: join(checkouts, "work") });
@@ -266,6 +349,25 @@ describe("worktreeDelete", () => {
     sh(main, "merge", "-q", "--no-edit", "work");
     expect(await deleteMergedBranch(main, "work")).toBeTrue();
     expect(sh(main, "branch", "--list", "work")).toBe("");
+  });
+});
+
+describe("deleteMergedBranch", () => {
+  it("keeps a branch that is pushed and not merged here, which git branch -d alone would delete", async () => {
+    const { main, checkouts } = repository();
+    const remote = join(checkouts, "..", "remote.git");
+    expect(Bun.spawnSync(["git", "clone", "-q", "--bare", main, remote]).exitCode).toBe(0);
+    sh(main, "remote", "add", "origin", remote);
+    const made = await worktreeAdd(main, { branch: "feat", path: join(checkouts, "feat") });
+    commit(made.path, "feature.txt", "feature\n", "feature");
+    sh(made.path, "push", "-q", "-u", "origin", "feat");
+    await worktreeDelete(main, made.path, false);
+
+    expect(await deleteMergedBranch(main, "feat")).toBeFalse();
+    expect(sh(main, "branch", "--list", "feat")).toContain("feat");
+    expect(await deleteMergedBranch(main, "no-such-branch")).toBeFalse();
+    sh(main, "merge", "-q", "--no-edit", "feat");
+    expect(await deleteMergedBranch(main, "feat")).toBeTrue();
   });
 });
 

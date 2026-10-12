@@ -650,7 +650,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
         return json({
           path: checkout.path, branch: checkout.branch,
           target: { path: main.path, branch: main.branch, changed: 0, busy: false },
-          changed: work.changed.length, changed_files: work.changed, ahead: work.ahead, behind: 0, conflicts: [], size_bytes: 48 * 1024 * 1024,
+          busy: false, changed: work.changed.length, changed_files: work.changed, ahead: work.ahead, behind: 0, conflicts: [], size_bytes: 48 * 1024 * 1024,
         } satisfies WorktreeStatus, 200, { "cache-control": "no-store" });
       }
       const message = body["commit_message"];
@@ -667,6 +667,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       const named = body["path"] !== undefined && body["path"] !== null;
       const checkout = named ? linkedAt(body["path"]) : repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.path === info.checkout_path);
       if (!checkout) return error(named ? "worktree_not_found" : "not_linked_worktree", named ? "no such worktree checkout of this repository" : "the repository's main checkout cannot be removed", 404);
+      // a checkout a workspace is on is that workspace's to remove, never a tab's that sits in it
+      if (named && snapshot().workspaces.some((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path)) return error("worktree_open_as_workspace", "this checkout is open as a workspace; delete it from that workspace's menu", 409);
       const work = workIn(checkout.path);
       if (work.changed.length > 0 && body["force"] !== true) return error("dirty_worktree_requires_force", `'${checkout.path}' contains modified or untracked files, use --force to delete it`, 409);
       repo.checkouts = repo.checkouts.filter((candidate) => candidate.path !== checkout.path);
@@ -700,7 +702,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     }
     let checkout: Omit<WorktreeEntry, "open_workspace_id"> | undefined;
     // a branch that has its checkout already (a closed tab left it) opens as a tab in that one
-    const kept = asTab && !checkoutPath ? repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.branch === branch) : undefined;
+    const openAsWorkspace = (checkout: { path: string }) => snapshot().workspaces.some((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path);
+    const kept = asTab && !checkoutPath ? repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.branch === branch && !openAsWorkspace(candidate)) : undefined;
     if (kept) {
       const made = createDemoTab(workspace, kept.path, label ?? branch!.replace(/^worktree\//, "").replaceAll("/", "-"), typeof agent?.kind === "string" ? agent.kind : null);
       structureChanged();

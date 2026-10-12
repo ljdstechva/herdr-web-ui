@@ -27,8 +27,10 @@ const inside = (folder: string, checkout: string): boolean => folder === checkou
 export function tabWorktrees(tabs: readonly TabRef[], panes: readonly PaneRef[], listing: WorktreeListing | null): Map<string, TabWorktree> {
   const found = new Map<string, TabWorktree>();
   if (!listing) return found;
-  const own = normalizeCheckoutPath(listing.source.source_checkout_path);
-  const checkouts = listing.worktrees.filter((entry) => !entry.is_bare && !entry.is_prunable)
+  // what another PC's server sends is read as it comes: a listing without a path marks nothing, and never throws in a render
+  const source = listing.source?.source_checkout_path;
+  const own = typeof source === "string" ? normalizeCheckoutPath(source) : null;
+  const checkouts = (Array.isArray(listing.worktrees) ? listing.worktrees : []).filter((entry) => typeof entry?.path === "string" && !entry.is_bare && !entry.is_prunable)
     .map((entry) => ({ entry, path: normalizeCheckoutPath(entry.path) }))
     .sort((left, right) => right.path.length - left.path.length);
   for (const tab of tabs) {
@@ -47,6 +49,15 @@ export function tabWorktrees(tabs: readonly TabRef[], panes: readonly PaneRef[],
     if (best) found.set(tab.tab_id, best.worktree);
   }
   return found;
+}
+
+/**
+ * Whether a pane outside the tab is in the checkout too: another tab of this workspace, or a
+ * pane of any other workspace. Such a checkout is not one tab's to delete.
+ */
+export function checkoutInUseElsewhere(panes: readonly PaneRef[], tabId: string, checkoutPath: string): boolean {
+  const checkout = normalizeCheckoutPath(checkoutPath);
+  return panes.some((pane) => pane.tab_id !== tabId && Boolean(pane.cwd) && inside(normalizeCheckoutPath(pane.cwd as string), checkout));
 }
 
 /** A tab opened, closed or moved to another folder asks for the checkouts again; a status change does not. */
@@ -73,11 +84,13 @@ export const worktreeSpent = (status: Pick<WorktreeStatus, "changed" | "ahead">)
  * Whether a merge can be asked for, and the one reason it cannot. `commit` is the choice to
  * commit the checkout's unsaved files first, which gives a branch without commits something to merge.
  */
-export type MergeBlock = "detached" | "target-detached" | "target-busy" | "conflicts" | "nothing";
+export type MergeBlock = "detached" | "target-detached" | "target-busy" | "busy" | "conflicts" | "nothing";
 export function mergeBlock(status: WorktreeStatus, commit: boolean): MergeBlock | null {
   if (status.branch === null) return "detached";
   if (status.target.branch === null) return "target-detached";
   if (status.target.busy) return "target-busy";
+  // a merge the worktree's agent has not finished: committing over it would carry its conflict markers along
+  if (status.busy) return "busy";
   if (status.conflicts !== null && status.conflicts.length > 0) return "conflicts";
   if (status.ahead === 0 && !(commit && status.changed > 0)) return "nothing";
   return null;

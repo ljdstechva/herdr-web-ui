@@ -24,7 +24,7 @@ import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useTabReorder } from "../lib/useTabReorder.ts";
 import { useTabWorktrees } from "../lib/useTabWorktrees.ts";
-import type { TabWorktree } from "../lib/tabWorktrees.ts";
+import { checkoutInUseElsewhere, type TabWorktree } from "../lib/tabWorktrees.ts";
 import { swipeTarget, watchTabSwipe, type TabSwipeOptions } from "../lib/tabSwipe.ts";
 import { paneStatus, rollupStatus } from "../lib/status.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -304,8 +304,8 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     }
     setConfirm({ tab, title: t("Close tab {name}?", { name: nameOf(tab) }), body: warning });
   };
-  /** another tab of the workspace is in the same checkout: it is not one tab's to delete */
-  const sharesCheckout = (tab: HerdrTab, worktree: TabWorktree): boolean => tabs.some((other) => other.tab_id !== tab.tab_id && worktrees.get(other.tab_id)?.path === worktree.path);
+  /** a pane of another tab, in this workspace or any other, is in the same checkout: it is not one tab's to delete */
+  const sharesCheckout = (tab: HerdrTab, worktree: TabWorktree): boolean => checkoutInUseElsewhere(snapshot.panes, tab.tab_id, worktree.path);
   /** a tab already gone (closed in the TUI while a dialog stood) is closed: the deed goes on */
   const closeIfHere = async (tab: HerdrTab): Promise<void> => {
     if (!snapshotTabs.current.some((candidate) => candidate.tab_id === tab.tab_id)) return;

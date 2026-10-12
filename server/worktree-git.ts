@@ -78,11 +78,15 @@ function said(result: GitResult, fallback: string): string {
   return text === "" ? fallback : text;
 }
 
-async function must(cwd: string, args: string[], code: string, fallback: string, timeoutMs = READ_MS): Promise<string> {
+/** git's output as written: a caller that parses columns must not lose a leading space */
+async function mustRaw(cwd: string, args: string[], code: string, fallback: string, timeoutMs = READ_MS): Promise<string> {
   const result = await git(cwd, args, timeoutMs);
   if (result.code !== 0 || result.timedOut) throw new WorktreeGitError(code, said(result, fallback));
-  return result.stdout.trim();
+  return result.stdout;
 }
+
+const must = async (cwd: string, args: string[], code: string, fallback: string, timeoutMs = READ_MS): Promise<string> =>
+  (await mustRaw(cwd, args, code, fallback, timeoutMs)).trim();
 
 /** The branch a checkout is on; null on a detached HEAD. */
 async function currentBranch(checkout: string): Promise<string | null> {
@@ -96,7 +100,8 @@ const ref = (branch: string): string => `refs/heads/${branch}`;
 
 /** Paths with uncommitted changes, untracked ones included (a directory of them counts once). */
 async function changedFiles(checkout: string): Promise<string[]> {
-  const output = await must(checkout, ["status", "--porcelain=v1", "-z"], "status_failed", "git status failed");
+  // untrimmed: an unstaged change starts with a space (" M path"), and the name follows two columns and a space
+  const output = await mustRaw(checkout, ["status", "--porcelain=v1", "-z"], "status_failed", "git status failed");
   const files: string[] = [];
   const entries = output.split("\0");
   for (let index = 0; index < entries.length; index += 1) {
@@ -134,11 +139,12 @@ async function checkoutSize(checkout: string): Promise<number | null> {
  * object store alone (git 2.38); an older git leaves them unknown (`null`).
  */
 export async function worktreeStatus(main: string, checkout: string): Promise<WorktreeStatus> {
-  const [branch, targetBranch, changed, targetChanged, busy, head, targetHead, size] = await Promise.all([
+  const [branch, targetBranch, changed, targetChanged, busy, targetBusy, head, targetHead, size] = await Promise.all([
     currentBranch(checkout),
     currentBranch(main),
     changedFiles(checkout),
     changedFiles(main),
+    midOperation(checkout),
     midOperation(main),
     must(checkout, ["rev-parse", "HEAD"], "status_failed", "the worktree has no commit"),
     must(main, ["rev-parse", "HEAD"], "status_failed", "the main checkout has no commit"),
@@ -158,7 +164,8 @@ export async function worktreeStatus(main: string, checkout: string): Promise<Wo
   return {
     path: checkout,
     branch,
-    target: { path: main, branch: targetBranch, changed: targetChanged.length, busy },
+    target: { path: main, branch: targetBranch, changed: targetChanged.length, busy: targetBusy },
+    busy,
     changed: changed.length,
     changed_files: changed.slice(0, MAX_FILES),
     ahead,
@@ -180,6 +187,9 @@ export async function worktreeMerge(main: string, checkout: string, options: { c
   if (targetBranch === null) throw new WorktreeGitError("target_detached", "the main checkout is on no branch (detached HEAD), so there is no branch to merge into");
   if (branch === targetBranch) throw new WorktreeGitError("nothing_to_merge", "the worktree is on the branch it would merge into");
   if (await midOperation(main)) throw new WorktreeGitError("target_busy", "the main checkout is in the middle of a merge or a rebase; finish or abort it first");
+  // a merge or cherry-pick the worktree's agent has not finished: committing here would conclude it,
+  // conflict markers and all, and carry them into the main checkout
+  if (await midOperation(checkout)) throw new WorktreeGitError("worktree_busy", "the worktree is in the middle of a merge or a rebase; let its agent finish or abort it first");
 
   let committed = false;
   if (options.commitMessage !== undefined && (await changedFiles(checkout)).length > 0) {
@@ -201,11 +211,13 @@ export async function worktreeMerge(main: string, checkout: string, options: { c
       const aborted = await git(main, ["merge", "--abort"], WRITE_MS);
       if (aborted.code !== 0) throw new WorktreeGitError("merge_abort_failed", `the merge failed and could not be taken back; the main checkout at ${main} is mid-merge: ${said(aborted, "git merge --abort failed")}`);
     }
+    // the main checkout is as it was; a commit made first stays where it was made
+    const left = committed ? `${targetBranch} was not changed; the uncommitted files are now a commit on ${branch}` : "nothing was changed";
     if (conflicted.length > 0) {
       const shown = conflicted.slice(0, 5).join(", ");
-      throw new WorktreeGitError("merge_conflict", `conflicts in ${shown}${conflicted.length > 5 ? ` and ${conflicted.length - 5} more` : ""}; nothing was changed`);
+      throw new WorktreeGitError("merge_conflict", `conflicts in ${shown}${conflicted.length > 5 ? ` and ${conflicted.length - 5} more` : ""}; ${left}`);
     }
-    throw new WorktreeGitError("merge_refused", said(merged, "git merge failed"));
+    throw new WorktreeGitError("merge_refused", `${said(merged, "git merge failed")}${committed ? ` (${left})` : ""}`);
   }
   const head = await must(main, ["rev-parse", "--short", "HEAD"], "merge_failed", "git rev-parse failed");
   return { ok: true, branch, target_branch: targetBranch, commits, committed, head };
@@ -225,9 +237,26 @@ export async function worktreeAdd(source: string, options: { branch: string; bas
   // a base that looks like an option is never one: it is resolved to a commit first
   const from = exists || base === undefined ? undefined
     : await must(source, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${base}^{commit}`], "invalid_base", `${JSON.stringify(base)} is not a branch, tag or commit of this repository`);
-  const args = exists ? ["worktree", "add", "--", path, branch] : ["worktree", "add", "-b", branch, "--", path, ...(from === undefined ? [] : [from])];
+  // a name only one remote has is that remote's branch, checked out to track it (as `git worktree add
+  // <path> <branch>` guesses): never a new branch of the same name started somewhere else
+  const remote = exists || from !== undefined ? undefined : await remoteBranch(source, branch);
+  const args = exists ? ["worktree", "add", "--", path, branch]
+    : remote !== undefined ? ["worktree", "add", "--track", "-b", branch, "--", path, remote]
+    : ["worktree", "add", "-b", branch, "--", path, ...(from === undefined ? [] : [from])];
   await must(source, args, "worktree_add_failed", "git worktree add failed", CHECKOUT_MS);
   return { path, branch, createdBranch: !exists };
+}
+
+/** `refs/remotes/<remote>/<branch>` when exactly one remote has the branch; undefined otherwise. */
+async function remoteBranch(source: string, branch: string): Promise<string | undefined> {
+  const listed = await git(source, ["for-each-ref", "--format=%(refname)", "refs/remotes"]);
+  if (listed.code !== 0) return undefined;
+  const matches = listed.stdout.split("\n").map((line) => line.trim()).filter((name) => {
+    const rest = name.slice("refs/remotes/".length);
+    const slash = rest.indexOf("/");
+    return name.startsWith("refs/remotes/") && slash > 0 && rest.slice(slash + 1) === branch;
+  });
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** Takes back a checkout made a moment ago, and the branch made with it: nothing is in either yet. */
@@ -248,9 +277,14 @@ export async function worktreeDelete(main: string, checkout: string, force: bool
   throw new WorktreeGitError(dirty ? "dirty_worktree_requires_force" : "worktree_remove_failed", said(result, "git worktree remove failed"));
 }
 
-/** `git branch -d`: only a branch whose commits the main checkout's branch already has. False when git keeps it. */
+/**
+ * Deletes a branch only when the main checkout's HEAD already has every commit of it; false
+ * when it is kept. `git branch -d` alone is not that test: with an upstream set it deletes a
+ * branch that is merged to its remote and not here.
+ */
 export async function deleteMergedBranch(main: string, branch: string): Promise<boolean> {
-  return (await git(main, ["branch", "-d", "--", branch])).code === 0;
+  if ((await git(main, ["merge-base", "--is-ancestor", ref(branch), "HEAD"])).code !== 0) return false;
+  return (await git(main, ["branch", "-D", "--", branch])).code === 0;
 }
 
 /** the folder name herdr gives a branch's checkout: the branch with its slashes as dashes */

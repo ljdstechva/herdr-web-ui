@@ -130,7 +130,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     listWorktrees(tabWorkspaceId).then((listing) => {
       if (cancelled) return;
       setRepository(true);
-      setCheckouts(listing.worktrees.filter((entry) => entry.is_linked_worktree && !entry.is_bare && !entry.is_prunable && entry.branch !== null));
+      // one a workspace is on is that workspace's, not a tab's to open and later delete
+      setCheckouts((Array.isArray(listing.worktrees) ? listing.worktrees : []).filter((entry) => entry.is_linked_worktree && !entry.is_bare && !entry.is_prunable && !entry.open_workspace_id && entry.branch !== null));
     }, () => undefined);
     return () => { cancelled = true; };
   }, [open, tabWorkspaceId, listWorktrees]);

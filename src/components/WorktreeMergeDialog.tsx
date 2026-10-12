@@ -150,7 +150,7 @@ export function WorktreeMergeDialog({ workspaceId, path, branch, cleanup = null,
                 {status.behind > 0 && target && <div><dt>{t("Commits it lacks from {target}", { target })}</dt><dd>{status.behind}</dd></div>}
                 {status.changed > 0 && <div><dt>{t("Uncommitted files")}</dt><dd>{status.changed}</dd></div>}
               </dl>
-              {status.changed > 0 && block !== "detached" && block !== "target-detached" && block !== "target-busy" && (
+              {status.changed > 0 && block !== "detached" && block !== "target-detached" && block !== "target-busy" && block !== "busy" && (
                 <div className="worktree-option">
                   <label className="worktree-check">
                     <input type="checkbox" checked={commit} disabled={pending !== null} onChange={(event) => setCommit(event.target.checked)} />
@@ -175,6 +175,7 @@ export function WorktreeMergeDialog({ workspaceId, path, branch, cleanup = null,
               {block === "detached" && <p className="worktree-alert" role="alert">{t("This worktree is on no branch (detached HEAD), so there is no branch to merge.")}</p>}
               {block === "target-detached" && <p className="worktree-alert" role="alert">{t("The main checkout is on no branch (detached HEAD), so there is no branch to merge into.")}</p>}
               {block === "target-busy" && <p className="worktree-alert" role="alert">{t("The main checkout is in the middle of a merge or a rebase. Finish or abort it first.")}</p>}
+              {block === "busy" && <p className="worktree-alert" role="alert">{t("This worktree is in the middle of a merge or a rebase. Let its agent finish or abort it first.")}</p>}
               {block === "nothing" && target && <p className="field-hint">{t("Nothing to merge yet: {branch} has no commits that {target} lacks.", { branch: name ?? "", target })}</p>}
               {block === null && status.target.changed > 0 && target && <p className="field-hint">{t("{target} has uncommitted files of its own ({n}). git refuses the merge if it touches one of them.", { target, n: status.target.changed })}</p>}
             </>

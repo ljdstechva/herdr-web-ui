@@ -190,7 +190,8 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         deletes the checkout and closes its workspace, keeps the branch; a dirty checkout is refused
  *         without force: dirty_worktree_requires_force. With `path`, the checkout is that linked one of the
  *         workspace's repository, which a tab is in: git removes it, or herdr when it is open as a workspace.
- *         `delete_branch` also deletes its branch, only when the main checkout already has its commits)
+ *         `delete_branch` also deletes its branch, only when the main checkout already has its commits.
+ *         409 worktree_open_as_workspace: a checkout named by `path` that a workspace is on is that workspace's to remove)
  *  POST   /api/worktree/tab    { workspace_id, branch, base?, label?, path?, agent?: { kind, name?, args? } } -> WorktreeTabCreated
  *         (`git worktree add`, then tab.create in that workspace with the checkout as its folder, and the
  *         same agent launch: the worktree is a tab of the repository's workspace, not a workspace of its own.
@@ -201,7 +202,7 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/worktree/merge  { workspace_id, path, commit_message? } -> WorktreeMerged (`git merge` of the
  *         checkout's branch in the main checkout; with commit_message its uncommitted files are committed
  *         first. 409 merge_conflict / merge_refused: the merge is taken back and nothing changed;
- *         409 nothing_to_merge, detached_head, target_detached, target_busy, commit_failed)
+ *         409 nothing_to_merge, detached_head, target_detached, target_busy, worktree_busy, commit_failed)
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204, clears the token and the device cookies
  *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's)
@@ -732,6 +733,8 @@ export interface WorktreeStatus {
     /** in the middle of a merge, rebase, cherry-pick or revert */
     busy: boolean;
   };
+  /** the checkout itself is in the middle of a merge, rebase, cherry-pick or revert: its agent has not finished */
+  busy: boolean;
   /** files with uncommitted changes in the checkout, untracked ones included */
   changed: number;
   changed_files: string[];

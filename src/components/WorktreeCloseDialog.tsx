@@ -115,7 +115,7 @@ export function WorktreeCloseDialog({ title, warning, workspaceId, worktree, sha
             </dl>
           ) : unread === null ? <p className="field-hint" role="status">{t("Reading the worktree…")}</p>
             : <p className="field-hint worktree-error">{t("The worktree could not be read: {reason}", { reason: unread })}</p>}
-          {shared ? <p className="field-hint">{t("Another tab is in this checkout, so it stays.")}</p> : (
+          {shared ? <p className="field-hint">{t("Another tab or workspace is in this checkout, so it stays.")}</p> : (
             <div className="worktree-option">
               <label className="worktree-check">
                 <input type="checkbox" checked={remove} disabled={pending || deleted.current} onChange={(event) => setChosen(event.target.checked)} />
@@ -124,6 +124,7 @@ export function WorktreeCloseDialog({ title, warning, workspaceId, worktree, sha
               <p className="worktree-where">{worktree.path}</p>
               {remove && status !== null && status.changed > 0 && <p className="worktree-alert">{t("Its uncommitted files are lost with it.")}</p>}
               {remove && status !== null && status.ahead > 0 && branch && <p className="field-hint">{t("Its commits stay on the branch {branch}.", { branch })}</p>}
+              {remove && status !== null && status.ahead > 0 && !branch && <p className="worktree-alert">{t("Its commits are on no branch, so they are lost with it.")}</p>}
               {!remove && <p className="field-hint">{t("The checkout stays on disk, and its branch with it.")}</p>}
               {branchOffered && (
                 <label className="worktree-check">

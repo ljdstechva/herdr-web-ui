@@ -1136,6 +1136,27 @@ describe("workspace and discovery endpoints", () => {
       expect(reopened.tab_id).not.toBe(made.tab_id);
       expect((await post("/api/tab/close", { tab_id: reopened.tab_id })).status).toBe(200);
 
+      // a checkout a workspace is on is that workspace's to remove: a tab's request by path is refused,
+      // it is not offered as a tab's to open, and the workspace stays open
+      const side = await post("/api/worktree/create", { workspace_id: workspaceId, branch: "herdr-web-ui-test-tab-side", path: join(checkouts, "side") });
+      expect(side.status).toBe(200);
+      const sideWorkspace = (await side.json()) as WorktreeOpened;
+      const sidePath = (await (await fetch(`${base()}/api/worktree/list?workspace_id=${encodeURIComponent(workspaceId)}`)).json() as WorktreeListing).worktrees.find((candidate) => candidate.branch === "herdr-web-ui-test-tab-side")!.path;
+      const notATabs = await post("/api/worktree/remove", { workspace_id: workspaceId, path: sidePath, force: true, delete_branch: true });
+      expect(notATabs.status).toBe(409);
+      expect(((await notATabs.json()) as ApiError).error.code).toBe("worktree_open_as_workspace");
+      expect(existsSync(join(checkouts, "side"))).toBeTrue();
+      expect((await sessionSnapshot()).workspaces.some((workspace) => workspace.workspace_id === sideWorkspace.workspace_id)).toBeTrue();
+      const inUse = await post("/api/worktree/tab", { workspace_id: workspaceId, branch: "herdr-web-ui-test-tab-side" });
+      expect(inUse.status).toBe(409);
+      expect(((await inUse.json()) as ApiError).error.code).toBe("worktree_add_failed");
+      // the workspace's own request removes it, and its branch, which main already has
+      const own = await post("/api/worktree/remove", { workspace_id: sideWorkspace.workspace_id, delete_branch: true });
+      expect(own.status).toBe(200);
+      expect((await own.json()) as WorktreeRemoved).toMatchObject({ ok: true, branch_deleted: true });
+      expect(existsSync(join(checkouts, "side"))).toBeFalse();
+      expect((await sessionSnapshot()).workspaces.some((workspace) => workspace.workspace_id === sideWorkspace.workspace_id)).toBeFalse();
+
       // a file written after the merge is refused without force, under herdr's own code
       writeFileSync(join(checkout, "late.txt"), "late\n");
       const refused = await post("/api/worktree/remove", { workspace_id: workspaceId, path: entry!.path, delete_branch: true });
@@ -1154,7 +1175,11 @@ describe("workspace and discovery endpoints", () => {
       expect(closed.status).toBe(200);
       expect((await sessionSnapshot()).tabs.filter((tab) => tab.workspace_id === workspaceId)).toHaveLength(tabsBefore);
     } finally {
-      await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
+      const repoRoot = realpathSync(repo);
+      for (const workspace of (await sessionSnapshot().catch(() => null))?.workspaces ?? []) {
+        if (workspace.worktree?.is_linked_worktree && workspace.worktree.repo_root === repoRoot) await herdrRpc("worktree.remove", { workspace_id: workspace.workspace_id, force: true }).catch(() => undefined);
+      }
+      await herdrRpc("workspace.close", { workspace_id: workspaceId, close_group: true }).catch(() => undefined);
       rmSync(checkouts, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
     }

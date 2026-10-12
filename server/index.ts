@@ -1985,8 +1985,11 @@ export function createServer(
             const removed = await worktreeRemove(payload.workspace_id, force);
             return jsonResponse({ ok: true, path: removed.path, forced: removed.forced } satisfies WorktreeRemoved);
           }
-          const { main, entry } = await linkedCheckout(payload.workspace_id, typeof payload.path === "string" ? payload.path : null);
-          // a checkout open as a workspace goes through herdr, which closes that workspace with it
+          const named = typeof payload.path === "string";
+          const { main, entry } = await linkedCheckout(payload.workspace_id, named ? payload.path as string : null);
+          // a checkout a workspace is on goes through herdr, which closes that workspace with it:
+          // only that workspace's own request does it, never a tab's that happens to sit in it
+          if (named && entry.open_workspace_id) return conflictResponse("worktree_open_as_workspace", "this checkout is open as a workspace; delete it from that workspace's menu");
           if (entry.open_workspace_id) await worktreeRemove(entry.open_workspace_id, force);
           else await worktreeDelete(main, entry.path, force);
           const deleted = payload.delete_branch === true && entry.branch !== null ? await deleteMergedBranch(main, entry.branch) : undefined;
@@ -2004,6 +2007,8 @@ export function createServer(
         const path = url.searchParams.get("path") ?? "";
         if (workspaceId === "") return badRequest("missing_workspace_id", "workspace_id is required");
         if (!isAbsolute(path)) return badRequest("invalid_path", "path must be absolute");
+        // git reads a large checkout for a while; Bun's default idle timeout is shorter.
+        bunServer.timeout(request, 45);
         try {
           const { main, entry } = await linkedCheckout(workspaceId, path);
           return jsonResponse(await worktreeStatus(main, entry.path) satisfies WorktreeStatus, 200, { "cache-control": "no-store" });
@@ -2073,7 +2078,8 @@ export function createServer(
           const workspaceId = payload.workspace_id;
           const { source, worktrees } = await worktreeList(workspaceId);
           // a branch that has its checkout already (a closed tab left it on disk) opens in that one
-          const kept = given === undefined ? worktrees.find((entry) => entry.is_linked_worktree && !entry.is_bare && !entry.is_prunable && entry.branch === branch) : undefined;
+          // (one a workspace is on is that workspace's: git then says the branch is in use)
+          const kept = given === undefined ? worktrees.find((entry) => entry.is_linked_worktree && !entry.is_bare && !entry.is_prunable && !entry.open_workspace_id && entry.branch === branch) : undefined;
           const path = given ?? join(options.worktreeDirectory ?? herdrWorktreeDirectory(), source.repo_name, checkoutFolder(branch));
           // a new branch starts where the workspace's own checkout is
           const made = kept ? { path: kept.path, branch, createdBranch: false } : await worktreeAdd(source.source_checkout_path, { branch, base, path });
