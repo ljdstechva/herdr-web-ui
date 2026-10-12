@@ -131,6 +131,18 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+async function notificationShown() {
+  for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {
+    client.postMessage({ type: "notification-shown" });
+  }
+}
+
+// Tab notifications use registration.showNotification too. Another window may be reading
+// that pane, so let every client reconcile, not only the page that created the notification.
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "notification-shown") event.waitUntil(notificationShown());
+});
+
 // Web push (server/push.ts sends, shared/protocol.ts PushPayload is the JSON). Every
 // push shows a notification: Safari revokes a subscription whose pushes stay silent.
 // A window of the app that is visible right now already shows the change in its
@@ -157,6 +169,10 @@ self.addEventListener("push", (event) => {
         // Android's status bar and small icon: white on transparent, or Chrome's bell
         badge: "/icons/badge-96.png?v=ram1",
       });
+      // Always show first (including Safari). The page knows which content is actually read;
+      // ask it AFTER delivery so a push racing an earlier dismissal cannot leave a stale badge.
+      // Look up clients again: a window may have opened while showNotification was pending.
+      await notificationShown();
     })(),
   );
 });

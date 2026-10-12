@@ -79,6 +79,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- Opening a pane or VPS status now dismisses its delivered notifications and Android app-icon
+  badge entries. Unread panes (including the same pane ID on another PC) remain notified;
+  returning from the background or a dialog also reconciles alerts delivered while away.
 - **The installed app opens while its server restarts.** Opened during a restart, the app showed
   the empty "502" page of the proxy in front of the server; opened over a link that had not come
   up yet (a phone's tunnel after sleep), it stood on a blank page for as long as that took. A

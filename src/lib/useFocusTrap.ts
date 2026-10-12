@@ -7,6 +7,7 @@
  * when it can hold the focus itself (a dialog whose controls are all disabled while it works).
  */
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
+import { announceModalChange } from "./focus.ts";
 
 /** Tab stops in DOM order; what a user reaches with Tab inside the surface. */
 const FOCUSABLE = [
@@ -70,6 +71,7 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
   // before paint: the opener is recorded before anything can move the focus away from it
   useLayoutEffect(() => {
     if (!open) return;
+    announceModalChange();
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = window.requestAnimationFrame(() => {
       const node = surface.current;
@@ -85,6 +87,7 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
       window.cancelAnimationFrame(frame);
       // a dialog the owner unmounts on its own deed (ConfirmDialog's "done") has nowhere to go back to
       if (latest.current.shouldRestore?.() !== false && opener?.isConnected && !nativeModalOver(surface.current)) opener.focus({ preventScroll: true });
+      announceModalChange();
     };
   }, [open]);
 

@@ -25,7 +25,7 @@ import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
-import { focusWorkspaceListToggle } from "./lib/focus.ts";
+import { focusWorkspaceListToggle, modalOpen } from "./lib/focus.ts";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
@@ -46,6 +46,7 @@ import {
   alertsAllow,
   showPaneEndedNotification,
   showPaneStatusNotification,
+  watchReadNotifications,
   type NotificationState,
 } from "./lib/notifications.ts";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
@@ -681,9 +682,22 @@ export function App() {
 
   // a tapped notification focuses this window and names the pane (public/sw.js)
   useEffect(() => onNotificationTarget((target) => selectTargetRef.current(target.machine_id, target.pane_id, target.view)), []);
-
+  useEffect(() => {
+    if (locked !== false) return;
+    // The device's test/enable confirmation opens the app itself, not a pane.
+    return watchReadNotifications("app", () => lockedRef.current === false);
+  }, [locked]);
 
   const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) ?? null;
+  const canReadPaneNotifications = locked === false && linkLanded && selectedPane !== null && !selectedPane.restore_error
+    && selectedMachine?.state === "connected" && !drawerOpen && !settingsOpen && !filesOpen && !viewing
+    && !newSessionOpen && !paletteOpen && !machineDialog;
+  useEffect(() => {
+    if (!canReadPaneNotifications || selectedPaneId === null) return;
+    return watchReadNotifications({ machineId: selectedMachineId, paneId: selectedPaneId }, () =>
+      lockedRef.current === false && selectionRef.current.machineId === selectedMachineId
+      && selectionRef.current.paneId === selectedPaneId && !drawerOpenRef.current && !modalOpen());
+  }, [canReadPaneNotifications, selectedMachineId, selectedPaneId]);
   useScreenWakeLock(settings.keepScreenOn && locked === false && selectedPane !== null);
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)

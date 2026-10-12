@@ -1,6 +1,67 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { AgentStatus } from "../../shared/protocol.ts";
-import { alertStatus, alertsAllow, shouldNotifyStatus } from "./notifications.ts";
+import { alertStatus, alertsAllow, dismissReadNotifications, shouldNotifyStatus } from "./notifications.ts";
+import { paneNotificationTag } from "../../shared/notify-policy.ts";
+
+describe("read system notifications", () => {
+  const saved = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
+  afterEach(() => {
+    if (saved) Object.defineProperty(navigator, "serviceWorker", saved);
+    else Reflect.deleteProperty(navigator, "serviceWorker");
+  });
+  function fixture(beforeList: () => Promise<void> = async () => {}) {
+    const closed: string[] = [];
+    const tags = [paneNotificationTag("a"), paneNotificationTag("b"), paneNotificationTag("a", "remote"), "herdr-vps-cpu", "herdr-vps-memory", "herdr-test"];
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: {
+      getRegistration: async () => ({ getNotifications: async () => {
+        await beforeList();
+        return tags.map((tag) => ({ tag, close: () => closed.push(tag) }));
+      } }),
+    } });
+    return closed;
+  }
+  it("closes only the opened pane on its own PC", async () => {
+    const closed = fixture();
+    await dismissReadNotifications({ paneId: "a", machineId: "local" }, () => true);
+    expect(closed).toEqual([paneNotificationTag("a")]);
+  });
+  it("keeps the local pane unread when the same ID is opened on a remote PC", async () => {
+    const closed = fixture();
+    await dismissReadNotifications({ paneId: "a", machineId: "remote" }, () => true);
+    expect(closed).toEqual([paneNotificationTag("a", "remote")]);
+  });
+  it("reading VPS status clears its alerts without dismissing pane or test alerts", async () => {
+    const closed = fixture();
+    await dismissReadNotifications("vps", () => true);
+    expect(closed).toEqual(["herdr-vps-cpu", "herdr-vps-memory"]);
+  });
+  it("opening the app clears its generic test confirmation, preserving unread destinations", async () => {
+    const closed = fixture();
+    await dismissReadNotifications("app", () => true);
+    expect(closed).toEqual(["herdr-test"]);
+  });
+  it("does not read a hidden, locked or obscured target", async () => {
+    const closed = fixture();
+    await dismissReadNotifications({ paneId: "a", machineId: "local" }, () => false);
+    expect(closed).toEqual([]);
+  });
+  it("rechecks visibility/selection after an asynchronous notification lookup", async () => {
+    let reading = true;
+    const closed = fixture(async () => { reading = false; });
+    await dismissReadNotifications({ paneId: "a", machineId: "local" }, () => reading);
+    expect(closed).toEqual([]);
+  });
+  it("supports browsers without service workers or notification enumeration", async () => {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    await dismissReadNotifications("vps", () => true);
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: async () => ({}) } });
+    await dismissReadNotifications("vps", () => true);
+  });
+  it("surfaces browser failures to the caller", async () => {
+    fixture(async () => { throw new Error("notification lookup failed"); });
+    await expect(dismissReadNotifications("vps", () => true)).rejects.toThrow("notification lookup failed");
+  });
+});
 
 describe("alertStatus", () => {
   it("takes a pane at rest that waits on its turn's background work for working, and leaves the rest as they are", () => {

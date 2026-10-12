@@ -54,6 +54,29 @@ function client(focus = async () => {}, focused = false) {
   };
 }
 
+it("shows every push before asking the latest windows to dismiss read notifications", async () => {
+  const listeners = new Map<string, (event: any) => void>();
+  const showing = deferred();
+  const messages: unknown[] = [];
+  let shown = 0;
+  let lookups = 0;
+  const self = {
+    addEventListener: (type: string, listener: (event: any) => void) => listeners.set(type, listener),
+    clients: { matchAll: async () => ++lookups === 1 ? [] : [{ postMessage: (data: unknown) => messages.push(data) }] },
+    registration: { showNotification: async () => { shown++; await showing.promise; } },
+  };
+  new Function("self", readFileSync(join(import.meta.dir, "..", "public", "sw.js"), "utf8"))(self);
+  let completion!: Promise<void>;
+  listeners.get("push")!({ data: { json: () => ({ title: "Test", pane_id: "a" }) }, waitUntil: (promise: Promise<void>) => { completion = promise; } });
+  await Promise.resolve();
+  expect(shown).toBe(1);
+  expect(messages).toEqual([]);
+  showing.resolve();
+  await completion;
+  expect(lookups).toBe(2);
+  expect(messages).toEqual([{ type: "notification-shown" }]);
+});
+
 describe("notification clicks", () => {
   it("selects the pane before a delayed focus and repeats after the page resumes", async () => {
     const pending = deferred();

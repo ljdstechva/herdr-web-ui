@@ -20,6 +20,7 @@ import type {
   VpsThresholds,
 } from "../../shared/vps.ts";
 import { fetchSession } from "../lib/api.ts";
+import { watchReadNotifications } from "../lib/notifications.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import {
   cleanDisk,
@@ -136,6 +137,12 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
   const [view, setView] = useState<View>({ kind: "status" });
   const [busy, setBusy] = useState(false);
   const surface = useFocusTrap<HTMLDivElement>(true);
+  const statusShown = status !== null && view.kind === "status";
+  useEffect(() => {
+    if (!statusShown) return;
+    return watchReadNotifications("vps", () => !nativeModalOver(surface.current)
+      && [...document.querySelectorAll("[aria-modal='true']")].every((modal) => modal === surface.current || modal.contains(surface.current)));
+  }, [statusShown]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
