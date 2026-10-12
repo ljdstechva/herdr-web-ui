@@ -1585,14 +1585,11 @@ function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegEx
  * with the cursor on it: `rowKey` is that key for the row under the cursor now, and an answer
  * takes it from the screen it reads after its moves (the `pick` step).
  *
- * Enter is sent in one list only, the list of models, where a row opens that model's levels.
- * In a list of levels the row that opens a list ("More reasoning…") stands beside rows whose
- * Enter saves a default, and the look before a key and the key are two herdr calls: a key
- * pressed in the terminal between them would put an Enter meant for that row on a level. So
- * that row is not offered, and no row of those lists is answered with Enter: open the advanced
- * list in the terminal, then its levels can be picked from the card with `s`. The same gap
- * is left in the list of models, where it matters only
- * beside a model with a single level (issue #469 records it for every card).
+ * Enter opens a model's levels, or the exact "More reasoning…" row in a model's level list.
+ * The latter keeps Max and Ultra reachable from chat. Both require the live row and its
+ * opening footer to be rechecked after navigation; actual levels always use `s`. The read
+ * and key remain separate herdr calls, as for all prompt cards, so simultaneous terminal
+ * navigation can still race the final key (issue #469).
  *
  * The list is known by its title, since `enter select · esc back` is the footer of every list
  * Codex draws. `Select Model`, the list of quick presets some accounts get first, was not
@@ -1681,9 +1678,10 @@ function parseCodexModel(screen: string): ParsedPrompt | null {
   const opens = footer.keys !== undefined;
   // the list of models, where a row opens a model's levels and Enter is its key
   const models = header.title === "Select Model and Effort";
-  // elsewhere a row that only opens a list is left to the terminal: the one Codex names so, and
-  // the one under the cursor when its footer says so
-  const offered = rows.flatMap((_, row) => !models && (CODEX_MODEL_MORE_ROW_RE.test(drawn[row]!.label) || (row === selectedIndex && opens)) ? [] : [row]);
+  // Only the known advanced-level opener may take Enter in a model's reasoning list.
+  // Keep it offered off-cursor too, so the card's identity survives navigation onto it.
+  const more = (row: number): boolean => header.model !== undefined && CODEX_MODEL_MORE_ROW_RE.test(drawn[row]!.label);
+  const offered = rows.flatMap((_, row) => !models && !more(row) && (CODEX_MODEL_MORE_ROW_RE.test(drawn[row]!.label) || (row === selectedIndex && opens)) ? [] : [row]);
   if (offered.length === 0) return null;
   const current = names.findIndex(({ name }) => /\s\(current\)$/.test(name));
   // "Medium (default)" in use reads as Medium: the tag is the list's, not the level's name
@@ -1704,8 +1702,8 @@ function parseCodexModel(screen: string): ParsedPrompt | null {
     responder: "codex-model", menuLabels: rows.map((row, index) => `${header.title}  ${row.number}. ${drawn[index]!.label}  ${drawn[index]!.description ?? ""}`), selectedIndex,
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
     optionSteps: offered.map((row) => [...keySteps(navigationKeys(row - selectedIndex)), { pick: true as const }]),
-    // Enter in the list of models alone; `s` wherever the footer offers it; no key otherwise
-    rowKey: opens ? models ? footer : null : footer,
+    // The latest footer must agree that More reasoning only opens a list; never apply it as a level.
+    rowKey: (more(selectedIndex) ? opens : !opens || models) ? footer : null,
   });
 }
 

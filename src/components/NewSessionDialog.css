@@ -6,6 +6,17 @@
   padding-bottom: var(--space-2);
 }
 
+@media (max-width: 640px), (pointer: coarse) {
+  /* Keep the folder action above Start; short screens show fewer full-size rows. */
+  .new-session-modal .dir-browser-list {
+    max-height: clamp(var(--touch-target), calc(var(--app-height, 100dvh) - var(--touch-target) * 14), calc(var(--touch-target) * 3));
+  }
+
+  .new-session-modal .dir-browser-search {
+    margin-bottom: 0;
+  }
+}
+
 .new-session-note,
 .new-session-error {
   margin: 0 0 var(--space-3);

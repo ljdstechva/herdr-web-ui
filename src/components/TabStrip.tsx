@@ -23,7 +23,7 @@ import { useTabReorder } from "../lib/useTabReorder.ts";
 import { swipeTarget, watchTabSwipe, type TabSwipeOptions } from "../lib/tabSwipe.ts";
 import { paneStatus, rollupStatus } from "../lib/status.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { displayPaneTitle } from "./Sidebar.tsx";
+import { BackgroundBadge, displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
@@ -32,6 +32,7 @@ const said = (reason: unknown): string => reason instanceof ApiError ? reason.de
 const lastViewed = new Map<string, string>();
 
 export interface TabStripProps {
+  online: boolean;
   snapshot: SessionSnapshot;
   workspace: WorkspaceInfo;
   selectedPane: PaneInfo;
@@ -41,7 +42,7 @@ export interface TabStripProps {
   swipeHost?: HTMLElement | null;
 }
 
-export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, swipeHost = null }: TabStripProps) {
+export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPane, onNewTab, swipeHost = null }: TabStripProps) {
   const t = useT();
   const machineId = useMachineId();
   const { closeTab, renameTab, moveTab } = useMachineApi();
@@ -193,7 +194,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   if (!shown || (cramped && tabs.length === 1)) { swipe.current = null; return null; }
 
   // a tab of another workspace (a stroke past this row's end leads there) is read from that workspace's own roster
-  const panesOf = (tab: HerdrTab): PaneInfo[] => (tab.workspace_id === workspace.workspace_id ? panes
+  const panesOf = (tab: HerdrTab): HerdrPane[] => (tab.workspace_id === workspace.workspace_id ? panes
     : rosterPanes(snapshot.panes.filter((pane) => pane.workspace_id === tab.workspace_id))).filter((pane) => pane.tab_id === tab.tab_id);
   const paneFor = (tab: HerdrTab): PaneInfo | undefined => {
     const own = panesOf(tab);
@@ -348,8 +349,9 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
         {tabs.map((tab, index) => {
           const active = tab.tab_id === selectedPane.tab_id;
           const own = panesOf(tab);
-          // Settle each pane's wait before rolling up, so a sibling's RUN or DONE stays visible.
-          const status = rollupStatus(own.map((pane) => paneStatus(pane as HerdrPane)));
+          // Settle each pane's wait before rolling up, keeping ongoing work visible.
+          const status = online ? rollupStatus(own.map(paneStatus)) : "unknown";
+          const backgroundTasks = online ? own.reduce((count, pane) => count + (pane.background_tasks ?? 0), 0) : 0;
           const pickerOpen = picker?.tab.tab_id === tab.tab_id;
           const name = nameOf(tab);
           return (
@@ -406,6 +408,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                 >
                   {(status === "working" || status === "blocked" || status === "waiting" || status === "done") && <span className="tab-strip-dot" data-status={status} aria-hidden="true" />}
                   <span className="tab-strip-label">{name}</span>
+                  <BackgroundBadge count={backgroundTasks} />
                 </button>
               )}
               {touchMenu && active && editing?.tabId !== tab.tab_id && <button type="button" className="tab-strip-menu" aria-label={t("Actions for {tab}", { tab: name })} aria-haspopup="menu" aria-expanded={pickerOpen} onClick={(event) => openPicker(event, tab)}>

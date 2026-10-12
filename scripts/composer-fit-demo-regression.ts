@@ -212,6 +212,40 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
     try {
+      // A touch must not blur the box before click: viewport.ts expands the shell on blur,
+      // which moves Send away from the finger while the phone's keyboard is closing.
+      for (const status of ["idle", "working"] as const) await withCard(browser, 390, { agent: "codex", model: "gpt-6.1-sol", status }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await box.fill(`one tap ${status}`);
+        await page.evaluate(() => {
+          const fixture = window as any;
+          fixture.sendQA = { blurs: 0, submits: [] };
+          document.querySelector(".composer-text")!.addEventListener("blur", () => { fixture.sendQA.blurs += 1; });
+          const socket = fixture.fitSocket;
+          const send = socket.send.bind(socket);
+          socket.send = (raw: string) => {
+            const message = JSON.parse(raw);
+            if (message.type === "submit") fixture.sendQA.submits.push(message);
+            return send(raw);
+          };
+          Object.defineProperty(window.visualViewport!, "height", { configurable: true, get: () => 500 });
+          window.visualViewport!.dispatchEvent(new Event("resize"));
+        });
+        await page.waitForFunction(() => document.documentElement.hasAttribute("data-keyboard"));
+        await page.getByRole("button", { name: "Send message", exact: true }).tap();
+        await page.waitForFunction(() => (document.querySelector(".composer-text") as HTMLTextAreaElement).value === "");
+        const sent = await page.evaluate(() => ({ ...(window as any).sendQA,
+          focused: document.activeElement === document.querySelector(".composer-text"),
+          keyboard: document.documentElement.hasAttribute("data-keyboard"),
+        }));
+        assert.equal(sent.blurs, 0, "a Send tap keeps the text field focused throughout the gesture");
+        assert.ok(sent.focused && sent.keyboard, "the keyboard stays up after Send");
+        assert.equal(sent.submits.length, 1, "one tap sends exactly one message");
+        assert.equal(sent.submits[0].text, `one tap ${status}`);
+        assert.equal(sent.submits[0].delivery, status === "working" ? "queue" : undefined);
+      });
+      console.log("PASS one mobile Send tap retains keyboard focus and submits exactly once, idle and working");
+
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);

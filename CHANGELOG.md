@@ -79,6 +79,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- Codex’s chat model picker includes **More reasoning…**, so **Max** and **Ultra** can be selected for the current session without switching to the terminal.
+- On phones, tapping chat **Send** keeps the keyboard open and sends on the first tap.
 - **In-app alerts on a phone.** The alert card (an agent finished, or needs you) took its place
   from the header's lower edge. On a phone the header is the bar at the bottom of the screen, so
   the card was drawn under the screen and never seen. It now clears whatever holds the top of the

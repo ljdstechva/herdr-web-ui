@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Lay
 
 import "./Sidebar.css";
 
-import type { AgentStatus, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { AgentStatus, HerdrPane, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import type { AppActions } from "../lib/actions.ts";
@@ -94,9 +94,8 @@ export function StatusBadge({ status, compact = false }: { status?: AgentStatus;
 }
 
 /**
- * Background tasks an agent started that still run (OmO's `task` children): the main turn can be
- * done while they work, and they wake the session by themselves. A quiet count beside the state,
- * not a state of its own: DONE stays the moment the agent answered.
+ * Running background work reported by the server: OmO tasks, Claude subagents and commands.
+ * Keep the count separate from the main agent's state, which may already be waiting or done.
  */
 export function BackgroundBadge({ count }: { count?: number }) {
   const t = useT();
@@ -223,7 +222,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const byId = new Map(snapshot.workspaces.map((workspace) => [workspace.workspace_id, workspace]));
     return workspaceOrder.map((id) => byId.get(id)).filter((workspace): workspace is WorkspaceInfo => workspace !== undefined);
   }, [snapshot, workspaceOrder]);
-  const roster = useMemo(() => rosterPanes(snapshot?.panes ?? [], selectedPaneId), [snapshot?.panes, selectedPaneId]);
+  const roster = useMemo(() => rosterPanes<HerdrPane>(snapshot?.panes ?? [], selectedPaneId), [snapshot?.panes, selectedPaneId]);
   const agentRows = useMemo(() => sidebarAgents(snapshot), [snapshot]);
   const agentByPane = useMemo(() => new Map(agentRows.map((entry) => [entry.pane.pane_id, entry])), [agentRows]);
   const agentNames = useMemo(() => workspaceAgentLabels(agentRows), [agentRows]);
@@ -515,6 +514,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     // a folded group's parent stands for its worktrees too, as herdr's collapsed parent does:
     // a checkout that waits or has finished must not hide behind the fold
     const statusPanes = collapsed ? [...panes, ...children.flatMap((child) => roster.filter((candidate) => candidate.workspace_id === child.workspace_id))] : panes;
+    const status = online ? rollupStatus(statusPanes.map((candidate) => activity.status(machineId, candidate))) : undefined;
+    const backgroundTasks = online ? statusPanes.reduce((count, candidate) => count + (candidate.background_tasks ?? 0), 0) : 0;
     // on two lines the row says what its pane is doing, and the workspace it has named until now sits under that
     const lines = twoLine ? taskRowLines({ paneTitle: displayPaneTitle(pane), labelled: Boolean(pane.label?.trim()), folder: cwdBasename(pane.cwd), workspace: rowTitle, alias: secondaryBranch }) : null;
     // a folded group still shows the checkout that is open; the count is of the ones put away
@@ -592,9 +593,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
             {secondaryBranch && <span className="worktree-workspace-label">{secondaryBranch}</span>}
             {foldedCount > 0 && <span className="workspace-fold-count" aria-hidden="true">+{foldedCount}</span>}
           </span>}
+          <BackgroundBadge count={backgroundTasks} />
           <span className="sidebar-pane-meta">
             <span className="visually-hidden">{markName(pane)}</span>
-            {online && pane.restore_error ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={online ? rollupStatus(statusPanes.map((candidate) => activity.status(machineId, candidate))) : undefined} />}
+            {online && pane.restore_error && status !== "working" ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={status} />}
           </span>
         </div>
         <div className="workspace-actions">

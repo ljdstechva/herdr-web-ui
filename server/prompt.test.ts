@@ -2738,7 +2738,7 @@ describe("Codex's model lists", () => {
     for (const agent of ["claude", "omp", "pi", "omo", ""]) expect(parseInteractivePrompt(agent, codexModels(1))).toBeNull();
   });
 
-  test("reads a model's reasoning levels without the row that opens the advanced ones", () => {
+  test("reads a model's reasoning levels including the row that opens Max and Ultra", () => {
     const captured = `  Select Reasoning Level for GPT-6-Astra
 
 
@@ -2752,10 +2752,10 @@ describe("Codex's model lists", () => {
 `;
     expect(codexLevels(1)).toBe(`${CODEX_HEAD}${captured}`);
     const prompt = parseInteractivePrompt("codex", codexLevels(1))!;
-    // "More reasoning…" takes Enter, beside levels whose Enter saves a default: left to the terminal
-    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium). More levels are listed in the terminal.");
-    expect(prompt.options).toEqual(CODEX_LEVELS.slice(0, 4).map(([label, description]) => ({ label, description })));
-    expect(() => answerKeys(prompt, { option_index: 4 })).toThrow();
+    // The opener stays in the card; its key is read again after navigating onto it.
+    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium)");
+    expect(prompt.options).toEqual(CODEX_LEVELS.map(([label, description]) => ({ label, description })));
+    expect(answerKeys(prompt, { option_index: 4 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["down"] }, { pick: true }]);
     // with the cursor on that row in the terminal, its footer is the one of a row that opens a
     // list: the same card, and the moves to a level count from where the cursor is
     expect(codexLevels(4)).toContain("› 5. More reasoning…             Max and Ultra consume usage limits faster\n\n  enter select · esc back\n");
@@ -2819,8 +2819,8 @@ describe("Codex's model lists", () => {
   enter default · s session · esc back
 `;
     const prompt = parseInteractivePrompt("codex", phone)!;
-    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium). More levels are listed in the terminal.");
-    expect(prompt.options).toEqual(CODEX_LEVELS.slice(0, 4).map(([label]) => ({ label, description: null })));
+    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium)");
+    expect(prompt.options).toEqual(CODEX_LEVELS.map(([label]) => ({ label, description: null })));
   });
 
   test("knows a list by the header right above its rows, wrapped or under the conversation's last line", () => {
@@ -3789,13 +3789,51 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     });
   });
 
+  test("opens More reasoning from chat and applies Max or Ultra for this session", async () => {
+    const advanced = (at: number) => codexList("Advanced Reasoning", [["Max", "For difficult problems"], ["Ultra", "For demanding work"]], at,
+      (row) => row === 1 ? "  enter apply · s session · esc back" : CODEX_PICKS).replace(" (current)", "          ");
+    for (const start of [1, 4]) for (const level of [0, 1]) {
+      await withPane("codex", "done", codexLevels(start), async (pane) => {
+        let at = start;
+        let opened = false;
+        pane.onSent = (sent) => {
+          if (sent === "down") at += 1;
+          if (sent === "enter") { opened = true; at = 0; }
+          pane.screen = sent === "text:s" ? `${CODEX_HEAD}› Ask Codex to do anything\n` : opened ? advanced(at) : codexLevels(at);
+        };
+        const prompt = (await card())!;
+        expect(labels(prompt)).toContain("More reasoning…");
+        expect(await answer(prompt.id, { option_index: 4 })).toEqual({ status: 200, code: undefined });
+        expect(pane.sent).toEqual([...Array(4 - start).fill("down"), "enter"]);
+        const next = (await card())!;
+        expect(labels(next)).toEqual(["Max", "Ultra"]);
+        expect(next.id).not.toBe(prompt.id);
+        expect(await answer(next.id, { option_index: level })).toEqual({ status: 200, code: undefined });
+        expect(pane.sent).toEqual([...Array(4 - start).fill("down"), "enter", ...Array(level).fill("down"), "text:s"]);
+        expect(await card()).toBeNull();
+      });
+    }
+  });
+
+  test("does not open advanced reasoning after the model, selected row or footer changes", async () => {
+    for (const change of ["model", "cursor", "footer"]) await withPane("codex", "done", codexLevels(3), async (pane) => {
+      const prompt = (await card())!;
+      pane.onSent = () => {
+        pane.screen = change === "model" ? codexLevels(4, "GPT-6-Sol")
+          : change === "cursor" ? codexLevels(2) : codexLevels(4).replace(CODEX_OPENS, CODEX_PICKS);
+      };
+      expect(await answer(prompt.id, { option_index: 4 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual(["down"]);
+    });
+  }, 10_000);
+
   test("answers a model list only once the pane shows what follows it, so its card does not come up again", async () => {
     // Codex draws a model's levels a moment after the Enter: the read right after the answer is theirs
     await withPane("codex", "done", codexModels(1), async (pane) => {
       pane.onSent = (sent) => { if (sent === "enter") setTimeout(() => { pane.screen = codexLevels(1); }, 200); };
       const prompt = (await card())!;
       expect(await answer(prompt.id, { option_index: 1 })).toEqual({ status: 200, code: undefined });
-      expect((await card())!.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium). More levels are listed in the terminal.");
+      expect((await card())!.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium)");
     });
     // and Claude closes its list a moment after the s: no card is left to read
     await withPane("claude", "idle", claudeModelList(1), async (pane) => {

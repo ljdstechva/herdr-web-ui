@@ -1203,6 +1203,8 @@ export function Composer({
               aria-label={t("Send message")}
               title={t("Send message")}
               disabled={!connected || uploading || sending || text.trim().length === 0}
+              // Keep the keyboard open so the viewport cannot move Send before the tap completes.
+              onPointerDown={(event) => event.preventDefault()}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />
