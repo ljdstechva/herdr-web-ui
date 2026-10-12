@@ -9,6 +9,12 @@ Browser UI for the herdr terminal multiplexer: a React 18 + xterm.js client (`sr
 - Read `server/AGENTS.md` before editing `server/` and `src/AGENTS.md` before editing `src/`; likewise `scripts/AGENTS.md` for `scripts/` and `shared/AGENTS.md` for `shared/`.
 - "Maintainer workflow" applies only to the maintainer. Everyone else follows `CONTRIBUTING.md` for branches, PRs and the changelog.
 
+## Deploying on this VPS
+
+- NEVER edit `~/apps/herdr-web-ui`, copy files into its `dist/`, or restart its server by hand: it is the copy the owner's phone is using. A change goes live only through `~/apps/redeploy-vps.sh <branch>`, which locks, builds and phone-checks a staging copy, switches, and restores the previous build if a check fails. `DEPLOY.md` has the steps and what each refusal means.
+- Work on a branch in a worktree of that repository (`git -C ~/apps/herdr-web-ui worktree add ~/apps/wt-<task> -b <task> vps-doctor`). `/opt/workstation/15 herdr-web-ui` is an older copy, not a tree to deploy from.
+- A deploy that is refused is telling you about someone else's work. Rebase onto `vps-doctor`; never force your build over it.
+
 ## Bridge invariants
 
 The app is only a bridge: herdr owns every pty, scrollback and agent state.
