@@ -79,6 +79,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **The installed app opens while its server restarts.** Opened during a restart, the app showed
+  the empty "502" page of the proxy in front of the server; opened over a link that had not come
+  up yet (a phone's tunnel after sleep), it stood on a blank page for as long as that took. A
+  navigation now waits three seconds for the server and then opens from the shell the device
+  kept, as it already did with no network at all, and a server error never replaces the app. The
+  answer that arrives late is still kept, so the next opening starts from the new build.
 - Codex’s chat model picker includes **More reasoning…**, so **Max** and **Ultra** can be selected for the current session without switching to the terminal.
 - On phones, tapping chat **Send** keeps the keyboard open and sends on the first tap.
 - **In-app alerts on a phone.** The alert card (an agent finished, or needs you) took its place

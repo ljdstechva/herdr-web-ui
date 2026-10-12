@@ -1,6 +1,8 @@
 // Service worker for herdr web ui. Policy: navigations are network-first (so a
 // fresh build always wins when online) falling back to the cached shell when
-// offline; static assets (hashed bundles, icons, favicons) are cache-first since
+// offline, when the server does not answer within SHELL_WAIT_MS, and when what
+// answers is a server error (see the navigation handler: the app must open while
+// its server restarts); static assets (hashed bundles, icons, favicons) are cache-first since
 // they are content-addressed or rarely change. The web manifest is not: its URL
 // never changes and the browser rereads it to update the installed app, so a
 // cached copy would pin every install to its first manifest. API and websocket
@@ -15,6 +17,11 @@
 // reload without a network would find no shell at all. Nothing is copied across, so no hashed
 // file of an old build outlives the first navigation that reaches the server.
 const CACHE_NAME = "herdr-web-ui-v4-ram";
+
+// How long a navigation waits for the server before the kept shell opens the app instead. A
+// phone's tunnel takes a few seconds to come up after sleep, and a deploy restarts the server:
+// without a limit the installed app stood on a blank page for as long as either lasted.
+const SHELL_WAIT_MS = 3000;
 
 const CACHE_FIRST_PATHS = new Set([
   "/favicon.png",
@@ -61,21 +68,39 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
-        let response;
-        try {
-          response = await fetch(request);
-        } catch (err) {
-          return (await cachedShell()) || Response.error();
+        // null: the network gave nothing
+        const network = fetch(request).then(
+          (response) => {
+            if (response.ok) {
+              // not awaited: the page gets its shell as it comes, and the worker lives until the
+              // copy is kept (a put reads the whole body). A bundle asked for meanwhile may still
+              // be answered by the old cache: a hashed file is the same file in either, and only
+              // what the network gave is put in this one. A cache that cannot be written does not
+              // cost the page.
+              event.waitUntil(keepShell(response.clone()).catch(() => undefined));
+            }
+            return response;
+          },
+          () => null,
+        );
+        let timer;
+        // undefined: the server has not answered in time
+        const waited = new Promise((resolve) => { timer = setTimeout(resolve, SHELL_WAIT_MS); });
+        const first = await Promise.race([network, waited]);
+        clearTimeout(timer);
+        // An answer below 500 is the server's own word (the shell, or a sign-in it insists on).
+        // A 5xx is not: while the server restarts, the proxy in front of it answers 502 with an
+        // empty page, and the installed app would open on that instead of on itself.
+        if (first && first.status < 500) return first;
+        const shell = await cachedShell();
+        if (shell) {
+          // a late answer is still kept (above), so the next opening starts from the new build
+          event.waitUntil(network);
+          return shell;
         }
-        if (response.ok) {
-          // not awaited: the page gets its shell as it comes, and the worker lives until the
-          // copy is kept (a put reads the whole body). A bundle asked for meanwhile may still
-          // be answered by the old cache: a hashed file is the same file in either, and only
-          // what the network gave is put in this one. A cache that cannot be written does not
-          // cost the page.
-          event.waitUntil(keepShell(response.clone()).catch(() => undefined));
-        }
-        return response;
+        // nothing kept on this device: only the network can open the app
+        const late = first === undefined ? await network : first;
+        return late || Response.error();
       })(),
     );
     return;

@@ -62,8 +62,10 @@ function serviceWorker(stored: Record<string, Record<string, string>>) {
   };
   /** `ready` is awaited by every write: a test replaces it to hold the cache back. */
   const disk = { ready: Promise.resolve() as Promise<void> };
-  const network = { online: true, shell: "shell", status: 200, fetched: [] as string[] };
+  /** `answer` is awaited before a navigation is answered: a test replaces it to hold the server back. */
+  const network = { online: true, shell: "shell", status: 200, fetched: [] as string[], answer: Promise.resolve() as Promise<void> };
   const fetch = async (request: WorkerRequest) => {
+    if (request.mode === "navigate") await network.answer;
     if (!network.online) throw new TypeError("Failed to fetch");
     network.fetched.push(keyOf(request));
     const response = request.mode === "navigate" ? new Response(network.shell, { status: network.status }) : new Response(`network ${keyOf(request)}`);
@@ -73,7 +75,15 @@ function serviceWorker(stored: Record<string, Record<string, string>>) {
   };
   const listeners = new Map<string, (event: unknown) => void>();
   const self = { location: { origin }, clients: { claim: async () => undefined }, skipWaiting: () => undefined, addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener) };
-  new Function("self", "caches", "fetch", readFileSync(join(publicDir, "sw.js"), "utf8"))(self, caches, fetch);
+  /** The worker's clock stands still: its wait for the server ends only when a test says `elapse`. */
+  const timers = new Map<number, () => void>();
+  let lastTimer = 0;
+  const clock = {
+    set: (run: () => void): number => { timers.set(++lastTimer, run); return lastTimer; },
+    clear: (id: number): void => { timers.delete(id); },
+    elapse: (): void => { for (const [id, run] of [...timers]) { timers.delete(id); run(); } },
+  };
+  new Function("self", "caches", "fetch", "setTimeout", "clearTimeout", readFileSync(join(publicDir, "sw.js"), "utf8"))(self, caches, fetch, clock.set, clock.clear);
   /** The answer as the page gets it, and `kept`: everything the worker asked to stay alive for. */
   const fire = (type: string, event: Record<string, unknown> = {}): { answer: Promise<Response> | undefined; kept: () => Promise<void> } => {
     let answer: Promise<Response> | undefined;
@@ -100,6 +110,7 @@ function serviceWorker(stored: Record<string, Record<string, string>>) {
   return {
     network,
     disk,
+    clock,
     fire: (path = "/") => fire("fetch", { request: { method: "GET", url: `${origin}${path}`, mode: "navigate" } }),
     names: () => [...store.keys()],
     entries: (name: string) => [...(store.get(name)?.keys() ?? [])],
@@ -199,5 +210,67 @@ describe("a service worker under a new cache name", () => {
     await worker.update();
     worker.network.online = false;
     expect(await worker.navigate()).toBeNull();
+  });
+});
+
+describe("opening the app while its server cannot answer", () => {
+  const sw = readFileSync(join(publicDir, "sw.js"), "utf8");
+  const current = /const CACHE_NAME = "([^"]+)"/.exec(sw)![1]!;
+  const kept = () => ({ [current]: { "/": "kept shell" } });
+  /** A server that answers only when the returned function is called. */
+  const held = (worker: ReturnType<typeof serviceWorker>): (() => void) => {
+    let answer = (): void => undefined;
+    worker.network.answer = new Promise<void>((done) => { answer = done; });
+    return answer;
+  };
+
+  it("opens from the kept shell when the proxy of a restarting server answers 502", async () => {
+    const worker = serviceWorker(kept());
+    worker.network.shell = "";
+    worker.network.status = 502;
+    expect(await worker.navigate("/?pane=p_1")).toBe("kept shell");
+    // a server error is never kept as the shell
+    worker.network.online = false;
+    expect(await worker.navigate()).toBe("kept shell");
+  });
+
+  it("shows the server's error on a device with no kept shell", async () => {
+    const worker = serviceWorker({});
+    worker.network.shell = "bad gateway";
+    worker.network.status = 502;
+    expect(await worker.navigate()).toBe("bad gateway");
+  });
+
+  it("opens from the kept shell when the server has not answered in time, and keeps its late answer", async () => {
+    const worker = serviceWorker(kept());
+    worker.network.shell = "new shell";
+    const answer = held(worker);
+    const opened = worker.fire();
+    worker.clock.elapse();
+    expect(await (await opened.answer)!.text()).toBe("kept shell");
+    answer();
+    await opened.kept();
+    worker.network.online = false;
+    expect(await worker.navigate()).toBe("new shell");
+  });
+
+  it("answers from the server when it is in time, whatever is kept", async () => {
+    const worker = serviceWorker(kept());
+    worker.network.shell = "new shell";
+    expect(await worker.navigate()).toBe("new shell");
+  });
+
+  it("goes on waiting for the server on a device with no kept shell", async () => {
+    const worker = serviceWorker({});
+    worker.network.shell = "first shell";
+    const answer = held(worker);
+    const opened = worker.fire();
+    worker.clock.elapse();
+    let settled = false;
+    void opened.answer!.then(() => { settled = true; });
+    await new Promise((done) => setTimeout(done, 0));
+    expect(settled).toBe(false);
+    answer();
+    expect(await (await opened.answer)!.text()).toBe("first shell");
   });
 });
