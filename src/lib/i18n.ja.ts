@@ -953,4 +953,14 @@ export const JA: Record<string, string> = {
   "Tab order did not refresh. Try again.": "タブの順序が更新されませんでした。もう一度お試しください。",
   "Terminal scrollback": "ターミナル履歴",
   "Scroll failed: {reason}": "スクロールに失敗しました: {reason}",
+  // the server's browser (components/BrowserView.tsx)
+  "Open the server's browser": "サーバーのブラウザーを開く",
+  "Browser on the server": "サーバーのブラウザー",
+  "Browser": "ブラウザー",
+  "Switch to the desktop layout": "デスクトップレイアウトに切り替え",
+  "Switch to the phone layout": "スマートフォンレイアウトに切り替え",
+  "Show the keyboard": "キーボードを表示",
+  "Hide the keyboard": "キーボードを隠す",
+  "Type into the browser": "ブラウザーに入力",
+  "No browser is open on the server right now.": "現在、サーバーで開いているブラウザーはありません。",
 };

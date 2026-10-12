@@ -951,4 +951,14 @@ export const KO: Record<string, string> = {
   "Tab order did not refresh. Try again.": "탭 순서가 갱신되지 않았습니다. 다시 시도해 주세요.",
   "Terminal scrollback": "터미널 기록",
   "Scroll failed: {reason}": "스크롤 실패: {reason}",
+  // the server's browser (components/BrowserView.tsx)
+  "Open the server's browser": "서버의 브라우저 열기",
+  "Browser on the server": "서버의 브라우저",
+  "Browser": "브라우저",
+  "Switch to the desktop layout": "데스크톱 레이아웃으로 전환",
+  "Switch to the phone layout": "휴대폰 레이아웃으로 전환",
+  "Show the keyboard": "키보드 표시",
+  "Hide the keyboard": "키보드 숨기기",
+  "Type into the browser": "브라우저에 입력",
+  "No browser is open on the server right now.": "지금 서버에 열려 있는 브라우저가 없습니다.",
 };

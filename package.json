@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@lydell/node-pty": "1.1.0",
+    "@novnc/novnc": "1.7.0",
     "@tanstack/highlight": "^1.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-unicode-graphemes": "0.4.0",
@@ -51,6 +52,7 @@
     "vite": "^6.0.5"
   },
   "patchedDependencies": {
-    "@xterm/xterm@5.5.0": "patches/@xterm%2Fxterm@5.5.0.patch"
+    "@xterm/xterm@5.5.0": "patches/@xterm%2Fxterm@5.5.0.patch",
+    "@novnc/novnc@1.7.0": "patches/@novnc%2Fnovnc@1.7.0.patch"
   }
 }

@@ -99,6 +99,8 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
 import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
+import { browserStreamId, browserViewRefusal, handleBrowserRequest, type BrowserViewService } from "./browser-view-api.ts";
+import { BrowserViews, type BrowserStream } from "./browser-view.ts";
 import { handleVpsRequest, type VpsServices } from "./vps-api.ts";
 import { VpsDoctor } from "./vps-doctor.ts";
 import { VpsMonitor, vpsAlertMessage, vpsResolvedMessage } from "./vps.ts";
@@ -322,6 +324,8 @@ interface SocketData {
   revoked?: boolean;
   unwatchDevice?: () => void;
   relay?: MachineRelay;
+  /** set on a browser-view connection (/api/browsers/<id>/stream): it carries a display's RFB bytes and none of the frames below */
+  browser?: { id: string; stream: BrowserStream | null; closed: boolean };
   /** A fresh claim per attach lifetime; deleting it invalidates queued terminal keys. */
   attached: Map<string, object>;
   conversationInterests: Set<string>;
@@ -435,6 +439,8 @@ export function createServer(
     vps?: VpsMonitor;
     /** Controlled Doctor operations for fixtures; defaults to the host Doctor when VPS is enabled. */
     vpsDoctor?: VpsServices["doctor"];
+    /** the browsers on this PC's virtual displays (server/browser-view.ts); unset, /api/browsers answers 404. Only the real entrypoint passes one. */
+    browsers?: BrowserViewService;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
@@ -1759,6 +1765,17 @@ export function createServer(
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       if (pathname === "/api/vps" || pathname.startsWith("/api/vps/")) return handleVpsRequest(request, pathname, vps, (seconds) => bunServer.timeout(request, seconds));
+      if (pathname === "/api/browsers" || pathname.startsWith("/api/browsers/")) {
+        const streamId = browserStreamId(pathname);
+        if (streamId === null) return handleBrowserRequest(request, pathname, options.browsers, readOnly);
+        const refusal = browserViewRefusal(options.browsers, readOnly);
+        if (refusal) return refusal;
+        if (!sameOrigin(request)) return new Response("invalid origin", { status: 403 });
+        const deviceId = access.level === "full" ? access.device?.id : undefined;
+        const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), conversationInterests: new Set<string>(), mode: "observe", output: new Map(), closing: false, roles: 0, deviceId, browser: { id: streamId, stream: null, closed: false } } });
+        if (upgraded) return undefined as unknown as Response;
+        return new Response("websocket upgrade required", { status: 426 });
+      }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
 
@@ -2610,9 +2627,23 @@ export function createServer(
       backpressureLimit: OUTPUT_HARD_BYTES,
       closeOnBackpressureLimit: true,
       drain(client) {
+        if (client.data.browser) { client.data.browser.stream?.resume(); return; }
         for (const paneId of client.data.attached.keys()) reconcileOutput(paneId);
       },
       async open(client) {
+        const view = client.data.browser;
+        if (view) {
+          if (client.data.deviceId) client.data.unwatchDevice = devices.onRevoke(client.data.deviceId, () => client.close(1008, "Device access revoked"));
+          try {
+            // the upstream is paused while this socket is full and resumed from `drain`
+            const stream = await options.browsers!.open(view.id, { data: (chunk) => client.sendBinary(chunk) !== -1, end: () => client.close(1011, "The browser's display closed") });
+            if (view.closed) stream.close();
+            else view.stream = stream;
+          } catch (error) {
+            if (!view.closed) client.close(1011, (error instanceof Error ? error.message : String(error)).slice(0, 100));
+          }
+          return;
+        }
         if (client.data.deviceId) {
           client.data.unwatchDevice = devices.onRevoke(client.data.deviceId, () => {
             client.data.revoked = true;
@@ -2640,6 +2671,10 @@ export function createServer(
       },
 
       async message(client, raw) {
+        if (client.data.browser) {
+          if (typeof raw !== "string") client.data.browser.stream?.write(raw);
+          return;
+        }
         if (stopped || client.data.closing) return;
         // read here for a relayed connection too: alerts for every PC go out from this server
         const presence = presenceOf(raw);
@@ -3207,6 +3242,11 @@ export function createServer(
       close(client) {
         client.data.unwatchDevice?.();
         client.data.closing = true;
+        if (client.data.browser) {
+          client.data.browser.closed = true;
+          client.data.browser.stream?.close();
+          return;
+        }
         present.delete(client);
         if (client.data.relay) { client.data.relay.close(); return; }
         killWatches(client);
@@ -3256,7 +3296,8 @@ if (import.meta.main) {
   const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
   const vps = process.platform === "linux" ? new VpsMonitor({ stateDir: defaultStateDir() }) : undefined;
-  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, registerBridge: true });
+  const browsers = process.platform === "linux" ? new BrowserViews({ stateDir: defaultStateDir() }) : undefined;
+  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, browsers, registerBridge: true });
   telemetry.start();
   vps?.start();
   let stopping = false;
@@ -3265,6 +3306,8 @@ if (import.meta.main) {
     stopping = true;
     telemetry.stop();
     vps?.stop();
+    // a display left phone-sized goes back before the process ends; the next start does it otherwise
+    void browsers?.stop();
     instance.stop();
     // Attach sidecars need ~1.2s to release herdr's exclusive client slot.
     setTimeout(() => process.exit(0), 2000);

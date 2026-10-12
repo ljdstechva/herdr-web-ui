@@ -894,3 +894,41 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+## noVNC
+
+The browser view (the server's browser, shown in the app) includes
+[noVNC](https://github.com/novnc/noVNC) 1.7.0 with one local change, kept in
+`patches/@novnc%2Fnovnc@1.7.0.patch`: a top-level `await` in `core/util/browser.js` became a
+promise callback.
+
+noVNC is Copyright (C) 2022 The noVNC authors. Its core library is licensed under the Mozilla
+Public License 2.0; the source of the files included here is the package above plus that patch,
+and the license text is at https://www.mozilla.org/MPL/2.0/. `core/crypto/des.js` carries BSD-style
+licenses, stated in the file.
+
+noVNC includes [pako](https://github.com/nodeca/pako):
+
+```
+(The MIT License)
+
+Copyright (C) 2014-2016 by Vitaly Puzrin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```

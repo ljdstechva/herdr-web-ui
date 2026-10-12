@@ -27,7 +27,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:7317",
+      // ws: the browser view's stream is a WebSocket under /api
+      "/api": { target: "http://localhost:7317", ws: true },
       "/ws": { target: "ws://localhost:7317", ws: true },
     },
   },

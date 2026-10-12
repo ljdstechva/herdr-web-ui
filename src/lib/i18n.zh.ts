@@ -955,4 +955,14 @@ export const ZH: Record<string, string> = {
   "Tab order did not refresh. Try again.": "标签页顺序未更新，请重试。",
   "Terminal scrollback": "终端历史",
   "Scroll failed: {reason}": "滚动失败：{reason}",
+  // the server's browser (components/BrowserView.tsx)
+  "Open the server's browser": "打开服务器上的浏览器",
+  "Browser on the server": "服务器上的浏览器",
+  "Browser": "浏览器",
+  "Switch to the desktop layout": "切换到桌面布局",
+  "Switch to the phone layout": "切换到手机布局",
+  "Show the keyboard": "显示键盘",
+  "Hide the keyboard": "隐藏键盘",
+  "Type into the browser": "在浏览器中输入",
+  "No browser is open on the server right now.": "服务器上目前没有打开的浏览器。",
 };

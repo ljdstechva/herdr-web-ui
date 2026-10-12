@@ -8,6 +8,17 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **The server's browser, in the app.** While a browser is open on one of the server's virtual
+  displays (the ones agents drive through Playwright), a globe stands beside Settings in the
+  sidebar. It opens that browser over the app, to watch and to use: on a desktop the mouse and
+  the keyboard go to it as they are. On a phone the browser is laid out as a phone's (its
+  display and window take the size of the phone's screen, and go back when the view closes, the
+  app is put away or the server stops), a tap clicks, a hold right-clicks, a stroke scrolls, a
+  tap followed by a stroke drags, and the keyboard button brings up the phone's keyboard, Enter
+  included. A button in the view's bar switches between the two layouts. Agents working in that
+  browser see it at the same size while the phone layout is on. Needs `x11vnc` on the server,
+  and `xrandr` for the phone layout; without them the globe does not show. A device that can
+  only watch does not get it.
 - **Usage left, in the phone's drawer.** Opening the workspace list on a phone shows what is left
   of each plan: every provider with each of its limits, how much is left and when it resets. It
   folds to one line and stays folded. With plan limits off it is one row that switches them on.

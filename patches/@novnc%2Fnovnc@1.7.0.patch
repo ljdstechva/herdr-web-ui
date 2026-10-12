@@ -1,0 +1,15 @@
+diff --git a/core/util/browser.js b/core/util/browser.js
+index 63596d211bc3f2ac0c1853d58488dcbb18bd8949..551c0e3ed4d3bd34c595e9f894ab8a9352d3a7df 100644
+--- a/core/util/browser.js
++++ b/core/util/browser.js
+@@ -149,7 +149,9 @@ async function _checkWebCodecsH264DecodeSupport() {
+ 
+     return true;
+ }
+-supportsWebCodecsH264Decode = await _checkWebCodecsH264DecodeSupport();
++// herdr-web-ui: no top-level await, which the app's build target (Safari 14, Chrome 87) does not
++// have. The answer arrives before any connection could offer H.264; until then it reads false.
++_checkWebCodecsH264DecodeSupport().then((supported) => { supportsWebCodecsH264Decode = supported; }, () => {});
+ 
+ /*
+  * The functions for detection of platforms and browsers below are exported
