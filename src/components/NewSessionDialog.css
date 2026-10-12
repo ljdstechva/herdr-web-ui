@@ -156,3 +156,78 @@
     height: var(--touch-target);
   }
 }
+
+/* New tab in a repository: the worktree switch, its name on the left */
+.new-session-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+}
+
+.new-session-switch-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.new-session-switch-copy svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+}
+
+/* the worktrees a closed tab left on disk: one press fills the branch */
+.new-session-checkouts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.new-session-checkout {
+  max-width: 100%;
+  min-height: var(--chip-h);
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  background: transparent;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.new-session-checkout:hover:not(:disabled),
+.new-session-checkout:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.new-session-checkout[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.new-session-checkout:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .new-session-checkout {
+    min-height: var(--control-h);
+    padding: 0 var(--space-3);
+  }
+}

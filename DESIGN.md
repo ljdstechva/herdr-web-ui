@@ -640,6 +640,15 @@ One set for both themes: the card is island black wherever it shows.
   when a neighbouring position exists. Desktop tabs have no close or dropdown buttons. Touch and narrow layouts show a `⋯` beside
   the selected tab for the same menu; Shift+F10 or the menu key opens it from a focused tab.
   Pane actions are not tab actions.
+- A tab that is a git worktree leads its name with the branch glyph (`.tab-strip-branch`, 13px,
+  `--text-dim`, `--accent` on the open tab) and adds Merge worktree… to its menu, under a
+  hairline. Its close always opens a dialog, since what becomes of the checkout is a choice. The
+  merge and close dialogs are `.worktree-modal`s: a sentence, then the checkout's numbers as a
+  bordered list of label and mono value (`.worktree-facts`), then choices as checkbox rows
+  (`.worktree-check`, `accent-color: --primary`, `--touch-target` tall on touch) with what each
+  means under it. What stands in a merge's way, or what a delete loses, is a `--danger-tint` box
+  with a `--status-blocked` hairline (`.worktree-alert`); file names and folders are mono
+  `--fs-xs`. Merge is the primary button; a delete is `.btn-danger`.
 - On a touch screen a sideways stroke over the pane opens the tab beside the open one
   (`src/lib/tabSwipe.ts`). The canvas follows the finger 40% of the way (12% where no tab lies
   that way) and a pill (`--bg-elevated`, hairline, `--radius-pill`, `--fs-sm`) names the tab it is

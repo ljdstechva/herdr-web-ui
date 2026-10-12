@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientRole, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved } from "../shared/protocol.ts";
+import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientRole, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved, WorktreeMerged, WorktreeRemoved, WorktreeStatus, WorktreeTabCreated } from "../shared/protocol.ts";
 import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
@@ -79,6 +79,7 @@ import {
   worktreeList,
   worktreeOpen,
   worktreeRemove,
+  type WorktreeInfo,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
 import { paneCodexHome } from "./codex.ts";
@@ -110,7 +111,8 @@ import { handleVoiceRequest, VoiceService } from "./voice.ts";
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { bridgeAgentNews, MachineManager } from "./machines.ts";
-import { handleMachineRequest } from "./machine-api.ts";
+import { handleMachineRequest, SLOW_WORKTREE_PATH } from "./machine-api.ts";
+import { WorktreeGitError, checkoutFolder, deleteMergedBranch, herdrWorktreeDirectory, worktreeAdd, worktreeDelete, worktreeMerge, worktreeRollback, worktreeStatus } from "./worktree-git.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
@@ -255,6 +257,26 @@ async function paneContext(paneId: string): Promise<{ agent: string | null; cwd:
   const cwd = pane.foreground_cwd ?? pane.cwd;
   if (!cwd) throw new HerdrError("cwd_not_found", `pane ${paneId} has no working directory`);
   return { agent: pane.agent ?? pane.agent_session?.agent ?? null, cwd };
+}
+
+/** A refusal of git's is the request's to hear, in git's words; anything else fails as every route does. */
+function worktreeFailure(error: unknown): Response {
+  return error instanceof WorktreeGitError ? conflictResponse(error.code, error.message) : errorResponse(error);
+}
+
+/**
+ * A linked checkout of the repository a workspace is in, and that repository's main checkout,
+ * both as herdr lists them: a path the repository does not hold as a worktree is never touched.
+ * Without `path`, the checkout is the workspace's own.
+ */
+async function linkedCheckout(workspaceId: string, path: string | null): Promise<{ main: string; entry: WorktreeInfo }> {
+  const listing = await worktreeList(workspaceId);
+  const wanted = path === null ? null : resolve(path);
+  const entry = listing.worktrees.find((candidate) => wanted === null ? candidate.open_workspace_id === workspaceId : resolve(candidate.path) === wanted);
+  if (!entry || !entry.is_linked_worktree || entry.is_bare) throw new HerdrError("worktree_not_found", "no such worktree checkout of this repository");
+  const main = listing.worktrees.find((candidate) => !candidate.is_linked_worktree && !candidate.is_bare);
+  if (!main) throw new HerdrError("main_checkout_not_found", "the repository has no main checkout to merge into");
+  return { main: main.path, entry };
 }
 
 type AgentPayload = { kind?: unknown; name?: unknown; args?: unknown };
@@ -447,6 +469,8 @@ export function createServer(
     voice?: VoiceService;
     machines?: boolean;
     registerBridge?: boolean;
+    /** where a worktree tab's checkout goes when the request names no path; unset, herdr's own worktree directory */
+    worktreeDirectory?: string;
     /** PLUGIN_ACTION_WAIT_MS; a test shortens it to see a run that outlasts the wait */
     pluginActionWaitMs?: number;
     /** SUBMIT_DEADLINE_MS; tests shorten it */
@@ -1715,8 +1739,8 @@ export function createServer(
           if (!/^\/api\/(session|agents|integrations|pane\/|workspace\/|worktree\/|tab\/|layout\/ratio$|agent\/rename$|plugins\/actions$|plugin\/action$)/.test(pathname)) return badRequest("invalid_route", "Unknown PC endpoint");
           url.pathname = pathname;
         } else {
-          // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC
-          bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : pathname.endsWith("/worktree/create") ? 180 : 80);
+          // a worktree made with an agent waits on git and then agent.start, a merge on the repository's hooks: up to 150 s on the PC
+          bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : SLOW_WORKTREE_PATH.test(pathname.replace(/^\/api\/machines\/[^/]+\//, "")) ? 180 : 80);
           const deviceId = access.level === "full" ? access.device?.id : undefined;
           const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined);
           response.headers.set("cache-control", "no-store");
@@ -1939,7 +1963,7 @@ export function createServer(
 
       if (pathname === "/api/worktree/remove") {
         if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
-        let payload: { workspace_id?: unknown; force?: unknown };
+        let payload: { workspace_id?: unknown; path?: unknown; force?: unknown; delete_branch?: unknown };
         try {
           payload = (await request.json()) as typeof payload;
         } catch {
@@ -1950,13 +1974,129 @@ export function createServer(
           return badRequest("missing_workspace_id", "workspace_id is required");
         }
         if (payload.force !== undefined && typeof payload.force !== "boolean") return badRequest("invalid_force", "force must be a boolean");
+        if (payload.delete_branch !== undefined && typeof payload.delete_branch !== "boolean") return badRequest("invalid_delete_branch", "delete_branch must be a boolean");
+        if (payload.path !== undefined && payload.path !== null && (typeof payload.path !== "string" || !isAbsolute(payload.path))) return badRequest("invalid_path", "path must be absolute");
+        const force = payload.force === true;
         // git can take a while to delete a large checkout; Bun's default idle timeout is shorter.
         bunServer.timeout(request, 75);
         try {
-          const removed = await worktreeRemove(payload.workspace_id, payload.force === true);
-          return jsonResponse({ ok: true, path: removed.path, forced: removed.forced });
+          // the workspace's own checkout, as herdr removes it: nothing else is asked
+          if (typeof payload.path !== "string" && payload.delete_branch !== true) {
+            const removed = await worktreeRemove(payload.workspace_id, force);
+            return jsonResponse({ ok: true, path: removed.path, forced: removed.forced } satisfies WorktreeRemoved);
+          }
+          const { main, entry } = await linkedCheckout(payload.workspace_id, typeof payload.path === "string" ? payload.path : null);
+          // a checkout open as a workspace goes through herdr, which closes that workspace with it
+          if (entry.open_workspace_id) await worktreeRemove(entry.open_workspace_id, force);
+          else await worktreeDelete(main, entry.path, force);
+          const deleted = payload.delete_branch === true && entry.branch !== null ? await deleteMergedBranch(main, entry.branch) : undefined;
+          return jsonResponse({ ok: true, path: entry.path, forced: force, ...(deleted === undefined ? {} : { branch_deleted: deleted }) } satisfies WorktreeRemoved);
         } catch (error) {
-          return errorResponse(error);
+          return worktreeFailure(error);
+        }
+      }
+
+      // What a linked checkout holds that the repository's main checkout lacks, and its merge there.
+      // herdr names the repository and its checkouts; git answers the rest (server/worktree-git.ts).
+      if (pathname === "/api/worktree/status") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const workspaceId = url.searchParams.get("workspace_id") ?? "";
+        const path = url.searchParams.get("path") ?? "";
+        if (workspaceId === "") return badRequest("missing_workspace_id", "workspace_id is required");
+        if (!isAbsolute(path)) return badRequest("invalid_path", "path must be absolute");
+        try {
+          const { main, entry } = await linkedCheckout(workspaceId, path);
+          return jsonResponse(await worktreeStatus(main, entry.path) satisfies WorktreeStatus, 200, { "cache-control": "no-store" });
+        } catch (error) {
+          return worktreeFailure(error);
+        }
+      }
+
+      if (pathname === "/api/worktree/merge") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { workspace_id?: unknown; path?: unknown; commit_message?: unknown };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
+        if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
+          return badRequest("missing_workspace_id", "workspace_id is required");
+        }
+        if (typeof payload.path !== "string" || !isAbsolute(payload.path)) return badRequest("invalid_path", "path must be absolute");
+        if (payload.commit_message !== undefined && payload.commit_message !== null && typeof payload.commit_message !== "string") {
+          return badRequest("invalid_commit_message", "commit_message must be a string");
+        }
+        const message = typeof payload.commit_message === "string" ? payload.commit_message.trim() : "";
+        if (typeof payload.commit_message === "string" && message === "") return badRequest("invalid_commit_message", "commit_message must not be empty");
+        // a commit and a merge each run the repository's hooks; Bun's default idle timeout is shorter.
+        bunServer.timeout(request, 150);
+        try {
+          const { main, entry } = await linkedCheckout(payload.workspace_id, payload.path);
+          return jsonResponse(await worktreeMerge(main, entry.path, message === "" ? {} : { commitMessage: message }) satisfies WorktreeMerged);
+        } catch (error) {
+          return worktreeFailure(error);
+        }
+      }
+
+      // A worktree as a tab: git makes the checkout, herdr opens a tab of the repository's own
+      // workspace in it. herdr's worktree.create would open a workspace instead (the route below).
+      if (pathname === "/api/worktree/tab") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { workspace_id?: unknown; branch?: unknown; base?: unknown; label?: unknown; path?: unknown; agent?: AgentPayload | null };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
+        if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
+          return badRequest("missing_workspace_id", "workspace_id is required");
+        }
+        for (const field of ["branch", "base", "label", "path"] as const) {
+          if (payload[field] !== undefined && payload[field] !== null && typeof payload[field] !== "string") return badRequest(`invalid_${field}`, `${field} must be a string`);
+        }
+        // the client sends null for "not given": an empty string is not given either
+        const text = (value: unknown): string | undefined => typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+        const branch = text(payload.branch), base = text(payload.base), label = text(payload.label);
+        if (branch === undefined) return badRequest("missing_branch", "branch is required");
+        // a checkout path is taken as git names it, spaces and all
+        const given = typeof payload.path === "string" && payload.path !== "" ? payload.path : undefined;
+        if (given !== undefined && !isAbsolute(given)) return badRequest("invalid_path", "path must be absolute");
+        const agent = payload.agent ?? undefined;
+        const fault = agentFault(agent);
+        if (fault !== null) return badRequest("invalid_agent", fault);
+        // a checkout of a large repository can take a while, and agent.start after it a minute more.
+        bunServer.timeout(request, agent ? 150 : 75);
+        try {
+          const workspaceId = payload.workspace_id;
+          const { source, worktrees } = await worktreeList(workspaceId);
+          // a branch that has its checkout already (a closed tab left it on disk) opens in that one
+          const kept = given === undefined ? worktrees.find((entry) => entry.is_linked_worktree && !entry.is_bare && !entry.is_prunable && entry.branch === branch) : undefined;
+          const path = given ?? join(options.worktreeDirectory ?? herdrWorktreeDirectory(), source.repo_name, checkoutFolder(branch));
+          // a new branch starts where the workspace's own checkout is
+          const made = kept ? { path: kept.path, branch, createdBranch: false } : await worktreeAdd(source.source_checkout_path, { branch, base, path });
+          let created: Awaited<ReturnType<typeof tabCreate>>;
+          try {
+            // a tab is named after its branch, as herdr names a worktree's workspace, without the folder herdr's branches share
+            created = await tabCreate({ workspaceId, cwd: made.path, label: label ?? checkoutFolder(branch.replace(/^worktree\//, "")) });
+          } catch (error) {
+            // no tab opened in it: a checkout made a moment ago is taken back, so a retry starts clean
+            if (!kept) await worktreeRollback(source.source_checkout_path, made).catch(() => undefined);
+            throw error;
+          }
+          return jsonResponse({
+            workspace_id: created.tab.workspace_id,
+            tab_id: created.tab.tab_id,
+            pane_id: created.root_pane.pane_id,
+            path: made.path,
+            branch: made.branch,
+            existing: kept !== undefined,
+            ...(agent ? await agentLaunch(created.root_pane.pane_id, agent) : { agent_started: false as const }),
+          } satisfies WorktreeTabCreated);
+        } catch (error) {
+          return worktreeFailure(error);
         }
       }
 

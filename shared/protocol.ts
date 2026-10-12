@@ -186,9 +186,22 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  GET    /api/worktree/list?workspace_id= -> WorktreeListing (worktree.list: the repo's checkouts)
  *  POST   /api/worktree/open   { workspace_id, path | branch, label? } -> WorktreeOpened
  *         (worktree.open: an existing checkout as a workspace; already_open names the one it has)
- *  POST   /api/worktree/remove { workspace_id, force? } -> WorktreeRemoved (worktree.remove: deletes the
- *         checkout and closes its workspace, keeps the branch; a dirty checkout is refused without force:
- *         dirty_worktree_requires_force)
+ *  POST   /api/worktree/remove { workspace_id, path?, force?, delete_branch? } -> WorktreeRemoved (worktree.remove:
+ *         deletes the checkout and closes its workspace, keeps the branch; a dirty checkout is refused
+ *         without force: dirty_worktree_requires_force. With `path`, the checkout is that linked one of the
+ *         workspace's repository, which a tab is in: git removes it, or herdr when it is open as a workspace.
+ *         `delete_branch` also deletes its branch, only when the main checkout already has its commits)
+ *  POST   /api/worktree/tab    { workspace_id, branch, base?, label?, path?, agent?: { kind, name?, args? } } -> WorktreeTabCreated
+ *         (`git worktree add`, then tab.create in that workspace with the checkout as its folder, and the
+ *         same agent launch: the worktree is a tab of the repository's workspace, not a workspace of its own.
+ *         A branch that already has a checkout opens in that one when no `path` is given: `existing`)
+ *  GET    /api/worktree/status?workspace_id=&path= -> WorktreeStatus (a linked checkout against the
+ *         repository's main one: uncommitted files, commits each side lacks, the files a merge would
+ *         conflict in, its size; reads only)
+ *  POST   /api/worktree/merge  { workspace_id, path, commit_message? } -> WorktreeMerged (`git merge` of the
+ *         checkout's branch in the main checkout; with commit_message its uncommitted files are committed
+ *         first. 409 merge_conflict / merge_refused: the merge is taken back and nothing changed;
+ *         409 nothing_to_merge, detached_head, target_detached, target_busy, commit_failed)
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204, clears the token and the device cookies
  *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's)
@@ -676,13 +689,79 @@ export interface AgentRenameRequest {
 /** POST /api/worktree/remove: `git worktree remove` of the workspace's checkout; force when git refuses a dirty one. */
 export interface RemoveWorktreeRequest {
   workspace_id: string;
+  /** a linked checkout of the workspace's repository (a worktree tab's), instead of the workspace's own */
+  path?: string | null;
   force?: boolean;
+  /** `git branch -d` after the checkout went: git keeps a branch whose commits the main checkout lacks */
+  delete_branch?: boolean;
 }
 
 export interface WorktreeRemoved {
   ok: true;
   path: string;
   forced: boolean;
+  /** with `delete_branch` only: whether git deleted the branch */
+  branch_deleted?: boolean;
+}
+
+/** POST /api/worktree/tab: as CreateWorktreeRequest, for a checkout that opens as a tab of that workspace. */
+export type CreateWorktreeTabRequest = CreateWorktreeRequest;
+
+/** The tab a checkout opened in. A failed agent launch leaves both there, as tab creation does. */
+export interface WorktreeTabCreated extends WorkspaceCreated {
+  tab_id: string;
+  path: string;
+  branch: string;
+  /** the branch already had a checkout (one a closed tab left on disk): the tab opened in that one */
+  existing: boolean;
+}
+
+/**
+ * GET /api/worktree/status: a linked checkout against the repository's main one, which a merge
+ * lands in. Counts are whole; `changed_files` and `conflicts` name the first few.
+ */
+export interface WorktreeStatus {
+  path: string;
+  /** null on a detached HEAD */
+  branch: string | null;
+  target: {
+    path: string;
+    branch: string | null;
+    /** files with uncommitted changes there: git refuses a merge that touches one */
+    changed: number;
+    /** in the middle of a merge, rebase, cherry-pick or revert */
+    busy: boolean;
+  };
+  /** files with uncommitted changes in the checkout, untracked ones included */
+  changed: number;
+  changed_files: string[];
+  /** commits on the checkout's branch that the target lacks, and the reverse */
+  ahead: number;
+  behind: number;
+  /** files a merge would conflict in; null when this git cannot tell without merging (before 2.38) */
+  conflicts: string[] | null;
+  /** null when it could not be measured in time */
+  size_bytes: number | null;
+}
+
+/** POST /api/worktree/merge: the checkout's branch into the branch the main checkout is on. */
+export interface MergeWorktreeRequest {
+  workspace_id: string;
+  path: string;
+  /** set, the checkout's uncommitted files are committed with this message before the merge */
+  commit_message?: string | null;
+}
+
+export interface WorktreeMerged {
+  ok: true;
+  branch: string;
+  target_branch: string;
+  /** commits the target gained */
+  commits: number;
+  /** whether uncommitted files were committed first */
+  committed: boolean;
+  /** the target's new HEAD, abbreviated */
+  head: string;
 }
 
 /** One checkout of a repository, from herdr's `worktree.list` (git worktree list, annotated). */
@@ -694,8 +773,8 @@ export interface WorktreeEntry {
   is_bare: boolean;
   is_detached: boolean;
   is_prunable: boolean;
-  /** the herdr workspace this checkout is open in, if any */
-  open_workspace_id: string | null;
+  /** the herdr workspace this checkout is open in, if any; herdr 0.9.3 leaves the field out for a checkout no workspace is on */
+  open_workspace_id?: string | null;
 }
 
 /** GET /api/worktree/list: the repository the workspace is in, and every checkout of it. */

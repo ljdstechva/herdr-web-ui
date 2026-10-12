@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, GitMerge, Layers, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -12,6 +12,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
+import { WorktreeMergeDialog } from "./WorktreeMergeDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { folderName, shortPathTitle, taskRowLines } from "../lib/paneName.ts";
 import { useT } from "../lib/i18n.ts";
@@ -162,6 +163,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [worktreeDialog, setWorktreeDialog] = useState<{ mode: WorktreeDialogMode; workspace: WorkspaceInfo } | null>(null);
+  // a worktree workspace whose branch is being merged into the repository's main checkout
+  const [merging, setMerging] = useState<WorkspaceInfo | null>(null);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState("");
   const [workspaceOrder, setWorkspaceOrder] = useState<string[]>([]);
@@ -318,6 +321,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
       { id: "open-worktree", label: t("Open worktree…"), icon: FolderOpen, run: () => setWorktreeDialog({ mode: "open", workspace }) },
     ] : [];
     const deleteItems: RowMenuItem[] = linked ? [{
+      id: "merge-worktree", label: t("Merge worktree…"), icon: GitMerge, run: () => setMerging(workspace),
+    }, {
       id: "delete-worktree", label: t("Delete worktree checkout…"), icon: Trash2, danger: true,
       run: () => setConfirm({
         title: t("Delete the checkout of {name}?", { name: workspace.label }),
@@ -643,6 +648,12 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
       </nav>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} items={menuItems(menu)} onClose={closeMenu} />}
       {confirm && <ConfirmDialog title={confirm.title} body={confirm.body} confirmLabel={confirm.action ?? t("Close")} onConfirm={confirm.run} escalation={confirm.escalation} onClose={() => setConfirm(null)} />}
+      {merging?.worktree && <WorktreeMergeDialog workspaceId={merging.workspace_id} path={merging.worktree.checkout_path} branch={branches.get(merging.workspace_id)?.branch ?? null} onClose={() => setMerging(null)}
+        // herdr removes the checkout and closes its workspace; the merged branch goes with it
+        cleanup={{ label: t("Delete worktree and close workspace"), run: async (force) => {
+          await removeWorktree({ workspace_id: merging.workspace_id, force, delete_branch: true });
+          focusWorkspaceListToggle();
+        } }} />}
       {worktreeDialog && <WorktreeDialog mode={worktreeDialog.mode} workspace={worktreeDialog.workspace} onClose={() => setWorktreeDialog(null)} onOpened={(opened) => {
         rememberOpened(opened);
         revealOpenedWorkspace.current = opened.workspace_id;

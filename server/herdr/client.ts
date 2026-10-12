@@ -383,7 +383,8 @@ export interface WorktreeInfo {
   is_bare: boolean;
   is_detached: boolean;
   is_prunable: boolean;
-  open_workspace_id: string | null;
+  /** left out (herdr 0.9.3) for a checkout no workspace is on */
+  open_workspace_id?: string | null;
 }
 
 export interface WorktreeSourceInfo {

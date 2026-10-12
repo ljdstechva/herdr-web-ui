@@ -4,7 +4,9 @@ import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse } from "./http.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
-export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
+/** git, then agent.start or the repository's hooks: these wait longer than any other PC call */
+export const SLOW_WORKTREE_PATH = /^worktree\/(?:create|tab|merge)$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove|tab|status|merge)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
 
 
 /**
@@ -121,7 +123,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       }
       const untrack = manager.trackTerminal(id, () => abort.abort());
       try {
-        const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(path === "worktree/create" ? 165_000 : 75_000)]) });
+        const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(SLOW_WORKTREE_PATH.test(path) ? 165_000 : 75_000)]) });
         const etag = response.headers.get("etag");
         return new Response(response.status === 304 ? null : await response.arrayBuffer(), { status: response.status, headers: {
           "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", ...(etag ? { etag } : {}),

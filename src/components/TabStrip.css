@@ -78,6 +78,18 @@
   border-radius: var(--radius-pill);
 }
 
+/* a tab that is a git worktree: the branch glyph, before its name */
+.tab-strip-branch {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  color: var(--text-dim);
+}
+
+.tab-strip-tab[aria-selected="true"] .tab-strip-branch {
+  color: var(--accent);
+}
+
 .tab-strip-dot[data-status="working"] { background: var(--status-working); }
 .tab-strip-dot[data-status="blocked"] { background: var(--status-blocked); }
 .tab-strip-dot[data-status="done"] { background: var(--status-done); }

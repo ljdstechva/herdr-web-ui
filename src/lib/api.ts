@@ -3,33 +3,38 @@ import type {
   AgentKind,
   AgentRenameRequest,
   ConversationResponse,
-  CreateWorktreeRequest,
   CreateTabRequest,
   CreateWorkspaceRequest,
+  CreateWorktreeRequest,
+  CreateWorktreeTabRequest,
   DirectoryListing,
   FileInfo,
   FocusPaneRequest,
   HealthAuth,
   IntegrationsResponse,
   InteractivePrompt,
+  MergeWorktreeRequest,
   MovePaneDestination,
   MovePaneRequest,
   MoveTabRequest,
-  TabMoved,
   OmoActivity,
   OpenWorktreeRequest,
   PairedDevice,
   PairingCode,
-  PaneMoved,
   PaneDirection,
+  PaneFindRequest,
+  PaneFindResponse,
   PaneInfo,
+  PaneMoved,
   PaneReadResult,
   PaneResized,
   PaneSplit,
   PaneSwapped,
   PaneZoomed,
-  PaneFindRequest,
-  PaneFindResponse,
+  PluginActionRequest,
+  PluginActionResult,
+  PluginActions,
+  PluginActionsResponse,
   PromptAnswer,
   PushKey,
   RemoteAccess,
@@ -42,15 +47,15 @@ import type {
   SplitPaneRequest,
   SwapPaneRequest,
   TabCreated,
+  TabMoved,
   UsageReport,
   WorkspaceCreated,
-  PluginActionRequest,
-  PluginActionResult,
-  PluginActions,
-  PluginActionsResponse,
   WorktreeListing,
+  WorktreeMerged,
   WorktreeOpened,
   WorktreeRemoved,
+  WorktreeStatus,
+  WorktreeTabCreated,
   ZoomPaneRequest,
 } from "../../shared/protocol.ts";
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
@@ -619,10 +624,30 @@ export async function closeWorkspace(workspaceId: string, machineId = "local", c
   await sendJson(machinePath(machineId, "workspace/close"), "POST", { workspace_id: workspaceId, ...(closeGroup ? { close_group: true } : {}) });
 }
 
-/** POST /api/worktree/remove: deletes the checkout and closes its workspace; the branch stays. */
+/**
+ * POST /api/worktree/remove: deletes the checkout and closes its workspace; the branch stays unless
+ * `delete_branch` asks for it and its commits are merged. With `path`, the checkout is a tab's.
+ */
 export async function removeWorktree(request: RemoveWorktreeRequest, machineId = "local"): Promise<WorktreeRemoved> {
   const response = await sendJson(machinePath(machineId, "worktree/remove"), "POST", request);
   return (await response.json()) as WorktreeRemoved;
+}
+
+/** POST /api/worktree/tab: a new checkout of the workspace's repository, opened as a tab of that workspace. */
+export async function createWorktreeTab(request: CreateWorktreeTabRequest, machineId = "local"): Promise<WorktreeTabCreated> {
+  const response = await sendJson(machinePath(machineId, "worktree/tab"), "POST", request);
+  return (await response.json()) as WorktreeTabCreated;
+}
+
+/** GET /api/worktree/status: what a linked checkout holds that the repository's main checkout lacks. */
+export function fetchWorktreeStatus(workspaceId: string, path: string, machineId = "local"): Promise<WorktreeStatus> {
+  return getJson<WorktreeStatus>(`${machinePath(machineId, "worktree/status")}?workspace_id=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(path)}`);
+}
+
+/** POST /api/worktree/merge: the checkout's branch into the main checkout's; a conflict changes nothing. */
+export async function mergeWorktree(request: MergeWorktreeRequest, machineId = "local"): Promise<WorktreeMerged> {
+  const response = await sendJson(machinePath(machineId, "worktree/merge"), "POST", request);
+  return (await response.json()) as WorktreeMerged;
 }
 
 /** GET /api/pane/commands: the slash commands the pane's agent understands (built-in + custom). */

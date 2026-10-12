@@ -12,7 +12,7 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeMerged, WorktreeOpened, WorktreeRemoved, WorktreeStatus, WorktreeTabCreated } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
@@ -159,6 +159,10 @@ interface DemoRepository {
   checkouts: Array<Omit<WorktreeEntry, "open_workspace_id">>;
 }
 const repositories = new Map<string, DemoRepository>();
+// What a fictional checkout holds that its repository's main one lacks: a new worktree starts
+// with a little work in it, so its merge and its close have something to show.
+const checkoutWork = new Map<string, { ahead: number; changed: string[] }>();
+const workIn = (path: string): { ahead: number; changed: string[] } => checkoutWork.get(path) ?? { ahead: 0, changed: [] };
 function repositoryAt(path: string): DemoRepository {
   const repoKey = `demo:${path}`;
   let repo = repositories.get(repoKey);
@@ -179,6 +183,35 @@ for (const workspace of snapshot().workspaces) {
 const newPaneTemplate = structuredClone(snapshot().panes[0]!);
 const newTabTemplate = structuredClone(snapshot().tabs[0]!);
 const newWorkspaceTemplate = structuredClone(snapshot().workspaces[0]!);
+
+/** Another tab in a workspace, in `cwd` or the workspace's folder, with the agent already "started". */
+function createDemoTab(workspace: WorkspaceInfo, givenCwd: string | null, label: string, agent: string | null): { tabId: string; paneId: string } {
+  const snap = snapshot();
+  const id = workspace.workspace_id;
+  const siblings = snap.panes.filter((p) => p.workspace_id === id);
+  const cwd = givenCwd ?? siblings[0]?.cwd ?? "/home/demo";
+  const tabs = snap.tabs.filter((tab) => tab.workspace_id === id);
+  const number = Math.max(0, ...tabs.map((tab) => tab.number)) + 1;
+  const tabId = `${id}:t${number}`;
+  const template = snap.panes[0]!;
+  const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
+  snap.panes.push(pane);
+  addAgent(pane);
+  snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: tabId, workspace_id: id, label: label, number, agent_status: pane.agent_status, focused: false, pane_count: 1 });
+  addDemoLayout(id, tabId, pane.pane_id);
+  if (label === "") autoTabs.add(tabId);
+  else autoTabs.delete(tabId);
+  relabelAutoTabs(id);
+  workspace.tab_count = tabs.length + 1;
+  workspace.pane_count = siblings.length + 1;
+  if (agent) {
+    keyOfPane.set(pane.pane_id, pane.pane_id);
+    chats.set(pane.pane_id, { turns: [], metadata: { model: agent === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", reasoning_effort: "medium" } });
+    conversationChanged(pane.pane_id);
+    setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
+  }
+  return { tabId, paneId: pane.pane_id };
+}
 
 function createDemoWorkspace(cwd: string, label: string, agent: string | null, worktree?: NonNullable<WorkspaceInfo["worktree"]>): WorkspaceCreated {
   const id = `w${(nextWorkspace++).toString(36)}`;
@@ -590,11 +623,12 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 
-  if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {
+  if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove" || path === "/api/worktree/tab" || path === "/api/worktree/status" || path === "/api/worktree/merge") {
     const listing = path === "/api/worktree/list";
-    if (method !== (listing ? "GET" : "POST")) return error("method_not_allowed", listing ? "use GET" : "use POST", 400);
-    const body = listing ? {} : await bodyOf(init, input);
-    const workspaceId = listing ? query.get("workspace_id") : body["workspace_id"];
+    const reading = listing || path === "/api/worktree/status";
+    if (method !== (reading ? "GET" : "POST")) return error("method_not_allowed", reading ? "use GET" : "use POST", 400);
+    const body = reading ? {} : await bodyOf(init, input);
+    const workspaceId = reading ? query.get("workspace_id") : body["workspace_id"];
     if (typeof workspaceId !== "string" || !workspaceId) return error("missing_workspace_id", "workspace_id is required", 400);
     const workspace = snapshot().workspaces.find((candidate) => candidate.workspace_id === workspaceId);
     if (!workspace) return error("workspace_not_found", "no such workspace", 404);
@@ -605,15 +639,47 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       const worktrees = repo.checkouts.map((checkout) => ({ ...checkout, open_workspace_id: snapshot().workspaces.find((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path)?.workspace_id ?? null }));
       return json({ source: { repo_key: repo.repoKey, repo_name: repo.repoName, repo_root: repo.repoRoot, source_checkout_path: info.checkout_path, source_workspace_id: workspaceId }, worktrees } satisfies WorktreeListing);
     }
+    // a linked checkout named by its path (a worktree tab's), against the repository's main one
+    const main = repo.checkouts.find((checkout) => !checkout.is_linked_worktree);
+    const linkedAt = (value: unknown) => typeof value === "string" ? repo.checkouts.find((checkout) => checkout.is_linked_worktree && checkout.path === value) : undefined;
+    if (path === "/api/worktree/status" || path === "/api/worktree/merge") {
+      const checkout = linkedAt(reading ? query.get("path") : body["path"]);
+      if (!checkout || !main) return error("worktree_not_found", "no such worktree checkout of this repository", 404);
+      const work = workIn(checkout.path);
+      if (path === "/api/worktree/status") {
+        return json({
+          path: checkout.path, branch: checkout.branch,
+          target: { path: main.path, branch: main.branch, changed: 0, busy: false },
+          changed: work.changed.length, changed_files: work.changed, ahead: work.ahead, behind: 0, conflicts: [], size_bytes: 48 * 1024 * 1024,
+        } satisfies WorktreeStatus, 200, { "cache-control": "no-store" });
+      }
+      const message = body["commit_message"];
+      if (message !== undefined && message !== null && (typeof message !== "string" || message.trim() === "")) return error("invalid_commit_message", "commit_message must not be empty", 400);
+      const committed = typeof message === "string" && work.changed.length > 0;
+      const commits = work.ahead + (committed ? 1 : 0);
+      if (commits === 0) return error("nothing_to_merge", `${checkout.branch} has no commits that ${main.branch} lacks`, 409);
+      checkoutWork.set(checkout.path, { ahead: 0, changed: committed ? [] : work.changed });
+      return json({ ok: true, branch: checkout.branch ?? "", target_branch: main.branch ?? "main", commits, committed, head: "4f2a9c1" } satisfies WorktreeMerged);
+    }
     if (path === "/api/worktree/remove") {
       if (body["force"] !== undefined && typeof body["force"] !== "boolean") return error("invalid_force", "force must be a boolean", 400);
-      if (!info.is_linked_worktree) return error("not_linked_worktree", "the repository's main checkout cannot be removed", 404);
-      const checkoutPath = info.checkout_path;
-      repo.checkouts = repo.checkouts.filter((checkout) => checkout.path !== checkoutPath);
-      // Removing a checkout leaves its branch available for a later create, as git does.
-      closeDemoWorkspaces(new Set([workspaceId]));
+      if (body["delete_branch"] !== undefined && typeof body["delete_branch"] !== "boolean") return error("invalid_delete_branch", "delete_branch must be a boolean", 400);
+      const named = body["path"] !== undefined && body["path"] !== null;
+      const checkout = named ? linkedAt(body["path"]) : repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.path === info.checkout_path);
+      if (!checkout) return error(named ? "worktree_not_found" : "not_linked_worktree", named ? "no such worktree checkout of this repository" : "the repository's main checkout cannot be removed", 404);
+      const work = workIn(checkout.path);
+      if (work.changed.length > 0 && body["force"] !== true) return error("dirty_worktree_requires_force", `'${checkout.path}' contains modified or untracked files, use --force to delete it`, 409);
+      repo.checkouts = repo.checkouts.filter((candidate) => candidate.path !== checkout.path);
+      checkoutWork.delete(checkout.path);
+      // Removing a checkout leaves its branch available for a later create, as git does; a
+      // branch asked to go with it goes only when the main checkout has its commits.
+      const branchDeleted = body["delete_branch"] === true && checkout.branch !== null && work.ahead === 0;
+      if (branchDeleted) repo.branches.delete(checkout.branch!);
+      // a checkout open as a workspace closes with it; a tab's is the tab's own to close
+      const open = snapshot().workspaces.filter((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path).map((candidate) => candidate.workspace_id);
+      if (open.length > 0) closeDemoWorkspaces(new Set(open));
       structureChanged();
-      return json({ ok: true, path: checkoutPath, forced: body["force"] === true } satisfies WorktreeRemoved);
+      return json({ ok: true, path: checkout.path, forced: body["force"] === true, ...(body["delete_branch"] === true ? { branch_deleted: branchDeleted } : {}) } satisfies WorktreeRemoved);
     }
     for (const field of ["branch", "base", "label", "path"] as const) {
       if (body[field] !== undefined && body[field] !== null && typeof body[field] !== "string") return error(`invalid_${field}`, `${field} must be a string`, 400);
@@ -622,7 +688,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const label = typeof body["label"] === "string" ? body["label"].trim() || undefined : undefined;
     const checkoutPath = typeof body["path"] === "string" ? body["path"] || undefined : undefined;
     if (checkoutPath && !checkoutPath.startsWith("/")) return error("invalid_path", "path must be absolute", 400);
-    const creating = path === "/api/worktree/create";
+    const asTab = path === "/api/worktree/tab";
+    const creating = path === "/api/worktree/create" || asTab;
     if (creating && !branch) return error("missing_branch", "branch is required", 400);
     if (!creating && !branch && !checkoutPath) return error("missing_target", "path or branch is required", 400);
     const agent = creating ? body["agent"] as { kind?: unknown; name?: unknown; args?: unknown } | null | undefined : null;
@@ -632,12 +699,26 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       return error("invalid_agent", "agent.kind is required; agent.name must be a string and agent.args must be an array of strings", 400);
     }
     let checkout: Omit<WorktreeEntry, "open_workspace_id"> | undefined;
+    // a branch that has its checkout already (a closed tab left it) opens as a tab in that one
+    const kept = asTab && !checkoutPath ? repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.branch === branch) : undefined;
+    if (kept) {
+      const made = createDemoTab(workspace, kept.path, label ?? branch!.replace(/^worktree\//, "").replaceAll("/", "-"), typeof agent?.kind === "string" ? agent.kind : null);
+      structureChanged();
+      return json({ workspace_id: workspace.workspace_id, tab_id: made.tabId, pane_id: made.paneId, path: kept.path, branch: branch!, existing: true, agent_started: typeof agent?.kind === "string" } satisfies WorktreeTabCreated);
+    }
     if (creating) {
       const targetPath = checkoutPath ?? `/home/demo/.herdr/worktrees/${repo.repoName}/${branch}`;
       if (repo.checkouts.some((candidate) => candidate.path === targetPath || candidate.branch === branch)) return error("worktree_exists", "that branch or path already has a checkout; open it instead", 404);
       checkout = { path: targetPath, branch: branch!, label: label ?? branch!, is_linked_worktree: true, is_bare: false, is_detached: false, is_prunable: false };
       repo.branches.add(branch!);
       repo.checkouts.push(checkout);
+      checkoutWork.set(targetPath, { ahead: 2, changed: ["notes/plan.md"] });
+      if (asTab) {
+        // the worktree is a tab of the workspace it was asked from, named after its branch
+        const made = createDemoTab(workspace, targetPath, label ?? branch!.replace(/^worktree\//, "").replaceAll("/", "-"), typeof agent?.kind === "string" ? agent.kind : null);
+        structureChanged();
+        return json({ workspace_id: workspace.workspace_id, tab_id: made.tabId, pane_id: made.paneId, path: targetPath, branch: branch!, existing: false, agent_started: typeof agent?.kind === "string" } satisfies WorktreeTabCreated);
+      }
     } else {
       checkout = repo.checkouts.find((candidate) => checkoutPath ? candidate.path === checkoutPath : candidate.branch === branch);
       if (!checkout) return error("worktree_not_found", "no such checkout", 404);
@@ -1034,35 +1115,12 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/tab/create") {
     const body = await bodyOf(init, input);
-    const snap = snapshot();
-    const workspace = snap.workspaces.find((w) => w.workspace_id === body["workspace_id"]);
+    const workspace = snapshot().workspaces.find((w) => w.workspace_id === body["workspace_id"]);
     if (!workspace) return error("not_found", "no such workspace", 404);
     const agent = (body["agent"] as { kind?: string } | null | undefined)?.kind ?? null;
-    const id = workspace.workspace_id;
-    const siblings = snap.panes.filter((p) => p.workspace_id === id);
-    const cwd = String(body["cwd"] ?? siblings[0]?.cwd ?? "/home/demo");
-    const tabs = snap.tabs.filter((tab) => tab.workspace_id === id);
-    const number = Math.max(0, ...tabs.map((tab) => tab.number)) + 1;
-    const tabId = `${id}:t${number}`;
-    const template = snap.panes[0]!;
-    const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
-    snap.panes.push(pane);
-    addAgent(pane);
-    snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: tabId, workspace_id: id, label: String(body["label"] ?? ""), number, agent_status: pane.agent_status, focused: false, pane_count: 1 });
-    addDemoLayout(id, tabId, pane.pane_id);
-    if (String(body["label"] ?? "") === "") autoTabs.add(tabId);
-    else autoTabs.delete(tabId);
-    relabelAutoTabs(id);
-    workspace.tab_count = tabs.length + 1;
-    workspace.pane_count = siblings.length + 1;
-    if (agent) {
-      keyOfPane.set(pane.pane_id, pane.pane_id);
-      chats.set(pane.pane_id, { turns: [], metadata: { model: agent === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", reasoning_effort: "medium" } });
-      conversationChanged(pane.pane_id);
-      setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
-    }
+    const made = createDemoTab(workspace, typeof body["cwd"] === "string" ? body["cwd"] : null, String(body["label"] ?? ""), agent);
     structureChanged();
-    return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
+    return json({ workspace_id: workspace.workspace_id, pane_id: made.paneId, agent_started: agent !== null } satisfies WorkspaceCreated);
   }
   // no key in the demo: the app falls back to the browser's own speech recognition
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });

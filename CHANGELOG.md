@@ -8,6 +8,20 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **A worktree as a tab, and its merge back.** Several agents can now work on one project at
+  once, each in a tab of its own. In a workspace whose folder is a git repository, New tab has a
+  **New worktree** switch: the tab gets its own branch and checkout (under herdr's worktree
+  folder), stays in the project's workspace, and wears a branch mark in the tab strip. The tab's
+  menu has **Merge worktree…**, which shows the commits to merge, the files not committed yet and
+  any files the merge would conflict in, commits the uncommitted files first unless you leave
+  them out, and merges the branch into the one the repository's main checkout is on. A merge that
+  conflicts is taken back, so the project is never left half merged. After a merge, one button
+  closes the tab and deletes the checkout with its merged branch. Closing a worktree tab asks
+  what becomes of the checkout: it shows what is in it and its size on disk, and deletes it when
+  you tick that, which is ticked already when nothing would be lost. A checkout you keep is
+  listed in New tab and opens as a tab again. A worktree workspace's row menu merges the same way.
+  A tab is known as a worktree from the folder its panes are in, so one an agent made itself is
+  recognized too.
 - **The server's browser, in the app.** While a browser is open on one of the server's virtual
   displays (the ones agents drive through Playwright), a globe stands beside Settings in the
   sidebar. It opens that browser over the app, to watch and to use: on a desktop the mouse and

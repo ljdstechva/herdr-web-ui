@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { createServer } from "./index.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
+import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeMerged, WorktreeOpened, WorktreeRemoved, WorktreeStatus, WorktreeTabCreated } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type InstalledNotes, type UpdateNotes } from "../shared/update.ts";
 import { USAGE_PROVIDERS, UsageService } from "./usage.ts";
@@ -1035,6 +1035,126 @@ describe("workspace and discovery endpoints", () => {
         if (workspace.worktree?.is_linked_worktree && workspace.worktree.repo_root === repoRoot) await herdrRpc("worktree.remove", { workspace_id: workspace.workspace_id, force: true }).catch(() => undefined);
       }
       for (const id of owned) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
+      rmSync(checkouts, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("opens a worktree as a tab of the repository's workspace, reads it, merges it and deletes it with its branch", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "herdr-web-ui-worktree-tab-"));
+    const gitIn = (cwd: string, ...args: string[]) => Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    const git = (...args: string[]) => gitIn(repo, ...args);
+    expect(git("init", "-q", "-b", "main").exitCode).toBe(0);
+    // the server commits and merges as the repository says: the identity is the repository's own
+    expect(git("config", "user.name", "herdr-web-ui test").exitCode).toBe(0);
+    expect(git("config", "user.email", "test@example.invalid").exitCode).toBe(0);
+    expect(git("config", "commit.gpgsign", "false").exitCode).toBe(0);
+    writeFileSync(join(repo, "README.md"), "worktree tab fixture\n");
+    expect(git("add", "README.md").exitCode).toBe(0);
+    expect(git("commit", "-q", "-m", "fixture").exitCode).toBe(0);
+    const parent = await workspaceCreate({ cwd: repo, label: "herdr-web-ui-test-worktree-tab-parent" });
+    const workspaceId = parent.workspace.workspace_id;
+    // the checkout lives under the test's own folders, never under the user's worktree directory
+    const checkouts = `${repo}-checkouts`;
+    const checkout = join(checkouts, "tab");
+    const post = (path: string, body: unknown) => fetch(`${base()}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const status = async (path: string) => fetch(`${base()}/api/worktree/status?workspace_id=${encodeURIComponent(workspaceId)}&path=${encodeURIComponent(path)}`);
+    try {
+      const missing = await post("/api/worktree/tab", { workspace_id: workspaceId, path: checkout });
+      expect(missing.status).toBe(400);
+      expect(((await missing.json()) as ApiError).error.code).toBe("missing_branch");
+      const relative = await post("/api/worktree/tab", { workspace_id: workspaceId, branch: "herdr-web-ui-test-tab", path: "relative" });
+      expect(relative.status).toBe(400);
+      expect(((await relative.json()) as ApiError).error.code).toBe("invalid_path");
+      // git's refusal of a name is answered in its words, and leaves nothing behind
+      const badName = await post("/api/worktree/tab", { workspace_id: workspaceId, branch: "bad..name", path: checkout });
+      expect(badName.status).toBe(409);
+      expect(((await badName.json()) as ApiError).error.code).toBe("invalid_branch");
+      expect(existsSync(checkout)).toBeFalse();
+      const tabsBefore = (await sessionSnapshot()).tabs.filter((tab) => tab.workspace_id === workspaceId).length;
+
+      const create = await post("/api/worktree/tab", { workspace_id: workspaceId, branch: "worktree/herdr-web-ui-test-tab", base: null, label: null, path: checkout });
+      expect(create.status).toBe(200);
+      const made = (await create.json()) as WorktreeTabCreated;
+      // a tab of the repository's own workspace, not a workspace of its own
+      expect(made.workspace_id).toBe(workspaceId);
+      expect(made.branch).toBe("worktree/herdr-web-ui-test-tab");
+      expect(made.existing).toBeFalse();
+      expect(made.agent_started).toBeFalse();
+      expect(realpathSync(made.path)).toBe(realpathSync(checkout));
+      const snapshot = await sessionSnapshot();
+      expect(snapshot.tabs.filter((tab) => tab.workspace_id === workspaceId)).toHaveLength(tabsBefore + 1);
+      // named after its branch, without the folder generated branches share
+      expect(snapshot.tabs.find((tab) => tab.tab_id === made.tab_id)?.label).toBe("herdr-web-ui-test-tab");
+      const pane = snapshot.panes.find((candidate) => candidate.pane_id === made.pane_id);
+      expect(pane?.tab_id).toBe(made.tab_id);
+      expect(realpathSync(pane?.cwd ?? "")).toBe(realpathSync(checkout));
+      expect(snapshot.workspaces.some((workspace) => workspace.worktree?.is_linked_worktree && workspace.worktree.repo_root === realpathSync(repo))).toBeFalse();
+
+      // herdr lists the checkout as one of the repository's, open in no workspace
+      const listing = (await (await fetch(`${base()}/api/worktree/list?workspace_id=${encodeURIComponent(workspaceId)}`)).json()) as WorktreeListing;
+      const entry = listing.worktrees.find((candidate) => candidate.branch === "worktree/herdr-web-ui-test-tab");
+      expect(entry?.is_linked_worktree).toBeTrue();
+      // herdr leaves the field out for a checkout no workspace is on
+      expect(entry?.open_workspace_id ?? null).toBeNull();
+
+      const fresh = await status(entry!.path);
+      expect(fresh.status).toBe(200);
+      expect((await fresh.json()) as WorktreeStatus).toMatchObject({ branch: "worktree/herdr-web-ui-test-tab", changed: 0, ahead: 0, behind: 0, conflicts: [], target: { branch: "main", busy: false } });
+      // only a checkout the repository holds is ever read, merged or deleted
+      const elsewhere = await status(tmpdir());
+      expect(elsewhere.status).toBe(404);
+      expect(((await elsewhere.json()) as ApiError).error.code).toBe("worktree_not_found");
+      const mainItself = await status(listing.worktrees.find((candidate) => !candidate.is_linked_worktree)!.path);
+      expect(mainItself.status).toBe(404);
+      const nothing = await post("/api/worktree/merge", { workspace_id: workspaceId, path: entry!.path });
+      expect(nothing.status).toBe(409);
+      expect(((await nothing.json()) as ApiError).error.code).toBe("nothing_to_merge");
+
+      // an agent's work: one commit, and one file it has not committed
+      writeFileSync(join(checkout, "feature.txt"), "feature\n");
+      expect(gitIn(checkout, "add", "feature.txt").exitCode).toBe(0);
+      expect(gitIn(checkout, "commit", "-q", "-m", "feature").exitCode).toBe(0);
+      writeFileSync(join(checkout, "draft.txt"), "draft\n");
+      expect((await (await status(entry!.path)).json()) as WorktreeStatus).toMatchObject({ changed: 1, changed_files: ["draft.txt"], ahead: 1 });
+
+      const emptyMessage = await post("/api/worktree/merge", { workspace_id: workspaceId, path: entry!.path, commit_message: "  " });
+      expect(emptyMessage.status).toBe(400);
+      const merge = await post("/api/worktree/merge", { workspace_id: workspaceId, path: entry!.path, commit_message: "Work from the tab" });
+      expect(merge.status).toBe(200);
+      expect((await merge.json()) as WorktreeMerged).toMatchObject({ ok: true, branch: "worktree/herdr-web-ui-test-tab", target_branch: "main", commits: 2, committed: true });
+      expect(existsSync(join(repo, "feature.txt"))).toBeTrue();
+      expect(existsSync(join(repo, "draft.txt"))).toBeTrue();
+      expect(git("status", "--porcelain").stdout.toString()).toBe("");
+
+      // a branch that has its checkout opens in it again: a tab closed without deleting it is not lost
+      const again = await post("/api/worktree/tab", { workspace_id: workspaceId, branch: "worktree/herdr-web-ui-test-tab" });
+      expect(again.status).toBe(200);
+      const reopened = (await again.json()) as WorktreeTabCreated;
+      expect(reopened.existing).toBeTrue();
+      expect(realpathSync(reopened.path)).toBe(realpathSync(checkout));
+      expect(reopened.tab_id).not.toBe(made.tab_id);
+      expect((await post("/api/tab/close", { tab_id: reopened.tab_id })).status).toBe(200);
+
+      // a file written after the merge is refused without force, under herdr's own code
+      writeFileSync(join(checkout, "late.txt"), "late\n");
+      const refused = await post("/api/worktree/remove", { workspace_id: workspaceId, path: entry!.path, delete_branch: true });
+      expect(refused.status).toBe(409);
+      expect(((await refused.json()) as ApiError).error.code).toBe("dirty_worktree_requires_force");
+      expect(existsSync(checkout)).toBeTrue();
+      const removed = await post("/api/worktree/remove", { workspace_id: workspaceId, path: entry!.path, force: true, delete_branch: true });
+      expect(removed.status).toBe(200);
+      expect((await removed.json()) as WorktreeRemoved).toMatchObject({ ok: true, forced: true, branch_deleted: true });
+      expect(existsSync(checkout)).toBeFalse();
+      expect(git("branch", "--list", "worktree/herdr-web-ui-test-tab").stdout.toString()).toBe("");
+      // the tab is the client's to close: the workspace and its other tab are as they were
+      const after = await sessionSnapshot();
+      expect(after.tabs.some((tab) => tab.tab_id === made.tab_id)).toBeTrue();
+      const closed = await post("/api/tab/close", { tab_id: made.tab_id });
+      expect(closed.status).toBe(200);
+      expect((await sessionSnapshot()).tabs.filter((tab) => tab.workspace_id === workspaceId)).toHaveLength(tabsBefore);
+    } finally {
+      await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
       rmSync(checkouts, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
     }

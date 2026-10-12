@@ -2,9 +2,12 @@
  * Herdr's tab row, visible for a single tab too. Left-click selects; right-click opens
  * New tab / Rename / Close at the pointer. Pane actions belong to PaneCanvas.
  * A phone keeps an ellipsis on the selected tab as a touch entry to the same menu.
+ * A tab whose panes are in a linked git checkout is a worktree (lib/tabWorktrees.ts): it wears
+ * the branch glyph, its menu merges its branch into the main checkout, and its close asks what
+ * becomes of the checkout.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ellipsis, GitBranch, GitMerge, Pencil, Plus, X } from "lucide-react";
 
 import "./TabStrip.css";
 
@@ -20,11 +23,15 @@ import { rosterPanes } from "../lib/dagPane.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useTabReorder } from "../lib/useTabReorder.ts";
+import { useTabWorktrees } from "../lib/useTabWorktrees.ts";
+import type { TabWorktree } from "../lib/tabWorktrees.ts";
 import { swipeTarget, watchTabSwipe, type TabSwipeOptions } from "../lib/tabSwipe.ts";
 import { paneStatus, rollupStatus } from "../lib/status.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { BackgroundBadge, displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { WorktreeCloseDialog } from "./WorktreeCloseDialog.tsx";
+import { WorktreeMergeDialog } from "./WorktreeMergeDialog.tsx";
 
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
 
@@ -45,7 +52,7 @@ export interface TabStripProps {
 export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPane, onNewTab, swipeHost = null }: TabStripProps) {
   const t = useT();
   const machineId = useMachineId();
-  const { closeTab, renameTab, moveTab } = useMachineApi();
+  const { closeTab, renameTab, moveTab, removeWorktree } = useMachineApi();
   const touchMenu = useMediaQuery("(pointer: coarse), (max-width: 768px)");
   // a short phone screen (landscape, a small phone) has no height to spare: a lone tab is not
   // drawn there, so an approval card keeps its options in reach; its actions stay in the header
@@ -56,9 +63,14 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
   // the name just sent, shown until herdr's snapshot carries it
   const [sent, setSent] = useState<{ tabId: string; label: string } | null>(null);
   const [confirm, setConfirm] = useState<{ tab: HerdrTab; title: string; body: string } | null>(null);
+  // a worktree tab's close and merge keep the checkout they were opened for: the tab may go under them
+  const [worktreeClose, setWorktreeClose] = useState<{ tab: HerdrTab; worktree: TabWorktree; title: string; warning: string | null; shared: boolean } | null>(null);
+  const [merging, setMerging] = useState<{ tab: HerdrTab; worktree: TabWorktree; shared: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // the tab whose name field just went: its button takes the focus back in the same commit, so the next key lands on it
   const refocus = useRef<string | null>(null);
+  // the worktree dialog's own close is on its way: the tab leaving the snapshot is its doing
+  const worktreeClosing = useRef(false);
   // tabs whose close is on its way: a second press, or a held Delete, does not send another
   const closing = useRef(new Set<string>());
   // A requested close: register focus return before the native snapshot can remove its tab.
@@ -74,16 +86,20 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     if (previousOwner.current === owner) return;
     previousOwner.current = owner;
     // Native IDs can repeat on another PC. A pending dialog never changes its target PC.
-    setPicker(null); setEditing(null); setConfirm(null); setSent(null); setError(null);
+    setPicker(null); setEditing(null); setConfirm(null); setWorktreeClose(null); setMerging(null); setSent(null); setError(null);
     refocus.current = null; closed.current = null;
   }, [owner]);
   const panes = rosterPanes(snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id), selectedPane.pane_id);
   // The snapshot order is authoritative; number identifies a tab and does not change on a move.
   const tabs = snapshot.tabs.filter((tab) => tab.workspace_id === workspace.workspace_id);
+  const { worktrees, refresh: refreshWorktrees } = useTabWorktrees(workspace, tabs, panes, online);
   const reorder = useTabReorder({ owner: `${machineId}:${workspace.workspace_id}`, tabs, strip, moveTab,
     failed: (reason) => setError(t("Move failed: {reason}", { reason: said(reason) })),
     stale: () => setError(t("Tab order did not refresh. Try again.")),
   });
+  // what the snapshot holds now, for a deed that answers after it changed
+  const snapshotTabs = useRef(tabs);
+  snapshotTabs.current = tabs;
   const nameOf = (tab: HerdrTab): string => sent?.tabId === tab.tab_id ? sent.label : tabLabel(tab, t, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1);
 
   useEffect(() => {
@@ -96,6 +112,8 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     if (picker && !here(picker.tab.tab_id)) setPicker(null);
     if (editing && !here(editing.tabId)) setEditing(null);
     if (confirm && !here(confirm.tab.tab_id)) setConfirm(null);
+    // a worktree dialog whose tab was closed elsewhere has nothing left to close; a merge still has its checkout
+    if (worktreeClose && !here(worktreeClose.tab.tab_id) && !worktreeClosing.current) setWorktreeClose(null);
     if (sent && tabs.find((tab) => tab.tab_id === sent.tabId)?.label.trim() === sent.label) setSent(null);
   });
   // A touch-only trigger can disappear without crossing RowMenu's narrower sheet breakpoint.
@@ -209,7 +227,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
   // beside this one (lib/tabSwipe.ts swipeTarget), when it has a pane to open. Not under a name
   // field, a menu or a move still on its way.
   const besideOpen = (step: -1 | 1) => swipeTarget(snapshot.workspaces, snapshot.tabs, selectedPane.tab_id, step, (tab) => paneFor(tab) !== undefined);
-  swipe.current = editing || picker || confirm || reorder.moving || reorder.drag ? null : {
+  swipe.current = editing || picker || confirm || worktreeClose || merging || reorder.moving || reorder.drag ? null : {
     beside: (step) => {
       const target = besideOpen(step);
       if (!target) return null;
@@ -271,17 +289,28 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     setError(null);
     // a turn that waits on its background work would lose that work too
     const busy = panesOf(tab).some((pane) => { const status = paneStatus(pane as HerdrPane); return status === "working" || status === "blocked" || status === "waiting"; });
-    if (tabs.length > 1 && !busy) {
+    const warning = tabs.length > 1
+      ? (busy ? t("An agent in it is still at work, and stops with the tab.") : null)
+      : t("It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.", { workspace: workspace.label });
+    // a worktree tab always asks: what becomes of its checkout is the question
+    const worktree = worktrees.get(tab.tab_id);
+    if (worktree) {
+      setWorktreeClose({ tab, worktree, title: t("Close tab {name}?", { name: nameOf(tab) }), warning, shared: sharesCheckout(tab, worktree) });
+      return;
+    }
+    if (warning === null) {
       void close(tab).catch((reason: unknown) => setError(t("Close failed: {reason}", { reason: said(reason) })));
       return;
     }
-    setConfirm({
-      tab,
-      title: t("Close tab {name}?", { name: nameOf(tab) }),
-      body: tabs.length > 1
-        ? t("An agent in it is still at work, and stops with the tab.")
-        : t("It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.", { workspace: workspace.label }),
-    });
+    setConfirm({ tab, title: t("Close tab {name}?", { name: nameOf(tab) }), body: warning });
+  };
+  /** another tab of the workspace is in the same checkout: it is not one tab's to delete */
+  const sharesCheckout = (tab: HerdrTab, worktree: TabWorktree): boolean => tabs.some((other) => other.tab_id !== tab.tab_id && worktrees.get(other.tab_id)?.path === worktree.path);
+  /** a tab already gone (closed in the TUI while a dialog stood) is closed: the deed goes on */
+  const closeIfHere = async (tab: HerdrTab): Promise<void> => {
+    if (!snapshotTabs.current.some((candidate) => candidate.tab_id === tab.tab_id)) return;
+    worktreeClosing.current = true;
+    try { await close(tab); } finally { worktreeClosing.current = false; }
   };
 
   // arrows move between the tabs; Enter or Space on one opens it, as any button; F2 names it, Delete closes it
@@ -334,6 +363,8 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
       ? [{ id: "move-right", label: t("Move tab right"), icon: ArrowRight, run: () => reorder.moveAdjacent(tab.tab_id, 1) }] : []),
     { id: "new-tab", label: t("New tab"), icon: Plus, run: onNewTab },
     { id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => beginRename(tab) },
+    ...(worktrees.has(tab.tab_id) ? [{ id: "merge-worktree", label: t("Merge worktree…"), icon: GitMerge, divider: true,
+      run: () => { const worktree = worktrees.get(tab.tab_id); if (worktree) setMerging({ tab, worktree, shared: sharesCheckout(tab, worktree) }); } }] : []),
     { id: "close-tab", label: t("Close tab"), icon: X, danger: true, run: () => requestClose(tab) },
   ];
 
@@ -354,6 +385,8 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
           const backgroundTasks = online ? own.reduce((count, pane) => count + (pane.background_tasks ?? 0), 0) : 0;
           const pickerOpen = picker?.tab.tab_id === tab.tab_id;
           const name = nameOf(tab);
+          const worktree = worktrees.get(tab.tab_id);
+          const paneTitle = own.length === 1 && own[0] ? displayPaneTitle(own[0]) : t("{n} panes", { n: own.length });
           return (
             <div className={`tab-strip-item${active ? " is-active" : ""}${own.length > 1 ? " has-panes" : ""}${editing?.tabId === tab.tab_id ? " is-editing" : ""}${reorder.drag?.tabId === tab.tab_id ? " is-dragging" : ""}${reorder.drag?.boundary === index ? " is-drop-before" : ""}${reorder.drag?.boundary === tabs.length && index === tabs.length - 1 ? " is-drop-after" : ""}`} key={tab.tab_id}>
               {editing?.tabId === tab.tab_id ? (
@@ -387,7 +420,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
                   aria-keyshortcuts="Shift+F10 Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
                   aria-controls={panePanel}
                   tabIndex={active ? 0 : -1}
-                  title={own.length === 1 && own[0] ? displayPaneTitle(own[0]) : t("{n} panes", { n: own.length })}
+                  title={worktree ? `${paneTitle} · ${worktree.branch ?? t("Detached HEAD")}` : paneTitle}
                   onPointerDown={(event) => reorder.onPointerDown(event, tab.tab_id)}
                   onPointerMove={reorder.onPointerMove}
                   onPointerUp={reorder.onPointerUp}
@@ -407,6 +440,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
                   onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); requestClose(tab); } }}
                 >
                   {(status === "working" || status === "blocked" || status === "waiting" || status === "done") && <span className="tab-strip-dot" data-status={status} aria-hidden="true" />}
+                  {worktree && <GitBranch className="tab-strip-branch" role="img" aria-label={t("Worktree on {branch}", { branch: worktree.branch ?? t("Detached HEAD") })} />}
                   <span className="tab-strip-label">{name}</span>
                   <BackgroundBadge count={backgroundTasks} />
                 </button>
@@ -425,6 +459,15 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
       {picker && <RowMenu anchor={picker.anchor} point={picker.point} restoreFocusTo={picker.previousFocus}
         title={nameOf(picker.tab)} items={pickerItems(picker.tab)} align="start" onClose={() => setPicker(null)} />}
       {confirm && <ConfirmDialog title={confirm.title} body={confirm.body} confirmLabel={t("Close tab")} onConfirm={async () => { await close(confirm.tab); setConfirm(null); }} onClose={() => setConfirm(null)} />}
+      {worktreeClose && <WorktreeCloseDialog title={worktreeClose.title} warning={worktreeClose.warning} workspaceId={workspace.workspace_id} worktree={worktreeClose.worktree} shared={worktreeClose.shared}
+        onCloseTab={async () => { await closeIfHere(worktreeClose.tab); setWorktreeClose(null); }} onDeleted={refreshWorktrees} onClose={() => setWorktreeClose(null)} />}
+      {merging && <WorktreeMergeDialog workspaceId={workspace.workspace_id} path={merging.worktree.path} branch={merging.worktree.branch} onMerged={refreshWorktrees} onClose={() => setMerging(null)}
+        // the checkout goes before the tab, so a refusal leaves the tab standing; a checkout another tab is in stays
+        cleanup={merging.shared ? null : { label: t("Close tab and delete worktree"), run: async (force) => {
+          await removeWorktree({ workspace_id: workspace.workspace_id, path: merging.worktree.path, force, delete_branch: true });
+          refreshWorktrees();
+          await closeIfHere(merging.tab);
+        } }} />}
     </>
   );
 }
