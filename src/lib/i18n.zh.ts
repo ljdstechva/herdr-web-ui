@@ -1016,4 +1016,9 @@ export const ZH: Record<string, string> = {
   "Hide the keyboard": "隐藏键盘",
   "Type into the browser": "在浏览器中输入",
   "No browser is open on the server right now.": "服务器上目前没有打开的浏览器。",
+  "Loading browsers…": "正在加载浏览器…",
+  "This device cannot control the server's browser. Use a device with control access.": "此设备无法控制服务器的浏览器。请使用有控制权限的设备。",
+  "The browser view is unavailable on this server. Check the browser service, then retry.": "此服务器暂时无法提供浏览器视图。请检查浏览器服务后重试。",
+  "Could not load the server's browsers. Check the connection and retry.": "无法加载服务器的浏览器。请检查连接后重试。",
+  "Open a browser on the server, then retry. This view reconnects automatically.": "请在服务器上打开浏览器后重试。此视图会自动重新连接。",
 };

@@ -1014,4 +1014,9 @@ export const JA: Record<string, string> = {
   "Hide the keyboard": "キーボードを隠す",
   "Type into the browser": "ブラウザーに入力",
   "No browser is open on the server right now.": "現在、サーバーで開いているブラウザーはありません。",
+  "Loading browsers…": "ブラウザーを読み込み中…",
+  "This device cannot control the server's browser. Use a device with control access.": "このデバイスではサーバーのブラウザーを操作できません。操作権限のあるデバイスを使用してください。",
+  "The browser view is unavailable on this server. Check the browser service, then retry.": "このサーバーではブラウザー表示を利用できません。ブラウザーのサービスを確認して再試行してください。",
+  "Could not load the server's browsers. Check the connection and retry.": "サーバーのブラウザーを読み込めませんでした。接続を確認して再試行してください。",
+  "Open a browser on the server, then retry. This view reconnects automatically.": "サーバーでブラウザーを開いて再試行してください。この画面は自動的に再接続します。",
 };

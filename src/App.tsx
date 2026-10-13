@@ -21,6 +21,7 @@ import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
+import { BrowserViewButton } from "./components/BrowserView.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -1019,6 +1020,7 @@ export function App() {
       <div className="app">
         <header className="app-header">
           <Brand />
+          <div className="header-meta"><BrowserViewButton /></div>
         </header>
         <div className="app-body">
           <aside className="sidebar">
@@ -1110,6 +1112,7 @@ export function App() {
           </div>
         )}
         <div className="header-meta">
+          <BrowserViewButton />
           {/* speaks only while the bridge is not live; live, it stays in the document for a screen
               reader (and the browser scripts that wait on it), drawn by nothing (styles.css) */}
           <span

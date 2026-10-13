@@ -8,9 +8,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { BrowserInfo, BrowserLayoutRequest, BrowserList } from "../../shared/browser-view.ts";
 
-/** how often the open app asks whether a browser is open, and how often the open view does */
-const POLL_MS = 15_000;
+/** Discovery runs only while the viewer is open. */
 const POLL_OPEN_MS = 3_000;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export class BrowserViewError extends Error {
   constructor(readonly status: number, readonly code: string | null, message: string) {
@@ -20,7 +20,7 @@ export class BrowserViewError extends Error {
 }
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (!response.ok) {
     let code: string | null = null;
     let message = `${response.status} ${response.statusText}`;
@@ -36,7 +36,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export const fetchBrowsers = async (): Promise<BrowserInfo[]> => (await call<BrowserList>("/api/browsers")).browsers;
+export const fetchBrowsers = async (signal?: AbortSignal): Promise<BrowserInfo[]> => (await call<BrowserList>("/api/browsers", { signal })).browsers;
 
 export const setBrowserLayout = (id: string, request: BrowserLayoutRequest): Promise<BrowserInfo> =>
   call(`/api/browsers/${encodeURIComponent(id)}/layout`, { method: "POST", headers: { "content-type": "application/json", "x-herdr-browser": "1" }, body: JSON.stringify(request) });
@@ -46,40 +46,56 @@ export function browserStreamUrl(id: string, location: Pick<Location, "protocol"
 }
 
 /**
- * The browsers open on the server, asked again every few seconds while the app is in view.
- * `unavailable` is for good: the server cannot offer the view (404), or this device may only
- * watch (403).
+ * The open viewer keeps discovery recoverable, even after an unavailable/permission response.
+ * One bounded request at a time; closing the viewer cancels it and stops all polling.
  */
-export function useBrowsers(open: boolean): { browsers: BrowserInfo[]; unavailable: boolean; refresh: () => void } {
+export function useBrowsers(): { browsers: BrowserInfo[]; loading: boolean; error: Error | null; refresh: () => void } {
   const [browsers, setBrowsers] = useState<BrowserInfo[]>([]);
-  const [unavailable, setUnavailable] = useState(false);
-  const inFlight = useRef(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const inFlight = useRef<AbortController | null>(null);
 
   const refresh = useCallback(() => {
     if (inFlight.current) return;
-    inFlight.current = true;
-    fetchBrowsers()
-      .then(setBrowsers)
-      .catch((reason: unknown) => {
-        if (reason instanceof BrowserViewError && (reason.status === 404 || reason.status === 403)) setUnavailable(true);
-        // any other failure (the server restarting) keeps the last answer: the next ask corrects it
+    const controller = new AbortController();
+    inFlight.current = controller;
+    setLoading(true);
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    fetchBrowsers(controller.signal)
+      .then((found) => {
+        if (inFlight.current !== controller) return;
+        setBrowsers(found);
+        setError(null);
       })
-      .finally(() => { inFlight.current = false; });
+      .catch((reason: unknown) => {
+        if (inFlight.current !== controller) return;
+        // Losing discovery must not interrupt a healthy stream; access refusals must.
+        if (reason instanceof BrowserViewError && [401, 403, 404].includes(reason.status)) setBrowsers([]);
+        setError(reason instanceof Error ? reason : new Error(String(reason)));
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (inFlight.current !== controller) return;
+        inFlight.current = null;
+        setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
-    if (unavailable) return;
     refresh();
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") refresh(); }, open ? POLL_OPEN_MS : POLL_MS);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") refresh(); }, POLL_OPEN_MS);
     const onVisible = (): void => { if (document.visibilityState === "visible") refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
+      const controller = inFlight.current;
+      inFlight.current = null;
+      controller?.abort();
     };
-  }, [refresh, unavailable, open]);
+  }, [refresh]);
 
-  return { browsers, unavailable, refresh };
+  return { browsers, loading, error, refresh };
 }
 
 // ---------------------------------------------------------------------------------------------

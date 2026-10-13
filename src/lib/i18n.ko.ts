@@ -1012,4 +1012,9 @@ export const KO: Record<string, string> = {
   "Hide the keyboard": "키보드 숨기기",
   "Type into the browser": "브라우저에 입력",
   "No browser is open on the server right now.": "지금 서버에 열려 있는 브라우저가 없습니다.",
+  "Loading browsers…": "브라우저를 불러오는 중…",
+  "This device cannot control the server's browser. Use a device with control access.": "이 기기에서는 서버의 브라우저를 제어할 수 없습니다. 제어 권한이 있는 기기를 사용하세요.",
+  "The browser view is unavailable on this server. Check the browser service, then retry.": "이 서버에서는 브라우저 보기를 사용할 수 없습니다. 브라우저 서비스를 확인한 후 다시 시도하세요.",
+  "Could not load the server's browsers. Check the connection and retry.": "서버의 브라우저를 불러오지 못했습니다. 연결을 확인한 후 다시 시도하세요.",
+  "Open a browser on the server, then retry. This view reconnects automatically.": "서버에서 브라우저를 연 후 다시 시도하세요. 이 화면은 자동으로 다시 연결됩니다.",
 };

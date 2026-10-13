@@ -12,7 +12,6 @@ import { AgentSidebar } from "./AgentSidebar.tsx";
 import { SidebarActivityProvider, useSidebarActivityState } from "../lib/sidebarActivity.tsx";
 import { UsageLeft, UsageMeters } from "./UsageMeters.tsx";
 import { VpsStatusRow } from "./VpsStatus.tsx";
-import { BrowserViewButton } from "./BrowserView.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
 
@@ -49,8 +48,6 @@ export function MachineSidebar(props: Props) {
       <VpsStatusRow onSelect={props.onSelect} />
       <div className="sidebar-footer-row">
         <button className="btn btn-ghost sidebar-footer-action" title={t("Settings (⌘⇧,)")} onClick={props.actions.openSettings}><Settings aria-hidden="true" />{t("Settings")}</button>
-        {/* only there while a browser is open on this server (components/BrowserView.tsx) */}
-        <BrowserViewButton />
         <UsageMeters />
       </div>
     </footer>

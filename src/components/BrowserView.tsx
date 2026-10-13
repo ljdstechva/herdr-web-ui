@@ -5,8 +5,9 @@ import type RFB from "@novnc/novnc";
 
 import "./BrowserView.css";
 
-import { MIN_PHONE_SIZE, type BrowserInfo, type BrowserLayout } from "../../shared/browser-view.ts";
+import { MIN_PHONE_SIZE, type BrowserLayout } from "../../shared/browser-view.ts";
 import {
+  BrowserViewError,
   browserStreamUrl,
   BUTTON_MASK,
   HOLD_MS,
@@ -33,24 +34,22 @@ function message(reason: unknown): string {
 }
 
 /**
- * The sidebar's way into the browsers open on the server: an icon that is only there while one
- * is open, and the view it opens (components/BrowserView.tsx owns both).
+ * A permanent app-bar entry, independent of discovery and the workspace drawer.
  */
 export function BrowserViewButton() {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const { browsers, unavailable, refresh } = useBrowsers(open);
-  if (unavailable || (!browsers.length && !open)) return null;
   return <>
-    <button type="button" className="icon-button browser-view-open" aria-label={t("Open the server's browser")} title={t("Open the server's browser")} onClick={() => setOpen(true)}><Globe aria-hidden="true" /></button>
-    {open && createPortal(<BrowserViewer browsers={browsers} refresh={refresh} onClose={() => setOpen(false)} />, document.body)}
+    <button type="button" className="icon-button browser-view-open" aria-label={t("Open the server's browser")} title={t("Open the server's browser")} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}><Globe aria-hidden="true" /></button>
+    {open && createPortal(<BrowserViewer onClose={() => setOpen(false)} />, document.body)}
   </>;
 }
 
 type Phase = "connecting" | "connected" | "lost";
 
-function BrowserViewer({ browsers, refresh, onClose }: { browsers: BrowserInfo[]; refresh(): void; onClose(): void }) {
+function BrowserViewer({ onClose }: { onClose(): void }) {
   const t = useT();
+  const { browsers, loading, error: discoveryError, refresh } = useBrowsers();
   const narrow = useMediaQuery(PHONE_QUERY);
   const touch = useMediaQuery("(pointer: coarse)");
   const visible = usePageVisible();
@@ -86,7 +85,7 @@ function BrowserViewer({ browsers, refresh, onClose }: { browsers: BrowserInfo[]
     setWant((current) => ({ layout: narrow ? "phone" : "desktop", turn: current.turn + 1 }));
   }, [narrow]);
 
-  // the focus goes back to the sidebar's icon when the view closes
+  // the focus goes back to the app bar's icon when the view closes
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     surface.current?.focus({ preventScroll: true });
@@ -286,9 +285,15 @@ function BrowserViewer({ browsers, refresh, onClose }: { browsers: BrowserInfo[]
   const showsPhone = browser?.layout === "phone";
   const layoutLabel = showsPhone ? t("Switch to the desktop layout") : t("Switch to the phone layout");
   const keyboardLabel = typing ? t("Hide the keyboard") : t("Show the keyboard");
-  const status = !browser ? t("No browser is open on the server right now.")
+  const discoveryMessage = discoveryError instanceof BrowserViewError && discoveryError.status === 403
+    ? t("This device cannot control the server's browser. Use a device with control access.")
+    : discoveryError instanceof BrowserViewError && discoveryError.status === 404
+      ? t("The browser view is unavailable on this server. Check the browser service, then retry.")
+      : discoveryError ? t("Could not load the server's browsers. Check the connection and retry.") : null;
+  const status = !browser ? discoveryMessage ? null : loading ? t("Loading browsers…") : t("No browser is open on the server right now.")
     : phase === "connected" ? null
     : phase === "lost" ? t("Reconnecting…") : t("Connecting…");
+  const streamError = phase === "connected" ? discoveryMessage || error : error;
 
   return <div ref={surface} className="browser-view" role="dialog" aria-modal="true" aria-label={t("Browser on the server")} tabIndex={-1}>
     <header className="browser-view-bar">
@@ -307,8 +312,12 @@ function BrowserViewer({ browsers, refresh, onClose }: { browsers: BrowserInfo[]
     </header>
     <div className="browser-view-body">
       <div ref={screen} className="browser-view-screen" />
-      {status && <p className="browser-view-status" role="status">{status}</p>}
-      {error && <p className="browser-view-error" role="alert">{error}</p>}
+      {(!browser || phase !== "connected") && <div className="browser-view-status">
+        {discoveryMessage ? <p role="alert">{discoveryMessage}</p> : status && <p role="status">{status}</p>}
+        {!browser && !loading && !discoveryMessage && <p>{t("Open a browser on the server, then retry. This view reconnects automatically.")}</p>}
+        <button type="button" className="btn" disabled={loading} onClick={() => { refresh(); setAttempt((count) => count + 1); }}>{t("Retry")}</button>
+      </div>}
+      {browser && streamError && <p className="browser-view-error" role="alert">{streamError}</p>}
       <textarea ref={keys} className="browser-view-keys" aria-label={t("Type into the browser")} rows={1} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false} enterKeyHint="enter"
         onFocus={() => { refill(); setTyping(true); }} onBlur={() => setTyping(false)} onInput={onInput} onKeyDown={onKeyDown} onCompositionEnd={() => { if (sent.current.length > KEYBOARD_FILL.length * 4) refill(); }} />
     </div>

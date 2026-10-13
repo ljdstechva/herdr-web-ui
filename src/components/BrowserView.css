@@ -87,6 +87,18 @@
   font-size: var(--fs-md);
 }
 
+.browser-view-status p {
+  margin: 0 0 var(--space-3);
+}
+
+.browser-view-status [role="alert"] {
+  color: var(--danger-text);
+}
+
+.browser-view-status .btn {
+  pointer-events: auto;
+}
+
 .browser-view-error {
   bottom: var(--space-4);
   color: var(--danger-text);
@@ -110,7 +122,7 @@
   resize: none;
 }
 
-/* the sidebar's icon sits between Settings and the plan meters */
+/* visible in the app bar even when the workspace drawer is closed */
 .browser-view-open {
   color: var(--text-dim);
 }

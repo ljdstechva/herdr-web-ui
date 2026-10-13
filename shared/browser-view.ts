@@ -7,7 +7,7 @@
  * holds signed-in sessions):
  *
  * - `GET /api/browsers` → `BrowserList`. 404 `not_available` where the server cannot offer it
- *   (not Linux, or no x11vnc), which a client takes as "never ask again".
+ *   (not Linux, or no x11vnc); clients show a retryable unavailable state.
  * - `POST /api/browsers/<id>/layout` with `BrowserLayoutRequest` and `x-herdr-browser: 1`
  *   → `BrowserInfo`. `phone` makes the display and the browser's window the size asked for, so
  *   pages lay themselves out as on a phone; `desktop` puts back what was there before. 409

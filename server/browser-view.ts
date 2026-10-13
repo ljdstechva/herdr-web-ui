@@ -135,7 +135,7 @@ function fills(window: X11Rect, width: number, height: number): boolean {
 }
 
 export class BrowserViews {
-  /** false where this cannot work at all: the routes then answer 404 and the app shows nothing */
+  /** false where this cannot work at all: the routes then answer 404 and the viewer explains why */
   readonly available: boolean;
   private readonly x11vnc: string | null;
   private readonly xrandr: string | null;
