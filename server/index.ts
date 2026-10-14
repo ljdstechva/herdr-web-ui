@@ -2708,6 +2708,7 @@ export function createServer(
         try {
           const path = await savePaneImage({
             paneId: payload.pane_id,
+            fallbackDirectory: join(options.stateDir ?? defaultStateDir(), "attachments"),
             contentType: payload.content_type ?? "",
             dataBase64: payload.data_base64 ?? "",
             name: payload.name,

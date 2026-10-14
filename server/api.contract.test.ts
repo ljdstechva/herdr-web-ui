@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { createServer } from "./index.ts";
@@ -1506,6 +1506,47 @@ describe("POST /api/pane/image", () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("pane_not_found");
+  });
+
+  // chmod cannot make a directory unwritable to root, and Windows does not use these mode bits.
+  const cannotDenyWrites = process.platform === "win32" || process.getuid?.() === 0;
+  for (const existingDirectory of [false, true]) {
+    it.skipIf(cannotDenyWrites)(`stores an image privately when ${existingDirectory ? "the attachment folder" : "the project"} is read-only`, async () => {
+      const directory = join(qaCwd!, ".herdr-web-ui");
+      rmSync(directory, { recursive: true, force: true });
+      if (existingDirectory) mkdirSync(directory, { mode: 0o700 });
+      const locked = existingDirectory ? directory : qaCwd!;
+      chmodSync(locked, 0o500);
+      try {
+        const res = await post({ pane_id: qaPaneId, content_type: "image/png", data_base64: TINY_PNG_BASE64 });
+        expect(res.status).toBe(200);
+        const body = await res.json() as { ok: boolean; path: string };
+        expect(body.ok).toBe(true);
+        expect(body.path.startsWith(join(stateDir, "attachments") + "/")).toBe(true);
+        expect(readFileSync(body.path)).toEqual(Buffer.from(TINY_PNG_BASE64, "base64"));
+        expect(statSync(body.path).mode & 0o777).toBe(0o600);
+        expect(statSync(join(stateDir, "attachments")).mode & 0o777).toBe(0o700);
+        expect(statSync(locked).mode & 0o777).toBe(0o500);
+      } finally {
+        chmodSync(locked, 0o700);
+      }
+    });
+  }
+
+  it.skipIf(cannotDenyWrites)("keeps an unwritable explicit upload directory as an error", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "herdr-web-ui-image-override-"));
+    const previous = process.env["HERDR_WEB_PASTE_DIR"];
+    process.env["HERDR_WEB_PASTE_DIR"] = directory;
+    chmodSync(directory, 0o500);
+    try {
+      const res = await post({ pane_id: qaPaneId, content_type: "image/png", data_base64: TINY_PNG_BASE64 });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ error: { code: "internal_error" } });
+    } finally {
+      if (previous === undefined) delete process.env["HERDR_WEB_PASTE_DIR"]; else process.env["HERDR_WEB_PASTE_DIR"] = previous;
+      chmodSync(directory, 0o700);
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("stores any other file under its own sanitised name", async () => {
