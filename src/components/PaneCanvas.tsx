@@ -19,8 +19,8 @@ import "./PaneCanvas.css";
 
 type PaneLayoutSplit = PaneLayoutSnapshot["splits"][number];
 
-// The chat box keeps the browser's selection, copy and paste menu, including on long press.
-const isChatInput = (target: EventTarget): boolean => target instanceof Element && target.matches(".composer-text");
+// Chat and terminal input boxes keep the browser's selection, copy and paste menu, including on long press.
+const isTextInput = (target: EventTarget): boolean => target instanceof Element && target.matches(".composer-text, .terminal-input-text");
 
 interface Props {
   snapshot: SessionSnapshot | null;
@@ -129,7 +129,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     passthrough.has(target.pane_id) && isTerminal(target) && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
       && event.target instanceof Element && !!event.target.closest('.pane-terminal[data-mouse-reporting]');
   const context = (event: MouseEvent<HTMLElement>, target: HerdrPane): void => {
-    if (isChatInput(event.target)) return;
+    if (isTextInput(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     if (sendsRightClick(target, event)) return;
@@ -254,11 +254,11 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         onDropCapture={() => { if (!active) onSelect(item.pane_id, false); }}
         onFocusCapture={(event) => { if (!active && event.currentTarget.contains(event.target)) onSelect(item.pane_id, false); }}
         onMouseDownCapture={(event) => {
-          if (isChatInput(event.target)) return;
+          if (isTextInput(event.target)) return;
           if (paneContextPress(event, apple) && !sendsRightClick(item, event)) { event.preventDefault(); event.stopPropagation(); }
         }}
         onMouseUpCapture={(event) => {
-          if (isChatInput(event.target)) return;
+          if (isTextInput(event.target)) return;
           if (paneContextPress(event, apple) && !sendsRightClick(item, event)) { event.preventDefault(); event.stopPropagation(); }
         }}
         onContextMenuCapture={(event) => context(event, item)}>

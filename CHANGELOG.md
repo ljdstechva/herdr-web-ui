@@ -104,6 +104,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- Long-pressing the terminal input line keeps the phone's native text-selection, copy and paste menu, so long drafts can be selected and edited just like chat messages.
 - Long-pressing the chat message box keeps the phone's native text-selection, copy and paste menu instead of opening pane actions.
 - Keep the server browser globe in the app bar, including when no browser is open or discovery fails. The viewer now explains failures and offers Retry, with automatic recovery after service or permission changes.
 - Opening a pane or VPS status now dismisses its delivered notifications and Android app-icon
