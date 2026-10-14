@@ -101,6 +101,8 @@ interface ChatState {
   conversationSource?: string;
   turns: ConversationTurn[];
   messages: TranscriptMessage[];
+  /** The unmodified, ANSI-stripped screen when a native conversation cannot be read. */
+  terminalText?: string;
   truncated: boolean;
 }
 
@@ -750,8 +752,9 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
           history.current = conversation.history_id; setHistoryId(conversation.history_id);
           stickToBottom.current = true; setNewMessages(false); setAway(false);
         }
-        // a 304 hands back the answer already shown: nothing to compare or lay out again
-        if (conversation === lastAnswer.current) { setError(null); setErrorStatus(null); return; }
+        // A 304 hands back the native conversation already shown. A cached fallback only
+        // says where to read: its terminal screen can change independently of this answer.
+        if (conversation.source !== "scrollback" && conversation === lastAnswer.current) { setError(null); setErrorStatus(null); return; }
         // The newest page moved past the held start: the turns in between join the older
         // pages and the newest page is held from its new start, so no poll reads more than a page.
         const held = heldFrom.current;
@@ -774,7 +777,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         else {
           const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
           if (cancelled || generation !== olderGeneration.current) return;
-          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), truncated: result.truncated === true };
+          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), terminalText: result.text, truncated: result.truncated === true };
         }
         const nextSignature = JSON.stringify(next);
         if (nextSignature !== signature.current) {
@@ -1030,7 +1033,8 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   }, [outgoing]);
   heldPage.current = state.turns;
   const finishedBeforeSend = sentOver !== null && sentOver.page === state.turns ? sentOver.turn : null;
-  const empty = state.source === "conversation" ? turns.length === 0 : state.messages.length === 0;
+  const empty = state.source === "conversation" ? turns.length === 0
+    : agent !== null ? !state.terminalText?.trim() : state.messages.length === 0;
   const blank = !ended && chatIsBlank({ loaded, failed: error !== null, transcript: state.source === "conversation", turns: turns.length, older: typeof olderCursor === "string", abandoned: abandoned?.count ?? 0, prompt: prompt !== null, agent });
   // the scrollback standing in says nothing of the conversation: it has no history to compare
   const known = loaded && error === null && !ended && state.source === "conversation";
@@ -1074,13 +1078,16 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
             </RenderBoundary>;
           })
         : agent !== null
-          ? <details className="chat-terminal-fallback"><summary>{t("Conversation unavailable — show terminal output")}</summary><pre>{state.messages.map((message) => message.text).join("\n\n")}</pre></details>
+          ? <section className="chat-terminal-fallback" aria-label={t("Terminal output")}>
+              <p className="chat-terminal-label">{t("Terminal output")}</p>
+              {!empty && <pre>{state.terminalText}</pre>}
+            </section>
           : state.messages.map((message, index) => <FallbackTurn key={index} paneId={paneId} message={message} />)}
       {outgoingShown.map((message) => <OutgoingTurn key={message.id} paneId={paneId} message={message} />)}
       {!ended && !connected && <p className="chat-inline-state" role="status">{t("Reconnecting…")}</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? t("locked — the token gate is asking again") : error}</p>}
       {!loaded && error === null && <p className="chat-inline-state" role="status">{t("Loading conversation…")}</p>}
-      {loaded && empty && outgoingShown.length === 0 && error === null && prompt === null && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
+      {loaded && empty && outgoingShown.length === 0 && error === null && prompt === null && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t(state.source === "scrollback" ? "No terminal output yet" : "No conversation yet — say something below")}</p></div>}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
     </div>
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>

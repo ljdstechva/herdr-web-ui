@@ -1,6 +1,6 @@
 /** Real React + browser regressions with controlled HTTP timing. No herdr panes are touched. */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
@@ -34,6 +34,8 @@ try {
   let product = false;
   /** product panes ("machine/pane") whose conversation requests wait for the script, and those that fail */
   const held = new Set<string>(), failing = new Set<string>();
+  const terminalOutput = new Map<string, string>();
+  let fallbackNotModified = 0;
   const pending: Array<{ key: string; answer: (status: number) => Promise<void> }> = [];
   const user = (text: string) => ({ role: "user", ts: text, parts: [{ kind: "text", text }] });
   await page.route("**/api/**/conversation?*", async (route) => {
@@ -41,6 +43,15 @@ try {
     if (product) {
       const pane = url.searchParams.get("pane_id") ?? url.searchParams.get("pane") ?? "";
       const key = `${/\/api\/machines\/([^/]+)\//.exec(url.pathname)?.[1] ?? "local"}/${pane}`;
+      if (terminalOutput.has(key)) {
+        // A bridge may cache its source choice independently of the changing terminal screen.
+        const headers = { etag: 'W/"terminal-fallback"' };
+        if (route.request().headers()["if-none-match"] === headers.etag) {
+          fallbackNotModified++;
+          await route.fulfill({ status: 304, headers });
+        } else await route.fulfill({ headers, json: { source: "scrollback", turns: [] } });
+        return;
+      }
       const answer = (status: number) => status === 200
         ? route.fulfill({ json: key === "local/devin" ? { source: "devin-transcript", history_id: "synthetic-devin-session", cursor: null, turns: [
           user("Synthetic Devin prompt"),
@@ -70,6 +81,11 @@ try {
       const tool = { role: "assistant", ts: "reused", parts: [{ kind: "tool", name: "Read", summary: "same", input: "{}", output: "preview", output_ref: "reused", output_size: 9000 }] };
       await route.fulfill({ json: { source: "omp-transcript", history_id: epoch, cursor: before, turns: newest ? [user(newest), tool] : [] } });
     }
+  });
+  await page.route("**/api/**/read?*", async (route) => {
+    const url = new URL(route.request().url());
+    const key = `${/\/api\/machines\/([^/]+)\//.exec(url.pathname)?.[1] ?? "local"}/${url.searchParams.get("pane_id")}`;
+    await route.fulfill({ json: { read: { text: terminalOutput.get(key) ?? "", truncated: false } } });
   });
   await page.goto(`http://127.0.0.1:${server.port}/`);
   await page.getByText("old newest", { exact: true }).waitFor();
@@ -226,6 +242,53 @@ try {
   assert.deepEqual(errors, []);
   console.log("PASS synthetic Devin bubbles and tools render; switching to Claude clears Devin history");
   console.log("PASS product pane commits across A→B→A, another PC, and late or failed answers");
+
+  // A recognized agent without a readable native transcript still has useful terminal output.
+  // Keep all of it: prompt markers, indentation and status-looking lines are terminal data.
+  const rawOutput = "❯ Check the build\nContext remaining: 72%\nUsage report ready\n  Build completed successfully.\n<result>safe plain text</result>";
+  terminalOutput.set("local/fallback", rawOutput);
+  await select("fallback", "local");
+  const fallback = page.locator(".chat-terminal-fallback");
+  await fallback.waitFor();
+  const terminalText = fallback.locator("pre");
+  assert.equal(await terminalText.isVisible(), true, "terminal output is visible without expanding a disclosure");
+  assert.equal(await terminalText.textContent(), rawOutput, "raw terminal content survives heuristic status filtering");
+  assert.equal(await fallback.locator("result").count(), 0, "terminal markup is rendered as text");
+  assert.equal(await page.locator(".chat-empty").count(), 0);
+
+  const changedOutput = rawOutput + "\nNew terminal output arrived.";
+  terminalOutput.set("local/fallback", changedOutput);
+  await page.waitForFunction((expected) => document.querySelector(".chat-terminal-fallback pre")?.textContent === expected, changedOutput);
+  assert.ok(fallbackNotModified > 0, "the terminal refreshed despite an unchanged cached conversation response");
+  assert.equal(await terminalText.count(), 1, "each read replaces the screen instead of appending duplicate output");
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.equal(await terminalText.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "terminal output fits the viewport");
+    if (process.env["UI_EVIDENCE_DIR"]) {
+      mkdirSync(process.env["UI_EVIDENCE_DIR"], { recursive: true });
+      await page.screenshot({ path: join(process.env["UI_EVIDENCE_DIR"], `chat-terminal-fallback-${width}.png`) });
+    }
+  }
+
+  terminalOutput.set("local/fallback", "Context remaining: 70%\nUsage: 12 tokens");
+  await page.waitForFunction(() => document.querySelector(".chat-terminal-fallback pre")?.textContent === "Context remaining: 70%\nUsage: 12 tokens");
+  assert.equal(await page.locator(".chat-empty").count(), 0, "status-only terminal output is not an empty conversation");
+  terminalOutput.set("local/fallback", " \n\n");
+  await page.getByText("No terminal output yet", { exact: true }).waitFor();
+  assert.equal(await page.getByText("No conversation yet — say something below", { exact: true }).count(), 0);
+
+  terminalOutput.set("local/fallback", "Local terminal before PC switch");
+  await page.getByText("Local terminal before PC switch", { exact: true }).waitFor();
+  terminalOutput.set("remote-pc/fallback", "Remote terminal output");
+  await select("fallback", "remote-pc");
+  await page.getByText("Remote terminal output", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Local terminal before PC switch", { exact: true }).count(), 0, "another PC cannot retain the old terminal output");
+  terminalOutput.delete("remote-pc/fallback");
+  await page.getByText("history remote-pc/fallback", { exact: true }).waitFor();
+  assert.equal(await fallback.count(), 0, "native history replaces the terminal fallback when it recovers");
+  assert.deepEqual(errors, []);
+  console.log("PASS visible raw terminal fallback, cached-response refresh, empty screen, phone layout, PC isolation and native recovery");
 } finally {
   releases.forEach((release) => release());
   await browser?.close();

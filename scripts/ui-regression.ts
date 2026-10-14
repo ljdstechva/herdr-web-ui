@@ -1725,7 +1725,7 @@ try {
   await mobilePage.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
   await mobilePage.getByRole("textbox", { name: "Message", exact: true }).fill("mobile draft");
   await mobilePage.locator(".chat-terminal-fallback").waitFor();
-  assert.equal(await mobilePage.locator(".chat-terminal-fallback").getAttribute("open"), null, "missing native history is labeled, not presented as broken chat");
+  assert.equal(await mobilePage.locator(".chat-terminal-fallback pre").isVisible(), true, "missing native history shows the terminal output without another tap");
   assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   // a phone's status line holds the agent and its state: no report action, and no keyboard button while typing
   await mobilePage.evaluate(() => document.documentElement.setAttribute("data-keyboard", ""));

@@ -282,10 +282,14 @@ try {
   rmSync(rollout);
   const fallback = log.locator(".chat-terminal-fallback");
   await fallback.waitFor();
-  await modelInfo.waitFor({ state: "hidden" });
-  assert.equal(await fallback.getAttribute("open"), null, "unmatched Codex output stays folded");
+  // The model picker remains usable without native metadata; only the stale model/effort clear.
+  await modelInfo.getByText("codex-updated-model", { exact: true }).waitFor({ state: "hidden" });
+  await modelInfo.getByText("Model", { exact: true }).waitFor();
+  assert.equal(await modelInfo.getByText("low", { exact: true }).count(), 0);
+  assert.equal(await fallback.locator("pre").isVisible(), true, "unmatched Codex output is visible without another tap");
+  assert.ok((await fallback.locator("pre").innerText()).trim().length > 0, "the fallback contains the owned pane's terminal output");
   assert.deepEqual(errors, []);
-  console.log("PASS mobile layout, explicit collapsed fallback, no browser errors");
+  console.log("PASS mobile layout, visible terminal fallback, no browser errors");
 } finally {
   release?.();
   await browser?.close();

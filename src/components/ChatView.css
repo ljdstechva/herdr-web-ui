@@ -72,12 +72,13 @@
 }
 
 .chat-terminal-fallback {
-  color: var(--text-dim);
+  min-width: 0;
+  color: var(--text);
   font-size: var(--fs-sm);
 }
 
-.chat-terminal-fallback summary { cursor: pointer; }
-.chat-terminal-fallback pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-terminal-label { margin: 0 0 var(--space-3); color: var(--text-dim); }
+.chat-terminal-fallback pre { margin: 0; font-family: var(--font-mono); line-height: var(--lh-code); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* a user turn opens a new exchange: space separates it from the answer above, not a rule
    (the one rule of an exchange closes its folded work) */
