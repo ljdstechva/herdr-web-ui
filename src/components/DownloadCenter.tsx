@@ -24,12 +24,11 @@ function DownloadRow({ item }: { item: DownloadItem }) {
       <p className="download-bytes">{item.total === null ? formatBytes(item.received) : t("{done} of {total}", { done: formatBytes(item.received), total: formatBytes(item.total) })}{percent === null ? "" : ` · ${percent}%`}</p>
     </>}
     {item.status === "browser" && <p className="download-detail">{t("Track this file in your browser's downloads.")}</p>}
-    {item.status === "sent" && <p className="download-detail">{t("Your browser handles saving the file.")}</p>}
+    {item.status === "sent" && <p className="download-detail">{t("If the file is missing, tap Save file to download it directly.")}</p>}
     {item.failure === "busy" && item.status === "failed" && <p className="download-detail">{t("Retry shortly, or download with your browser.")}</p>}
-    {!running && <button type="button" className="btn btn-ghost" onClick={() => item.status === "browser" ? downloads.browser(item.id) : downloads.retry(item.id)}>
-      {t(item.status === "browser" ? "Download with browser" : item.status === "sent" ? "Download again" : "Retry")}
-    </button>}
-    {item.failure === "busy" && item.status === "failed" && <button type="button" className="btn btn-ghost" onClick={() => downloads.browser(item.id)}>{t("Download with browser")}</button>}
+    {(item.status === "failed" || item.status === "cancelled") && <button type="button" className="btn btn-ghost" onClick={() => downloads.retry(item.id)}>{t("Retry")}</button>}
+    {(item.status === "sent" || item.status === "browser" || (item.status === "failed" && item.failure === "busy")) &&
+      <a className="btn btn-ghost" href={item.url} download={item.name}>{t(item.status === "sent" ? "Save file" : "Download with browser")}</a>}
   </li>;
 }
 
