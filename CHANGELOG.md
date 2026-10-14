@@ -104,6 +104,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- File downloads show progress, cancellation and retry, and can minimize into a persistent in-app notification while you keep using chat.
 - Chat shows terminal output immediately when an agent's conversation cannot be read, preserves progress and status lines, and keeps refreshing until native chat returns.
 - Chat and terminal attachments upload successfully from read-only project folders, using private server storage when the project cannot be written.
 - Long-pressing the terminal input line keeps the phone's native text-selection, copy and paste menu, so long drafts can be selected and edited just like chat messages.

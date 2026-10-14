@@ -1,0 +1,55 @@
+.download-dialog:not([open]) { display: none; }
+.download-dialog {
+  width: min(460px, calc(100vw - var(--space-8)));
+  max-height: calc(var(--app-height, 100dvh) - var(--space-8));
+  margin: auto;
+  padding: 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-xl);
+  color: var(--text);
+}
+.download-dialog::backdrop { background: var(--scrim); }
+.download-list { margin: 0; padding: 0; list-style: none; }
+.download-row + .download-row { margin-top: var(--space-5); padding-top: var(--space-4); border-top: var(--hairline) solid var(--border); }
+.download-row-heading { display: flex; align-items: center; gap: var(--space-2); }
+.download-row-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); }
+.download-row-heading .icon-button { flex: none; }
+.download-state { margin: var(--space-1) 0 var(--space-2); font-size: var(--fs-sm); }
+.download-row[data-status="failed"] .download-state { color: var(--status-blocked); }
+.download-row progress { display: block; width: 100%; height: var(--space-2); accent-color: var(--accent); }
+.download-bytes, .download-detail { margin: var(--space-2) 0; color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.download-bytes { font-variant-numeric: tabular-nums; }
+.download-notification {
+  position: fixed;
+  z-index: var(--z-droplet);
+  top: calc(env(safe-area-inset-top, 0px) + var(--header-h) + var(--control-h) + var(--space-3));
+  right: calc(env(safe-area-inset-right, 0px) + var(--space-3));
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100vw - var(--space-8) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.download-notification svg { width: var(--space-5); height: var(--space-5); flex: none; }
+.download-notification small { display: block; margin-top: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
+.download-notification:hover { background: var(--bg-hover); }
+@media (max-width: 640px) {
+  .download-notification { top: calc(env(safe-area-inset-top, 0px) + var(--control-h) + var(--space-3)); }
+}
+@media (max-width: 768px) {
+  /* An agent's brief alert has the top lane while it is visible. */
+  .app:has(.droplet-card) .download-notification { translate: 0 calc(var(--space-8) * 2 + var(--space-3)); }
+}
+@media (pointer: coarse) {
+  .download-dialog .icon-button { min-width: var(--touch-target); min-height: var(--touch-target); }
+  .app:has(.file-viewer) .download-notification { top: calc(env(safe-area-inset-top, 0px) + var(--touch-target) + var(--space-8) + var(--space-2)); }
+}

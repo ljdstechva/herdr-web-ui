@@ -2,7 +2,7 @@
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
@@ -121,6 +121,19 @@ try {
   await videoLink.click();
   await preview.locator("video").waitFor();
   await page.waitForFunction(() => (document.querySelector("video")?.readyState ?? 0) >= 1);
+  const videoDownload = page.waitForEvent("download");
+  await preview.getByRole("button", { name: "Download", exact: true }).click();
+  const downloadedVideo = await videoDownload;
+  assert.equal(downloadedVideo.suggestedFilename(), "preview.webm");
+  assert.deepEqual(readFileSync((await downloadedVideo.path())!), readFileSync(join(root, "preview.webm")), "the real file API downloads intact bytes");
+  const downloadsDialog = page.getByRole("dialog", { name: "Downloads", exact: true });
+  await downloadsDialog.getByText("Sent to browser", { exact: true }).waitFor();
+  if (process.env.UI_EVIDENCE_DIR) {
+    mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+    await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "real-download-mobile.png") });
+  }
+  await downloadsDialog.getByRole("button", { name: "Minimize downloads" }).click();
+  console.log("PASS real file API download saves intact bytes and minimizes without changing preview history");
   assert.equal(await page.evaluate(() => history.length), baseline + 1);
   if (process.env.UI_EVIDENCE_DIR) {
     mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
@@ -129,6 +142,9 @@ try {
   // The Android system Back button uses this same browser history traversal.
   await page.goBack();
   await preview.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Open downloads", exact: true }).click();
+  await downloadsDialog.getByRole("button", { name: "Dismiss download: preview.webm" }).click();
+  await downloadsDialog.waitFor({ state: "hidden" });
   assert.equal(page.url(), chatUrl);
   assert.equal(await composer.inputValue(), "Keep my mobile draft");
   assert.equal(await page.evaluate(() => (window as unknown as { testDocument: string }).testDocument), "same-document");
@@ -334,7 +350,7 @@ try {
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat folder URI opens directory browser through touch");
-  await page.locator(".file-viewer-header button").click();
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: new URL(`file://${join(root, "notes.txt")}`).href, exact: true }).tap();
   await page.locator(".file-viewer-text").waitFor();

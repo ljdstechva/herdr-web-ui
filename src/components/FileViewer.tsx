@@ -5,6 +5,7 @@ import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
+import { downloads } from "../lib/downloads.ts";
 import { formatBytes } from "../lib/bridgeProgress.ts";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
@@ -128,7 +129,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
             </p>
           </div>
           <a className="icon-button" href={url} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>
-          <a className="icon-button" href={fileUrl(info?.path ?? path, paneId, true)} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
+          <button type="button" className="icon-button" disabled={info === null || error !== null} onClick={() => { if (info) downloads.start({ url: fileUrl(info.path, paneId, true), name: info.name, size: info.size }); }} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></button>
           <button type="button" className="icon-button" aria-label={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="file-viewer-body">{body}</div>
