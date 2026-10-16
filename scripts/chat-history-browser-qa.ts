@@ -35,6 +35,9 @@ try {
   /** product panes ("machine/pane") whose conversation requests wait for the script, and those that fail */
   const held = new Set<string>(), failing = new Set<string>();
   const terminalOutput = new Map<string, string>();
+  const failureStatus = new Map<string, number>();
+  const terminalFailures = new Set<string>();
+  const terminalReads = new Map<string, number>();
   let fallbackNotModified = 0;
   const pending: Array<{ key: string; answer: (status: number) => Promise<void> }> = [];
   const user = (text: string) => ({ role: "user", ts: text, parts: [{ kind: "text", text }] });
@@ -43,7 +46,7 @@ try {
     if (product) {
       const pane = url.searchParams.get("pane_id") ?? url.searchParams.get("pane") ?? "";
       const key = `${/\/api\/machines\/([^/]+)\//.exec(url.pathname)?.[1] ?? "local"}/${pane}`;
-      if (terminalOutput.has(key)) {
+      if (terminalOutput.has(key) && !failing.has(key) && !failureStatus.has(key)) {
         // A bridge may cache its source choice independently of the changing terminal screen.
         const headers = { etag: 'W/"terminal-fallback"' };
         if (route.request().headers()["if-none-match"] === headers.etag) {
@@ -64,7 +67,7 @@ try {
       // answered as it arrives unless its pane is held: a poll an abandoned mount left
       // behind can then never stand in for the request an assertion waits on
       if (held.has(key)) await new Promise<void>((resolve) => pending.push({ key, answer: (status) => answer(status).finally(resolve) }));
-      else await answer(failing.has(key) ? 503 : 200);
+      else await answer(failureStatus.get(key) ?? (failing.has(key) ? 503 : 200));
       return;
     }
     const captured = epoch;
@@ -85,6 +88,11 @@ try {
   await page.route("**/api/**/read?*", async (route) => {
     const url = new URL(route.request().url());
     const key = `${/\/api\/machines\/([^/]+)\//.exec(url.pathname)?.[1] ?? "local"}/${url.searchParams.get("pane_id")}`;
+    terminalReads.set(key, (terminalReads.get(key) ?? 0) + 1);
+    if (terminalFailures.has(key)) {
+      await route.fulfill({ status: 503, json: { error: { code: "read_failed", message: "terminal unavailable" } } });
+      return;
+    }
     await route.fulfill({ json: { read: { text: terminalOutput.get(key) ?? "", truncated: false } } });
   });
   await page.goto(`http://127.0.0.1:${server.port}/`);
@@ -242,6 +250,45 @@ try {
   assert.deepEqual(errors, []);
   console.log("PASS synthetic Devin bubbles and tools render; switching to Claude clears Devin history");
   console.log("PASS product pane commits across A→B→A, another PC, and late or failed answers");
+
+  terminalOutput.set("local/read-error", "Live output during a transcript outage");
+  failing.add("local/read-error");
+  await select("read-error", "local");
+  await page.locator(".chat-terminal-fallback pre").getByText("Live output during a transcript outage", { exact: true }).waitFor();
+  await page.locator(".chat-inline-error").waitFor();
+  terminalOutput.set("local/read-error", "Output continues during the outage");
+  await page.getByText("Output continues during the outage", { exact: true }).waitFor();
+  terminalFailures.add("local/read-error");
+  await page.getByRole("alert").filter({ hasText: "terminal unavailable" }).waitFor();
+  assert.equal(await page.getByText("Output continues during the outage", { exact: true }).count(), 1, "failed reads retain the last known screen");
+  terminalFailures.delete("local/read-error");
+  failing.delete("local/read-error");
+  terminalOutput.delete("local/read-error");
+  await page.getByText("history local/read-error", { exact: true }).waitFor();
+  assert.equal(await page.locator(".chat-terminal-fallback").count(), 0);
+  assert.equal(await page.getByRole("alert").count(), 0, "native recovery clears the error");
+  failing.add("local/read-error");
+  terminalOutput.set("local/read-error", "Do not replace known history");
+  await page.locator(".chat-inline-error").waitFor();
+  assert.equal(await page.getByText("history local/read-error", { exact: true }).count(), 1, "transient failures preserve native turns");
+  assert.equal(await page.locator(".chat-terminal-fallback").count(), 0);
+  for (const status of [401, 403, 404]) {
+    const key = `local/refused-${status}`;
+    failureStatus.set(key, status);
+    terminalOutput.set(key, "Must not read a refused pane");
+    await select(`refused-${status}`, "local");
+    await page.locator(".chat-inline-error").waitFor();
+    assert.equal(await page.locator(".chat-terminal-fallback").count(), 0, "auth and gone panes do not trigger fallback");
+    assert.equal(terminalReads.get(key) ?? 0, 0, "no terminal request follows a refusal");
+    assert.equal(await page.getByText("history local/read-error", { exact: true }).count(), 0);
+  }
+  console.log("PASS transcript outage fallback, repeated terminal updates, failed terminal read, native recovery, retained history and refusal isolation");
+
+  terminalOutput.set("local/failed-terminal", "unreadable");
+  terminalFailures.add("local/failed-terminal");
+  await select("failed-terminal", "local");
+  await page.getByRole("alert").filter({ hasText: "terminal unavailable" }).waitFor();
+  assert.equal(terminalReads.get("local/failed-terminal"), 1, "a failed fallback read is not repeated inside the same refresh");
 
   // A recognized agent without a readable native transcript still has useful terminal output.
   // Keep all of it: prompt markers, indentation and status-looking lines are terminal data.

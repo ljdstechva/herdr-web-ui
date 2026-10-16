@@ -104,6 +104,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **Chat stays readable when Claude moves to the background.** A parked foreground session no
+  longer hides the current terminal behind its stale conversation. Failed transcript reads show
+  terminal output when no history is available, retain known history otherwise, and time out
+  so the chat can recover automatically.
 - A direct **Save file** link recovers downloads when a phone ignores the automatic file handoff; it keeps the original PC and filename.
 - File downloads show progress, cancellation and retry, and can minimize into a persistent in-app notification while you keep using chat.
 - Chat shows terminal output immediately when an agent's conversation cannot be read, preserves progress and status lines, and keeps refreshing until native chat returns.

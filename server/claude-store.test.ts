@@ -31,6 +31,11 @@ describe("claudeProcessSession", () => {
     expect(await claudeProcessSession(home, process.pid)).toBe(SESSION);
   });
 
+  it.skipIf(!NATIVE)("keeps a parked process's store identity", async () => {
+    const home = nativeRecord({ parkedJobId: "afa630de" });
+    expect(await claudeProcessSession(home, process.pid)).toBe(SESSION);
+  });
+
   it.skipIf(process.platform !== "darwin")("reads it on a Mac whose locale puts the day first", async () => {
     const home = nativeRecord();
     const saved = process.env["LC_ALL"];

@@ -160,8 +160,8 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, signal ? { signal } : undefined);
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
 }
@@ -173,6 +173,8 @@ export async function fetchSession(machineId = "local"): Promise<SessionSnapshot
 
 /** PCs whose herdr rejected `recent_unwrapped`: an older herdr, read row by row from then on. */
 const wrappedOnly = new Set<string>();
+/** A lost HTTP request must release the chat's serial refresh lane, including a stalled body. */
+const CHAT_READ_TIMEOUT_MS = 15_000;
 
 /**
  * GET /api/pane/read as the chat view reads it: herdr's own scrollback (up to
@@ -184,7 +186,7 @@ const wrappedOnly = new Set<string>();
 export async function fetchPaneTranscript(paneId: string, lines: number, machineId = "local"): Promise<PaneReadResult> {
   const read = async (source: "recent" | "recent_unwrapped"): Promise<PaneReadResult> => {
     const query = new URLSearchParams({ pane_id: paneId, source, format: "text", lines: String(lines) });
-    return (await getJson<{ read: PaneReadResult }>(machinePath(machineId, `pane/read?${query.toString()}`))).read;
+    return (await getJson<{ read: PaneReadResult }>(machinePath(machineId, `pane/read?${query.toString()}`), AbortSignal.timeout(CHAT_READ_TIMEOUT_MS))).read;
   };
   if (wrappedOnly.has(machineId)) return read("recent");
   try {
@@ -264,7 +266,7 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   const url = machinePath(machineId, `pane/conversation?${query.toString()}`);
   const polled = page.before === undefined;
   const known = polled ? conversationAnswers.get(url) : undefined;
-  const response = await fetch(url, { cache: "no-store", ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
+  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(CHAT_READ_TIMEOUT_MS), ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
   if (response.status === 304 && known) {
     // the pane being polled stays among the kept answers
     conversationAnswers.delete(url);

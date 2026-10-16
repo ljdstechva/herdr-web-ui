@@ -41,7 +41,7 @@ import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPan
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
-import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeProcessState, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoSessionForPane } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
@@ -1095,7 +1095,12 @@ async function claudeTranscriptPath(paneId: string, cwds: readonly (string | nul
     throw error;
   }
   const configDir = processDir || defaultClaudeConfigDir(home);
-  if ((typeof session !== "string" || !SESSION_ID.test(session)) && only) session = await claudeProcessSession(home, only.pid, configDir);
+  const native = only ? await claudeProcessState(home, only.pid, configDir) : null;
+  // A parked foreground Claude may now display another background session. Its hook and
+  // PID record still name the parked history; parkedJobId does not identify the displayed
+  // session either. Use this pane's terminal until Claude owns an interactive session again.
+  if (native?.parked) throw new ConversationUnavailable("no_session_id");
+  if (typeof session !== "string" || !SESSION_ID.test(session)) session = native?.sessionId;
   if (typeof session !== "string" || !SESSION_ID.test(session)) throw new ConversationUnavailable("no_session_id");
   const path = await claudeTranscriptFile(home, session, cwds, configDir);
   // Claude writes the file with its first message: until then the session it reports holds nothing

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { fetchPaneConversation, conversationAnswerBytes } from "./api.ts";
+import { fetchPaneConversation, fetchPaneTranscript, conversationAnswerBytes } from "./api.ts";
 import { ConversationRefresh } from "./conversationRefresh.ts";
 import type { ConversationResponse } from "../../shared/protocol.ts";
 
@@ -16,6 +16,48 @@ afterEach(() => {
 });
 
 describe("conversation polling", () => {
+  for (const kind of ["conversation", "terminal"] as const) {
+    for (const stalled of ["headers", "body"] as const) {
+      it(`bounds a ${kind} read whose ${stalled} never arrive, then allows recovery`, async () => {
+        const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+        const deadlines: number[] = [];
+        const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+          deadlines.push(ms);
+          return nativeTimeout(30);
+        });
+        let release: (() => void) | undefined;
+        let recovered = false;
+        const body = kind === "conversation" ? { source: "scrollback", turns: [] } : { read: { text: "recovered" } };
+        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() {
+          if (recovered) return Response.json(body);
+          if (stalled === "headers") return new Promise<Response>((resolve) => { release = () => resolve(Response.json(body)); });
+          return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("{")); } }), { headers: { "content-type": "application/json" } });
+        } });
+        globalThis.fetch = ((url, init) => realFetch(new URL(String(url), `http://127.0.0.1:${server.port}`), init)) as typeof fetch;
+        const read = () => kind === "conversation" ? fetchPaneConversation(`stalled-${stalled}`) : fetchPaneTranscript(`stalled-${stalled}`, 400);
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const failure = await Promise.race([
+            read().catch((error: unknown) => error),
+            new Promise<string>((resolve) => { watchdog = setTimeout(() => resolve("still waiting"), 500); }),
+          ]);
+          expect(failure).toBeInstanceOf(Error);
+          expect(["TimeoutError", "AbortError"]).toContain((failure as Error).name);
+          expect(deadlines).toEqual([15_000]);
+          recovered = true;
+          release?.();
+          const recoveredBody: unknown = await read();
+          expect(recoveredBody).toEqual(kind === "conversation" ? body : { text: "recovered" });
+        } finally {
+          clearTimeout(watchdog);
+          release?.();
+          server.stop(true);
+          timeout.mockRestore();
+        }
+      });
+    }
+  }
+
   it("asks with the last ETag and reuses the very same answer on a 304", async () => {
     const sent: (string | null)[] = [];
     let version = "\"v1\"";

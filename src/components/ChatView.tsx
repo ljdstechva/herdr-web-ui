@@ -715,6 +715,10 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
+    const terminalState = async (): Promise<ChatState> => {
+      const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
+      return { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), terminalText: result.text, truncated: result.truncated === true };
+    };
     /** The turns between the held start and where the newest page now starts, a page at a time; null when they cannot be joined. */
     const turnsBetween = async (held: string, start: string): Promise<ConversationTurn[] | null> => {
       const pages: ConversationTurn[][] = [];
@@ -734,6 +738,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     };
     const read = async (): Promise<void> => {
       let generation = olderGeneration.current;
+      let terminalAttempted = false;
       try {
         let conversation;
         try {
@@ -775,9 +780,9 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         let next: ChatState;
         if (conversation.source !== "scrollback") next = { source: "conversation", conversationSource: conversation.source, turns: conversation.turns, messages: [], truncated: false };
         else {
-          const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
+          terminalAttempted = true;
+          next = await terminalState();
           if (cancelled || generation !== olderGeneration.current) return;
-          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), terminalText: result.text, truncated: result.truncated === true };
         }
         const nextSignature = JSON.stringify(next);
         if (nextSignature !== signature.current) {
@@ -790,6 +795,22 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         // cancelled mid-way (a pane switch, the page hidden during a gap fill) is redone
         lastAnswer.current = conversation;
       } catch (cause) {
+        if (cancelled || generation !== olderGeneration.current) return;
+        // Keep known native turns on a transient failure. With nothing to show yet,
+        // the pane's independently readable terminal is useful while the same coordinator
+        // retries history. Auth failures and gone panes must keep their refusal instead.
+        if (!terminalAttempted && (!(cause instanceof ApiError) || cause.status >= 500) && heldPage.current.length === 0 && heldFrom.current === null) {
+          try {
+            const next = await terminalState();
+            if (cancelled || generation !== olderGeneration.current) return;
+            const nextSignature = JSON.stringify(next);
+            if (nextSignature !== signature.current) { signature.current = nextSignature; setState(next); }
+            lastAnswer.current = null;
+            onMetadataRef.current?.(paneId, null);
+          } catch (terminalError) {
+            cause = terminalError;
+          }
+        }
         if (cancelled || generation !== olderGeneration.current) return;
         setLoaded(true);
         setError(cause instanceof Error ? cause.message : String(cause));

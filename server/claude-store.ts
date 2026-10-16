@@ -259,13 +259,13 @@ function fileTimeMs(text: string): number | null {
  * every request: /clear and resume can change sessions in the same process. Other platforms and
  * older records without procStart keep the hook-only path.
  */
-export async function claudeProcessSession(
+export async function claudeProcessState(
   home: string,
   pid: number,
   configDir = join(home, ".claude"),
   platform: string = process.platform,
   table: () => Promise<ProcessRow[]> = recentProcessTable,
-): Promise<string | null> {
+): Promise<{ sessionId: string; parked: boolean } | null> {
   if ((platform !== "linux" && platform !== "darwin" && platform !== "win32") || !Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
     // Non-blocking and no symlinks: a FIFO or a link in the record's place must not hang the read.
@@ -301,13 +301,24 @@ export async function claudeProcessSession(
       const started = fileTimeMs(record.procStart);
       if (started === null || (await table()).find((row) => row.pid === pid)?.started !== started) return null;
     } else if (await darwinProcessStart(pid) !== record.procStart.replace(/\s+/g, " ").trim()) return null;
-    return record.sessionId;
+    return { sessionId: record.sessionId, parked: "parkedJobId" in record && typeof record.parkedJobId === "string" && record.parkedJobId.length > 0 };
   } catch (error) {
     // A closed process, absent/older native store or a torn write gives no identity.
     if (error instanceof SyntaxError || absent(error) ||
       (error !== null && typeof error === "object" && "code" in error && ["EACCES", "EPERM", "ESRCH", "ELOOP", "ENXIO"].includes(String(error.code)))) return null;
     throw error;
   }
+}
+
+/** A parked interactive process still proves which config store it belongs to. */
+export async function claudeProcessSession(
+  home: string,
+  pid: number,
+  configDir = join(home, ".claude"),
+  platform: string = process.platform,
+  table: () => Promise<ProcessRow[]> = recentProcessTable,
+): Promise<string | null> {
+  return (await claudeProcessState(home, pid, configDir, platform, table))?.sessionId ?? null;
 }
 
 /**

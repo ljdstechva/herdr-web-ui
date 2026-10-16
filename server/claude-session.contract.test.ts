@@ -378,6 +378,24 @@ it.skipIf(!NATIVE)("keeps the existing Herdr hook path when no native PID record
   expect(response.turns.at(-1)?.parts[0]).toMatchObject({ text: `Answer ${FIRST}` });
 });
 
+it.skipIf(!NATIVE)("uses terminal output while Claude's hooked foreground session is parked, then recovers after unpark", async () => {
+  const parked = await pane(FIRST);
+  await herdrRpc("pane.report_agent_session", {
+    pane_id: parked.pane, source: "herdr:claude", agent: "claude", seq: 1, agent_session_id: FIRST,
+  });
+  expect((await read(parked.pane)).source).toBe("claude-transcript");
+  const path = join(root, ".claude", "sessions", `${parked.pid}.json`);
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...record, parkedJobId: "afa630de" }));
+  // The parked job is not necessarily the one the terminal is now showing. Never use
+  // it (or another session in this cwd) to guess the background transcript.
+  expect(await read(parked.pane)).toEqual({ source: "scrollback", turns: [] });
+  writeFileSync(path, JSON.stringify({ ...record, procStart: "1", parkedJobId: "afa630de" }));
+  expect((await read(parked.pane)).source).toBe("claude-transcript");
+  writeFileSync(path, JSON.stringify(record));
+  expect((await read(parked.pane)).turns.at(-1)?.parts[0]).toMatchObject({ text: `Answer ${FIRST}` });
+});
+
 it.skipIf(!NATIVE)("uses each process's config dir before the server's store, with and without a hook", async () => {
   const ownStore = join(root, "environment with spaces", ".claude");
   const serverStore = join(root, "server-store");

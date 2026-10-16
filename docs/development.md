@@ -166,6 +166,18 @@ frames on Windows) invalidates it through the same coordinator, so continuous ou
 at most every 2 s and a quiet pane is not read. A Chat showing a native transcript ignores
 terminal output.
 
+A Claude foreground process can be parked while its terminal displays a background session.
+The native PID record's `parkedJobId` invalidates the foreground transcript binding, including
+a stale Herdr hook. It is not the displayed session's identity: the chat uses that pane's
+terminal output until the process is unparked instead of guessing a background transcript.
+
+Conversation and terminal reads time out after 15 s, including response bodies, releasing the
+serial reader for its next refresh. A transient conversation error preserves known native turns;
+without any native turns, the terminal stands in alongside the error. A failed terminal read
+is retried only on the next refresh. Authentication failures and missing panes never trigger
+this recovery path. `claude-session.contract.test.ts` checks parked/unparked binding with real
+isolated processes; `chat-history-browser-qa.ts` exercises recovery, refusals and PC switching.
+
 Conversation responses are gzipped like every other text answer (`server/compress.ts`), with
 weak ETags so conditional reads hold across encodings.
 Prompt polling remains separate at 2 s: approval cards and suggestions can change on the
