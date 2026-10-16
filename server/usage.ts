@@ -217,14 +217,6 @@ function kindOf(seconds: number | null, fallback: UsageWindow["kind"]): UsageWin
   return "month";
 }
 
-const FIVE_HOURS = 5 * 3600;
-const SEVEN_DAYS = 7 * 86400;
-
-/** When a window `seconds` long that resets at `resetsAt` began; null when either is unknown. */
-function startOf(resetsAt: string | null, seconds: number | null): string | null {
-  return resetsAt === null || seconds === null || seconds <= 0 ? null : new Date(Date.parse(resetsAt) - seconds * 1000).toISOString();
-}
-
 function retryAfter(header: string | null): number | null {
   if (!header) return null;
   const seconds = Number(header);
@@ -288,12 +280,10 @@ function claudeSignIn(source: string | null): SignIn | null {
   return token ? { token, expiresAt: number(oauth["expiresAt"]), plan: text(oauth["subscriptionType"]) } : null;
 }
 
-/** `seconds`: the window's length, which Claude names in the key (`five_hour`, `seven_day`) */
-function claudeWindow(value: unknown, kind: UsageWindow["kind"], scope: string | null, seconds: number): UsageWindow | null {
+function claudeWindow(value: unknown, kind: UsageWindow["kind"], scope: string | null): UsageWindow | null {
   const window = record(value);
   const used = number(window["utilization"]);
-  const resetsAt = isoTime(window["resets_at"]);
-  return used === null ? null : { kind, scope, used_percent: percent(used), resets_at: resetsAt, starts_at: startOf(resetsAt, seconds) };
+  return used === null ? null : { kind, scope, used_percent: percent(used), resets_at: isoTime(window["resets_at"]) };
 }
 
 const claude: UsageProvider = {
@@ -313,17 +303,17 @@ const claude: UsageProvider = {
       headers: { authorization: `Bearer ${signIn.token}`, accept: "application/json", "anthropic-beta": "oauth-2025-04-20", "user-agent": USER_AGENT },
     });
     const windows = [
-      claudeWindow(body["five_hour"], "session", null, FIVE_HOURS),
-      claudeWindow(body["seven_day"], "week", null, SEVEN_DAYS),
-      claudeWindow(body["seven_day_opus"], "week", "Opus", SEVEN_DAYS),
-      claudeWindow(body["seven_day_sonnet"], "week", "Sonnet", SEVEN_DAYS),
+      claudeWindow(body["five_hour"], "session", null),
+      claudeWindow(body["seven_day"], "week", null),
+      claudeWindow(body["seven_day_opus"], "week", "Opus"),
+      claudeWindow(body["seven_day_sonnet"], "week", "Sonnet"),
     ].filter((window): window is UsageWindow => window !== null);
     // a model with a weekly limit of its own (Fable) is only in `limits`; the flat fields win
     for (const limit of (Array.isArray(body["limits"]) ? body["limits"] : []).map(record)) {
       const model = text(record(record(limit["scope"])["model"])["display_name"]);
       const used = number(limit["percent"]);
       if (limit["kind"] !== "weekly_scoped" || !model || used === null || windows.some((window) => window.scope === model)) continue;
-      windows.push({ kind: "week", scope: model, used_percent: percent(used), resets_at: isoTime(limit["resets_at"]), starts_at: null });
+      windows.push({ kind: "week", scope: model, used_percent: percent(used), resets_at: isoTime(limit["resets_at"]) });
     }
     return { plan: null, windows };
   },
@@ -350,9 +340,12 @@ function codexWindow(value: unknown, now: number): UsageWindow | null {
   const used = number(window["used_percent"]);
   if (used === null) return null;
   const after = number(window["reset_after_seconds"]);
-  const seconds = number(window["limit_window_seconds"]);
-  const resetsAt = isoTime(window["reset_at"]) ?? (after === null ? null : new Date(now + after * 1000).toISOString());
-  return { kind: kindOf(seconds, "session"), scope: null, used_percent: percent(used), resets_at: resetsAt, starts_at: startOf(resetsAt, seconds) };
+  return {
+    kind: kindOf(number(window["limit_window_seconds"]), "session"),
+    scope: null,
+    used_percent: percent(used),
+    resets_at: isoTime(window["reset_at"]) ?? (after === null ? null : new Date(now + after * 1000).toISOString()),
+  };
 }
 
 const codex: UsageProvider = {
@@ -439,7 +432,7 @@ const cursor: UsageProvider = {
     // the plan-wide share, then the two allowances inside it: Cursor's own models (Auto) and the rest (API)
     const windows = [[used, null], [number(plan["autoPercentUsed"]), "Cursor models"], [number(plan["apiPercentUsed"]), "Other models"]]
       .filter((entry): entry is [number, string | null] => entry[0] !== null)
-      .map(([share, scope]): UsageWindow => ({ kind: "month", scope, used_percent: percent(share), resets_at: resetsAt, starts_at: null }));
+      .map(([share, scope]): UsageWindow => ({ kind: "month", scope, used_percent: percent(share), resets_at: resetsAt }));
     return { plan: null, windows };
   },
 };
@@ -487,7 +480,7 @@ function copilotWindow(value: unknown, scope: string, resetsAt: string | null): 
   const entitlement = number(quota["entitlement"]);
   const left = number(quota["percent_remaining"]);
   if (quota["unlimited"] === true || entitlement === null || entitlement <= 0 || left === null) return null;
-  return { kind: "month", scope, used_percent: percent(100 - left), resets_at: resetsAt, starts_at: null };
+  return { kind: "month", scope, used_percent: percent(100 - left), resets_at: resetsAt };
 }
 
 const copilot: UsageProvider = {
@@ -552,7 +545,7 @@ const copilot: UsageProvider = {
       const total = number(monthly[key]);
       const remaining = number(left[key]);
       if (total && total > 0 && remaining !== null && !windows.some((window) => window.scope === scope)) {
-        windows.push({ kind: "month", scope, used_percent: percent((total - remaining) / total * 100), resets_at: isoTime(body["limited_user_reset_date"]) ?? resetsAt, starts_at: null });
+        windows.push({ kind: "month", scope, used_percent: percent((total - remaining) / total * 100), resets_at: isoTime(body["limited_user_reset_date"]) ?? resetsAt });
       }
     }
     // Copilot Free reports its plan as "individual"; only the SKU tells them apart
@@ -597,7 +590,7 @@ const grok: UsageProvider = {
     const end = epochMs(period["end"]);
     const kind = knownKind ?? kindOf(start !== null && end !== null ? (end - start) / 1000 : null, "month");
     // proto-JSON leaves a zero out: a stated period without a percent is nothing used
-    return { plan: null, windows: [{ kind, scope: null, used_percent: percent(stated ?? 0), resets_at: isoTime(period["end"]), starts_at: isoTime(period["start"]) }] };
+    return { plan: null, windows: [{ kind, scope: null, used_percent: percent(stated ?? 0), resets_at: isoTime(period["end"]) }] };
   },
 };
 
@@ -655,8 +648,7 @@ const antigravity: UsageProvider = {
         const shape = ANTIGRAVITY_BUCKETS[text(value["bucketId"]) ?? ""];
         const remaining = number(value["remainingFraction"]);
         // no fraction is left out, as OpenUsage does, rather than shown as 0% or 100% used
-        // no start: a bucket's name gives a length, not whether its reset ends a fixed window or refills it
-        if (shape && remaining !== null) windows.push({ ...shape, used_percent: percent((1 - remaining) * 100), resets_at: isoTime(value["resetTime"]), starts_at: null });
+        if (shape && remaining !== null) windows.push({ ...shape, used_percent: percent((1 - remaining) * 100), resets_at: isoTime(value["resetTime"]) });
       }
     }
     return { plan: null, windows };
@@ -706,17 +698,17 @@ const opencode: UsageProvider = {
     const rolling = record(usage["rolling"]);
     const rollingPercent = number(rolling["percent"]);
     if (rollingPercent !== null) {
-      windows.push({ kind: "session", scope: null, used_percent: percent(rollingPercent), resets_at: isoTime(rolling["resetsAt"]), starts_at: null });
+      windows.push({ kind: "session", scope: null, used_percent: percent(rollingPercent), resets_at: isoTime(rolling["resetsAt"]) });
     }
     const weekly = record(usage["weekly"]);
     const weeklyPercent = number(weekly["percent"]);
     if (weeklyPercent !== null) {
-      windows.push({ kind: "week", scope: null, used_percent: percent(weeklyPercent), resets_at: isoTime(weekly["resetsAt"]), starts_at: null });
+      windows.push({ kind: "week", scope: null, used_percent: percent(weeklyPercent), resets_at: isoTime(weekly["resetsAt"]) });
     }
     const monthly = record(usage["monthly"]);
     const monthlyPercent = number(monthly["percent"]);
     if (monthlyPercent !== null) {
-      windows.push({ kind: "month", scope: null, used_percent: percent(monthlyPercent), resets_at: isoTime(monthly["resetsAt"]), starts_at: null });
+      windows.push({ kind: "month", scope: null, used_percent: percent(monthlyPercent), resets_at: isoTime(monthly["resetsAt"]) });
     }
     return { plan: text(body["plan"]) ?? "Go", windows };
   },

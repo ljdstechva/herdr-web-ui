@@ -7,8 +7,6 @@
  *   bun run check integration browser   CI's "Integration and browser" job: a build, then the named
  *                                       lanes side by side (either name alone runs that lane)
  *   bun run check full                  fast, then both lanes
- *   bun run check concurrent            the steps of full, with the unit tests run side by side
- *                                       with both lanes instead of before them
  *   bun run check run [--build] <command…>  any command on the same isolated herdr; --build builds
  *                                           dist/ first (a run without it does not build)
  *
@@ -55,33 +53,32 @@ import {
   type SourceIdentity,
 } from "./check-report.ts";
 
-export const MODES = ["fast", "integration", "browser", "full", "concurrent", "run"] as const;
+export const MODES = ["fast", "integration", "browser", "full", "run"] as const;
 export type Mode = (typeof MODES)[number];
 const LANES = { integration: "bun run test:integration", browser: "bash scripts/ci-browser.sh" } as const;
 type Lane = keyof typeof LANES;
 
-const USAGE = "Usage: bun run check fast | integration | browser | integration browser | full | concurrent | run [--build] <command…>";
+const USAGE = "Usage: bun run check fast | integration | browser | integration browser | full | run [--build] <command…>";
 
 /** What to run, from the arguments: the fast steps, the lanes, or one command. */
-export function plan(args: readonly string[]): { fast: boolean; lanes: Lane[]; command: string[] | null; build: boolean; concurrent: boolean } {
+export function plan(args: readonly string[]): { fast: boolean; lanes: Lane[]; command: string[] | null; build: boolean } {
   const [first, ...rest] = args;
   if (first === "run") {
     const build = rest[0] === "--build";
     const command = rest.slice(build ? 1 : 0);
     if (command[0] === "--") command.shift();
     if (command.length === 0) throw new Error(USAGE);
-    return { fast: false, lanes: [], command, build, concurrent: false };
+    return { fast: false, lanes: [], command, build };
   }
   if (args.length === 0 || args.some((arg) => arg === "run" || !(MODES as readonly string[]).includes(arg))) throw new Error(USAGE);
-  const concurrent = args.includes("concurrent");
   const full = args.includes("full");
-  const lanes = (Object.keys(LANES) as Lane[]).filter((lane) => full || concurrent || args.includes(lane));
-  return { fast: (full || args.includes("fast")) && !concurrent, lanes, command: null, build: false, concurrent };
+  const lanes = (Object.keys(LANES) as Lane[]).filter((lane) => full || args.includes(lane));
+  return { fast: full || args.includes("fast"), lanes, command: null, build: false };
 }
 
 /** Herdr-backed commands share the existing per-PC lane lock, including `run` commands. */
 export function needsLock(todo: ReturnType<typeof plan>): boolean {
-  return todo.lanes.length > 0 || todo.command !== null || todo.concurrent;
+  return todo.lanes.length > 0 || todo.command !== null;
 }
 
 /** Keep command arguments useful without persisting common inline credentials. Environment values are never serialized. */
@@ -185,33 +182,6 @@ export function maxRuns(env: Record<string, string | undefined>, cores = availab
   const count = /^\d+$/.test(asked) ? Number(asked) : Number.NaN;
   if (!(count >= 1 && count <= MAX_RUNS_LIMIT)) throw new Error(`CHECK_MAX_RUNS must be a whole number from 1 to ${MAX_RUNS_LIMIT}, not "${asked}"`);
   return count;
-}
-
-/**
- * What a run calls its checkout to the runs that share its slots. A self-hosted CI runner shares its
- * loopback with the other runner containers of its PC (scripts/self-hosted-runner/run.sh), and every
- * one of them checks out to the same path, so there the runner's name (RUNNER_NAME, set by the
- * Actions runner) is part of it: two runners are two checkouts.
- */
-export function checkoutIdentity(checkout: string, env: Record<string, string | undefined> = process.env): string {
-  const runner = env["RUNNER_NAME"];
-  return runner ? `${runner}:${checkout}` : checkout;
-}
-
-/** The most CHECK_WAIT_SECONDS may ask for: two hours, past any CI job's timeout. */
-export const MAX_WAIT_SECONDS = 7200;
-
-/**
- * How long a run waits for a slot when the run limit is reached: CHECK_WAIT_SECONDS (0 to 7200),
- * else 0, which refuses at once. CI sets it: a job that finds the PC busy waits its turn instead
- * of failing. A run in the same checkout, or a held resource, is still refused at once.
- */
-export function waitSeconds(env: Record<string, string | undefined>): number {
-  const asked = env["CHECK_WAIT_SECONDS"];
-  if (asked === undefined || asked === "") return 0;
-  const seconds = /^\d+$/.test(asked) ? Number(asked) : Number.NaN;
-  if (!(seconds >= 0 && seconds <= MAX_WAIT_SECONDS)) throw new Error(`CHECK_WAIT_SECONDS must be a whole number from 0 to ${MAX_WAIT_SECONDS}, not "${asked}"`);
-  return seconds;
 }
 
 /** What a slot's holder says: its pid (NaN when what listens there is no run) and its checkout, when it names one. */
@@ -343,25 +313,6 @@ export async function acquire(
   }
 }
 
-/**
- * acquire, asked again every `pollMs` while the only refusal is a busy PC, until `waitMs` has
- * passed. `onWait` hears the first busy refusal, so a waiting run says once whom it waits for.
- */
-export async function acquireWaiting(
-  options: Parameters<typeof acquire>[0],
-  { waitMs, pollMs = 2_000, onWait }: { waitMs: number; pollMs?: number; onWait?: (holders: SlotHolder[]) => void },
-): ReturnType<typeof acquire> {
-  const deadline = Date.now() + waitMs;
-  let held = await acquire(options);
-  let told = false;
-  while ("refused" in held && held.refused === "busy" && Date.now() < deadline) {
-    if (!told) { onWait?.(held.holders); told = true; }
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
-    held = await acquire(options);
-  }
-  return held;
-}
-
 /** One line per holder for a refusal. */
 export function describeHolders(holders: readonly SlotHolder[]): string {
   return holders.map((holder) => Number.isNaN(holder.heldBy)
@@ -394,21 +345,8 @@ async function main(): Promise<void> {
   if (needsHerdr || resources.length > 0 || reports.length > 0) {
     try {
       let slots: number;
-      let wait: number;
-      try {
-        slots = needsHerdr ? maxRuns(process.env) : 0;
-        wait = waitSeconds(process.env);
-      } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
-      const waitStarted = Date.now();
-      let waited = false;
-      const held = await acquireWaiting({ slots, checkout: checkoutIdentity(realpathSync(cwd)), resources, reports }, {
-        waitMs: wait * 1000,
-        onWait: (holders) => {
-          waited = true;
-          console.error(`check: the ${slots}-run limit is reached (${describeHolders(holders)}); waiting up to ${wait}s for a slot`);
-        },
-      });
-      if (waited && !("refused" in held)) console.error(`check: took a slot after ${Math.round((Date.now() - waitStarted) / 1000)}s`);
+      try { slots = needsHerdr ? maxRuns(process.env) : 0; } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
+      const held = await acquire({ slots, checkout: realpathSync(cwd), resources, reports });
       if ("refused" in held) {
         const message = held.refused === "same-checkout"
           ? `another herdr-backed \`bun run check\` is running in this checkout, and the two would share dist/ and the generated types (${describeHolders(held.holders)}); wait for it to end or use another worktree`
@@ -440,7 +378,7 @@ async function main(): Promise<void> {
   }
   const bun = process.execPath;
   const specs: { name: string; command: string[] | null }[] = [];
-  if (todo.fast || todo.concurrent) {
+  if (todo.fast) {
     specs.push({ name: "workflow syntax", command: null });
     specs.push({ name: "generated types are fresh", command: [bun, "run", "generate:types", "--check"] });
     specs.push({ name: "typecheck", command: [bun, "run", "typecheck"] });
@@ -448,7 +386,7 @@ async function main(): Promise<void> {
     specs.push({ name: "unit tests", command: [bun, "run", "test:unit"] });
   }
   if (todo.lanes.length > 0) {
-    if (!todo.fast && !todo.concurrent) specs.push({ name: "build", command: [bun, "run", "build"] });
+    if (!todo.fast) specs.push({ name: "build", command: [bun, "run", "build"] });
     specs.push({ name: "lanes", command: [bun, "scripts/ci-lanes.ts", ...todo.lanes.map((lane) => `${lane}=${LANES[lane]}`)] });
   }
   if (todo.command) {
@@ -543,9 +481,6 @@ async function main(): Promise<void> {
   let activeStepFinished: Promise<void> | null = null;
   let ending = false;
   let interruptedBy: NodeJS.Signals | null = null;
-  // `check concurrent` runs the unit tests beside the lanes step, outside `run`'s single `child`.
-  let concurrentUnit: ChildProcess | null = null;
-  let concurrentUnitFinished: Promise<number> | null = null;
   const finalize = (status: CheckReport["status"], exitCode: number): void => {
     const endedAtMs = Date.now();
     let sourceEnd = unavailableSource();
@@ -615,12 +550,8 @@ async function main(): Promise<void> {
         // The step runs in a process group of its own, and a lane starts processes of its own
         // in it: the whole group gets the signal, and has ended before the herdr and the
         // directory it uses are taken away.
-        await Promise.all([
-          child?.pid !== undefined ? endGroup(child.pid, signal) : undefined,
-          concurrentUnit?.pid !== undefined ? endGroup(concurrentUnit.pid, signal) : undefined,
-        ]);
+        if (child?.pid !== undefined) await endGroup(child.pid, signal);
         if (activeStepFinished) await activeStepFinished;
-        if (concurrentUnitFinished) await concurrentUnitFinished;
         cleanup();
         finalize("interrupted", signal === "SIGINT" ? 130 : 143);
         process.exit(signal === "SIGINT" ? 130 : 143);
@@ -789,8 +720,7 @@ async function main(): Promise<void> {
   let code = 0;
   try {
     // A run command shares the same herdr and dist state, so it uses the same lock as named lanes.
-    if (todo.fast || todo.concurrent) {
-      // `concurrent` runs the same pre-steps as `fast`; only the unit tests move beside the lanes.
+    if (todo.fast) {
       const actionlintResult = await actionlint(run, plain, (reason) => skip("workflow syntax", reason), (message) => recordIssue("workflow syntax", message, "failure"));
       code = actionlintResult;
       for (const [label, command] of [
@@ -801,80 +731,9 @@ async function main(): Promise<void> {
         code = await run(label, [...command], plain);
       }
       if (code === 0 && !ending) code = await build(plain);
-      if (todo.fast && code === 0 && !ending) code = await run("unit tests", [bun, "run", "test:unit"], plain);
+      if (code === 0 && !ending) code = await run("unit tests", [bun, "run", "test:unit"], plain);
     }
-    if (todo.concurrent && code === 0 && !ending) {
-      const herdr = process.env["HERDR_WEB_HERDR_BIN"] || "herdr";
-      if (!Bun.which(herdr)) throw new Error("concurrent mode needs herdr on PATH (or HERDR_WEB_HERDR_BIN)");
-      const herdrVersion = spawnSync(herdr, ["--version"], { encoding: "utf8", env: process.env, timeout: 5_000 });
-      const herdrVersionLine = herdrVersion.stdout?.trim().split(/\r?\n/, 1)[0] ?? "";
-      report.toolchain.herdrVersion = herdrVersion.status === 0 && /^herdr\s+v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$/i.test(herdrVersionLine)
-        ? herdrVersionLine
-        : null;
-      saveReport();
-      const isolation = isolate(process.env);
-      cleanups.push(isolation.remove);
-      const env: Record<string, string | undefined> = { ...isolation.env, ...identity };
-      const shards = env["HERDR_TEST_SHARDS"]!;
-      const shardCount = /^\d+$/.test(shards) ? Number(shards) : Number.NaN;
-      report.toolchain.herdrTestShards = Number.isSafeInteger(shardCount) ? shardCount : null;
-      saveReport();
-      cleanups.push(() => {
-        for (const session of existsSync(isolation.sessions) ? readdirSync(isolation.sessions) : []) {
-          spawnSync(herdr, ["--session", session, "server", "stop"], { env, stdio: "ignore", timeout: 10_000 });
-        }
-      });
-      console.log(`\ncheck: herdr session ${env["HERDR_TEST_SESSION"]}, config and state in ${resolve(isolation.sessions, "../../..")}`);
-      console.log("check: running unit tests, integration and browser in parallel");
-
-      // The unit tests run beside `run`'s lanes step: their process group is tracked in
-      // `concurrentUnit` so an interrupt ends it with the lanes, and the step settles on
-      // 'close', once the process has exited and its output pipes have drained.
-      const unitStep = getStep("unit tests", [bun, "run", "test:unit"]);
-      unitStep.cwd = resolve(cwd);
-      const unitStartedAtMs = Date.now();
-      unitStep.startedAt = new Date(unitStartedAtMs).toISOString();
-      saveReport();
-      console.log(`\n=== unit tests: ${sanitizeCommand([bun, "run", "test:unit"]).join(" ")}`);
-      const unitStdout = createWriteStream(unitStep.stdout, { flags: "w", mode: 0o600 });
-      const unitStderr = createWriteStream(unitStep.stderr, { flags: "w", mode: 0o600 });
-      let unitLogsFailed = false;
-      unitStdout.on("error", (error) => { unitLogsFailed = true; console.error(`check: unit stdout log failed: ${error.message}`); });
-      unitStderr.on("error", (error) => { unitLogsFailed = true; console.error(`check: unit stderr log failed: ${error.message}`); });
-      const unit = spawn(bun, ["run", "test:unit"], { stdio: ["inherit", "pipe", "pipe"], env: plain, cwd, detached: true });
-      concurrentUnit = unit;
-      unit.stdout?.on("data", (chunk: Buffer) => { process.stdout.write(chunk); unitStdout.write(chunk); });
-      unit.stderr?.on("data", (chunk: Buffer) => { process.stderr.write(chunk); unitStderr.write(chunk); });
-      concurrentUnitFinished = (async () => {
-        const [exitCode, exitSignal] = await new Promise<[number | null, NodeJS.Signals | null]>((done) => {
-          unit.once("error", (error) => { unitStderr.write(`${error.message}\n`); done([127, null]); });
-          unit.once("close", (closeCode, closeSignal) => done([closeCode, closeSignal]));
-        });
-        concurrentUnit = null;
-        unitStdout.end();
-        unitStderr.end();
-        await Promise.all([finished(unitStdout).catch(() => undefined), finished(unitStderr).catch(() => undefined)]);
-        const endedAtMs = Date.now();
-        unitStep.endedAt = new Date(endedAtMs).toISOString();
-        unitStep.durationMs = endedAtMs - unitStartedAtMs;
-        unitStep.exitCode = ending ? null : exitCode;
-        unitStep.signal = ending ? interruptedBy ?? exitSignal : exitSignal;
-        unitStep.status = ending ? "interrupted" : exitCode === 0 && !unitLogsFailed ? "success" : "failure";
-        if (ending) unitStep.reason = `interrupted by ${interruptedBy ?? exitSignal ?? "signal"}`;
-        else if (exitSignal) unitStep.reason = `process terminated by ${exitSignal}`;
-        else if (unitLogsFailed) unitStep.reason = "could not persist command output logs";
-        if (unitStep.status === "failure") {
-          report.errors.push(exitSignal ? `unit tests terminated by ${exitSignal}` : unitLogsFailed ? "unit tests output logs could not be persisted" : `unit tests exited with code ${exitCode}`);
-        }
-        saveReport();
-        return unitStep.status === "success" ? 0 : exitCode || 1;
-      })();
-
-      const lanesCode = await run("lanes", [bun, "scripts/ci-lanes.ts", ...todo.lanes.map((lane) => `${lane}=${LANES[lane]}`)], env);
-      const unitCode = await concurrentUnitFinished;
-      code = unitCode !== 0 ? unitCode : lanesCode;
-    }
-    if (code === 0 && needsHerdr && !ending && !todo.concurrent) {
+    if (code === 0 && needsHerdr && !ending) {
       const herdr = process.env["HERDR_WEB_HERDR_BIN"] || "herdr";
       if (!Bun.which(herdr)) throw new Error("this needs herdr on PATH (or HERDR_WEB_HERDR_BIN)");
       const herdrVersion = spawnSync(herdr, ["--version"], { encoding: "utf8", env: process.env, timeout: 5_000 });

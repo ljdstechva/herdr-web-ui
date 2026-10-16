@@ -61,15 +61,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--icon-size);
 }
 
-/* the project's own icon, in the folder glyph's cell */
-.workspace-favicon img {
-  display: block;
-  width: var(--icon-size);
-  height: var(--icon-size);
-  object-fit: contain;
-  border-radius: var(--radius-sm);
-}
-
 /* the marks that ride currentColor (codex, cursor, pi) read as the title does */
 .sidebar-mark .agent-mark {
   display: inline-flex;
@@ -103,24 +94,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-/* Pinned rows, agents and workspaces alike, stand first in a card: an edge, not a fill, so a row's
-   hover and selection read inside it as anywhere else, its corner the rows' own plus its padding.
-   The list under it follows a gap below, and each pinned row carries a pin after its name. */
-.sidebar-pinned {
-  padding: var(--space-1);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-lg);
-}
-
-.sidebar-pinned + ul { margin-top: var(--space-2); }
-
-.sidebar-pin-mark {
-  flex: none;
-  width: var(--space-3);
-  height: var(--space-3);
-  color: var(--accent);
 }
 
 .workspace {
@@ -205,6 +178,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   }
 }
 
+/* a touch has no hover: the row answers the press itself (styles.css, .btn:active) */
+.workspace-header:active {
+  background: var(--side-hover);
+}
+
 .workspace-group.is-selected > .workspace-header {
   background: var(--side-selected);
 }
@@ -239,13 +217,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 }
 
 .workspace-name { flex: 0 1 auto; }
-
-/* a workspace's pin follows its name as an agent's does, a step closer than the line's gap */
-.workspace-copy > .sidebar-pin-mark,
-.workspace-line > .sidebar-pin-mark {
-  align-self: center;
-  margin-left: calc(var(--space-1) - var(--space-2));
-}
 
 /* Settings → Sidebar rows → Two lines: a row says what its pane is doing, and where under it,
    on the height and in the type of an agent's row. */
@@ -362,10 +333,9 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .sidebar-row-action:hover:not(:disabled) { color: var(--text-strong); }
 }
 
-/* A row's menu button is for touch and narrow layouts, where it takes no room until the row is
-   hovered, focused, selected or its menu is open; only the name gives way to it. A desktop draws
-   none: a right-click or the context-menu key opens the same menu at the row, and hands the
-   focus back where it was. */
+/* A row's menu button takes no room until the row is hovered, focused, selected or its menu is
+   open; only the name gives way to it. It stays in the focus order (never display: none): the
+   menu and the confirm dialog hand the focus back to it. */
 .workspace-actions {
   display: flex;
   align-items: center;
@@ -389,11 +359,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
     overflow: visible;
     opacity: 1;
   }
-}
-
-/* as the tab strip's (TabStrip.css): no "..." button where there is a mouse and room for a right-click */
-@media (pointer: fine) and (min-width: 769px) {
-  .workspace-actions { display: none; }
 }
 
 /* The status cell belongs to the selector (a click or a drag on it is the row's) and is drawn at
@@ -432,21 +397,17 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--space-4);
 }
 
+/* a stepped rotation draws its steps and nothing else, so the count is the frame rate: at this
+   arc's 6px radius, 48 steps over --dur-spin move it under a pixel every 33ms, which the eye
+   reads as a turn rather than a tick */
+.sidebar-status[data-status="working"] svg {
+  animation: sidebar-working var(--dur-spin) steps(48, end) infinite;
+}
+
 /* A question mark asks for an answer; a dot, as an unread mark is, has finished and was not
-   looked at; a working-coloured dot runs and a ring of it waits on background work. Every state
-   keeps the color it has on every other surface. */
-
-/* Running breathes rather than spins: the dot holds full for most of the cycle and dims in a few
-   steps, so it reads as alive at a glance without tugging at the eye, and the browser draws only
-   those steps. Every dot shares one phase (alignBreath), so several runs breathe together. */
-.sidebar-status[data-status="working"] .sidebar-status-dot {
-  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
-}
-
-.sidebar-status[data-status="waiting"] .sidebar-status-dot {
-  border: calc(var(--hairline) * 2) solid currentColor;
-  background: transparent;
-}
+   looked at; running moves, so it needs no color. Waiting and done keep the colors they have
+   on every other surface. */
+.sidebar-status[data-status="working"] { color: var(--text-dim); }
 
 .sidebar-status-mark {
   font-size: var(--fs-sm);
@@ -461,41 +422,14 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   background: currentColor;
 }
 
-/* Settings -> Status indicators, Dots or Symbols: herdr's TUI glyph for every state
-   (lib/status.ts indicatorGlyph) in the color herdr gives it (the --indicator-* tokens): yellow
-   runs, red asks for an answer, teal has finished, green is ready, grey is unknown. BG, which herdr
-   does not have, holds RUN's glyph still; RUN breathes as the dot does. */
-.sidebar-status-glyph {
-  color: var(--indicator-unknown);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-  line-height: 1;
-}
-
-.sidebar-status[data-status="idle"] .sidebar-status-glyph { color: var(--indicator-idle); }
-.sidebar-status[data-status="working"] .sidebar-status-glyph,
-.sidebar-status[data-status="waiting"] .sidebar-status-glyph { color: var(--indicator-working); }
-.sidebar-status[data-status="blocked"] .sidebar-status-glyph { color: var(--indicator-blocked); }
-.sidebar-status[data-status="done"] .sidebar-status-glyph { color: var(--indicator-done); }
-
-.sidebar-status[data-status="working"] .sidebar-status-glyph {
-  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
-}
-
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }
 
-@keyframes sidebar-breathe {
-  0%,
-  40% { opacity: 1; }
-  50%,
-  90% { opacity: 0.5; }
-  100% { opacity: 1; }
+@keyframes sidebar-working {
+  to { transform: rotate(360deg); }
 }
 
-/* background tasks still running, and a pane's plan: a number beside the state, quieter than it */
-.background-count,
-.plan-count {
+/* background tasks still running: a number beside the state, quieter than it */
+.background-count {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -507,8 +441,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   font-variant-numeric: tabular-nums;
 }
 
-.background-count svg,
-.plan-count svg {
+.background-count svg {
   width: var(--space-3);
   height: var(--space-3);
 }
@@ -608,26 +541,13 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .workspace-header {
     transition: none;
   }
+
+  .sidebar-status[data-status="working"] svg { animation: none; }
 }
 
-/* a finger presses a row as an iPhone list row is pressed: it fills, it does not dim (styles.css) */
-@media (hover: none) and (pointer: coarse) {
-  .workspace-header:has(> .pane-select:active),
-  .sidebar-footer-action:active {
-    background: var(--side-hover);
+/* a phone's drawer ends above the app's bar (styles.css "phone"), which takes the home-indicator inset */
+@media (max-width: 640px) {
+  .sidebar-footer {
+    padding-bottom: var(--space-2);
   }
-
-  .pane-select:active,
-  .sidebar-footer-action:active {
-    opacity: 1;
-  }
-}
-
-/* a pane's plan: its glyph in the working color until every step is done */
-.plan-count svg {
-  color: var(--status-working);
-}
-
-.plan-count.is-done svg {
-  color: var(--status-done);
 }

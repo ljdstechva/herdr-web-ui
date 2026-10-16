@@ -2,33 +2,6 @@ import type { InstalledNotes, ReleaseHighlights, ReleaseNote, SummaryLanguage, U
 import { ApiError } from "./api.ts";
 
 /**
- * Why this tab should be reloaded: "updated" when the server runs another commit than the one this
- * tab was built from, "incomplete" when a part of the app failed to load here (lib/lazyChunk.ts).
- * The second does not wait on the first: an unmanaged server names no commit, an older one may not
- * answer at all, a build outside Git has none, and a rebuild of the same commit compares equal,
- * yet the part is gone for this page until it is reloaded. Nothing while an update is underway.
- *
- * "restart" is "updated" where a reload cannot help: the server serves the files of a source
- * checkout that was rebuilt under it, and this tab is already that build, so a reload loads the
- * same build again. It ends when the server is restarted and reports the commit the tab was built
- * from. A part of this page that failed to load is still "incomplete": only a reload brings it.
- */
-export type ReloadReason = "updated" | "restart" | "incomplete";
-export function reloadReason(
-  appRevision: string | null,
-  status: Pick<UpdateStatus, "current_revision" | "served_revision"> | null,
-  busy: boolean,
-  chunkFailed: boolean,
-): ReloadReason | null {
-  if (busy) return null;
-  if (appRevision && status?.current_revision && appRevision !== status.current_revision) {
-    if (appRevision !== status.served_revision) return "updated";
-    return chunkFailed ? "incomplete" : "restart";
-  }
-  return chunkFailed ? "incomplete" : null;
-}
-
-/**
  * The notes to show beside an offered update: those read from the very commit the status
  * offers, until it is installed. Null when there are none to show. A check reports nothing
  * available while it runs, so `available` is not asked: the notes must not leave every five

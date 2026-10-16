@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readInstalledNotes, readUpdateNotes, RELEASES_LIMIT, SUMMARY_LANGUAGES, type InstalledNotes, type UpdateNotes } from "../../shared/update.ts";
 import { ApiError } from "./api.ts";
 import { LANGUAGE_SETTINGS } from "./i18n.ts";
-import { ANNOUNCED_FOR_MS, announcesUpdate, installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, reloadReason, SKEW_ALLOWANCE_MS, summaryFor } from "./updateNotes.ts";
+import { ANNOUNCED_FOR_MS, announcesUpdate, installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, SKEW_ALLOWANCE_MS, summaryFor } from "./updateNotes.ts";
 
 describe("the bounds of a read answer", () => {
   it("reads at most RELEASES_LIMIT releases of an answer, whatever sent it", () => {
@@ -207,40 +207,5 @@ describe("what the last update brought", () => {
     for (const value of [bound, { ...installed, version: 4 }, { ...installed, previous_version: null }]) {
       expect(readInstalledNotes(value)).toEqual(bound);
     }
-  });
-});
-
-describe("the reload a tab is offered", () => {
-  const app = "a".repeat(40);
-  it("names the update when the server runs another commit", () => {
-    expect(reloadReason(app, { current_revision: "b".repeat(40) }, false, false)).toBe("updated");
-    expect(reloadReason(app, { current_revision: "b".repeat(40) }, false, true)).toBe("updated");
-    expect(reloadReason(app, { current_revision: app }, false, false)).toBeNull();
-  });
-
-  it("asks for a restart, not a reload, when the tab is the build of a checkout replaced under the server", () => {
-    const checkout = "c".repeat(40);
-    const status = { current_revision: "b".repeat(40), served_revision: checkout };
-    expect(reloadReason(checkout, status, false, false)).toBe("restart");
-    // a part that failed to load needs the reload all the same: the restart line comes after it
-    expect(reloadReason(checkout, status, false, true)).toBe("incomplete");
-    // pulled without a build: the server still serves its own build, so a reload does help
-    expect(reloadReason(app, status, false, false)).toBe("updated");
-    // the server runs what the tab is: nothing to do, whatever the checkout is
-    expect(reloadReason(checkout, { current_revision: checkout, served_revision: checkout }, false, false)).toBeNull();
-    expect(reloadReason(checkout, { current_revision: "b".repeat(40), served_revision: null }, false, false)).toBe("updated");
-    expect(reloadReason(checkout, status, true, false)).toBeNull();
-  });
-
-  it("is offered for a part of the app that failed to load, where no commit can be compared", () => {
-    // an unmanaged server, a server older than the status, a build outside Git, a rebuild of the same commit
-    expect(reloadReason(app, { current_revision: null }, false, true)).toBe("incomplete");
-    expect(reloadReason(app, null, false, true)).toBe("incomplete");
-    expect(reloadReason(null, { current_revision: "b".repeat(40) }, false, true)).toBe("incomplete");
-    expect(reloadReason(app, { current_revision: app }, false, true)).toBe("incomplete");
-  });
-
-  it("waits while an update is underway", () => {
-    expect(reloadReason(app, { current_revision: "b".repeat(40) }, true, true)).toBeNull();
   });
 });

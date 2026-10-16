@@ -12,14 +12,12 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeMerged, WorktreeOpened, WorktreeRemoved, WorktreeStatus, WorktreeTabCreated } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
-import { movedTabOrder } from "../../src/lib/tabOrder.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import machinesFixture from "./fixtures/machines.json";
@@ -32,7 +30,6 @@ const DEMO_VERSION = "demo";
 /** Only an explicit `demo logs` command starts this fictional retained history. */
 const histories = new Map<string, DemoHistory>();
 const terminalGrids = new Map<string, { cols: number; rows: number }>();
-const heldCopyResends = new Map<string, { text: string; reply: Extract<ServerMessage, { type: "submit-result" }>; at: number }>();
 const demoGrid = (paneId: string) => terminalGrids.get(paneId) ?? { cols: 80, rows: 24 };
 function redrawHistory(paneId: string): void {
   for (const socket of sockets) socket.renderHistory(paneId);
@@ -49,6 +46,8 @@ const integrationsFixture: AgentIntegration[] = [
 ].map(([target, command, available, state]) => ({ target: target as string, label: (target as string).replace("_", "-"), command: command as string, available: available as boolean, state: state as string }));
 
 type Pane = SessionSnapshot["panes"][number];
+type Tab = SessionSnapshot["tabs"][number];
+type Layout = SessionSnapshot["layouts"][number];
 type SseListener = (event: MessageEvent) => void;
 
 // ---- state -----------------------------------------------------------------------------------
@@ -58,6 +57,8 @@ const local = machines[0]!;
 const snapshot = (): SessionSnapshot => local.snapshot!;
 /** pane id -> fixture key ("api", "web", …) */
 const keyOfPane = new Map<string, string>(Object.entries(panesFixture as Record<string, string>).map(([key, paneId]) => [paneId, key]));
+/** Codex panes with Fast mode on (POST /api/pane/fast) */
+const fastPanes = new Set<string>();
 const chats = new Map<string, { turns: ConversationTurn[]; metadata: { model: string; reasoning_effort: string } }>(
   Object.entries(CHATS).map(([key, chat]) => [key, structuredClone(chat)]),
 );
@@ -93,11 +94,6 @@ function addAgent(pane: Pane): void {
 /** The OmO pane's background tasks (the composer's "2 background tasks"), timed from now. */
 const OMO_TASKS_PANE = "docs";
 const ago = (minutes: number): string => new Date(Date.now() - minutes * 60_000).toISOString();
-const planSteps: PlanStep[] = [
-  { id: "1", label: "Trace replayed requests", active: null, status: "completed", blocked_by: [], owner: null, started_at: ago(8), ended_at: ago(6) },
-  { id: "2", label: "Count idempotent replays", active: "Adding the replay metric", status: "in_progress", blocked_by: ["1"], owner: null, started_at: ago(5), ended_at: null },
-  { id: "3", label: "Cover the metric with tests", active: null, status: "pending", blocked_by: ["2"], owner: null, started_at: null, ended_at: null },
-];
 const omoTasks = () => [
   { id: "st_demo1", title: "Check every link in the guide", category: "quick", model: "Claude Haiku 4.5", status: "running", started_at: ago(3), ended_at: null, turns: 6, tool_calls: 41, tokens: 52_300 },
   { id: "st_demo2", title: "Rewrite the install section for Windows", category: "writing", model: "Claude Opus 5.5", status: "running", started_at: ago(1), ended_at: null, turns: 2, tool_calls: 7, tokens: 18_900 },
@@ -152,7 +148,6 @@ function backfillPanes(): void {
 }
 backfillPanes();
 for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === OMO_TASKS_PANE) Object.assign(pane, { background_tasks: 2 });
-for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === "api") Object.assign(pane, { plan: { done: 1, total: planSteps.length, current: "Adding the replay metric" } });
 
 // Fictional repositories keep their checkout catalog after a workspace closes. The list joins
 // each checkout to the current snapshot, so closed checkouts can be opened again without git.
@@ -164,6 +159,10 @@ interface DemoRepository {
   checkouts: Array<Omit<WorktreeEntry, "open_workspace_id">>;
 }
 const repositories = new Map<string, DemoRepository>();
+// What a fictional checkout holds that its repository's main one lacks: a new worktree starts
+// with a little work in it, so its merge and its close have something to show.
+const checkoutWork = new Map<string, { ahead: number; changed: string[] }>();
+const workIn = (path: string): { ahead: number; changed: string[] } => checkoutWork.get(path) ?? { ahead: 0, changed: [] };
 function repositoryAt(path: string): DemoRepository {
   const repoKey = `demo:${path}`;
   let repo = repositories.get(repoKey);
@@ -184,6 +183,35 @@ for (const workspace of snapshot().workspaces) {
 const newPaneTemplate = structuredClone(snapshot().panes[0]!);
 const newTabTemplate = structuredClone(snapshot().tabs[0]!);
 const newWorkspaceTemplate = structuredClone(snapshot().workspaces[0]!);
+
+/** Another tab in a workspace, in `cwd` or the workspace's folder, with the agent already "started". */
+function createDemoTab(workspace: WorkspaceInfo, givenCwd: string | null, label: string, agent: string | null): { tabId: string; paneId: string } {
+  const snap = snapshot();
+  const id = workspace.workspace_id;
+  const siblings = snap.panes.filter((p) => p.workspace_id === id);
+  const cwd = givenCwd ?? siblings[0]?.cwd ?? "/home/demo";
+  const tabs = snap.tabs.filter((tab) => tab.workspace_id === id);
+  const number = Math.max(0, ...tabs.map((tab) => tab.number)) + 1;
+  const tabId = `${id}:t${number}`;
+  const template = snap.panes[0]!;
+  const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
+  snap.panes.push(pane);
+  addAgent(pane);
+  snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: tabId, workspace_id: id, label: label, number, agent_status: pane.agent_status, focused: false, pane_count: 1 });
+  addDemoLayout(id, tabId, pane.pane_id);
+  if (label === "") autoTabs.add(tabId);
+  else autoTabs.delete(tabId);
+  relabelAutoTabs(id);
+  workspace.tab_count = tabs.length + 1;
+  workspace.pane_count = siblings.length + 1;
+  if (agent) {
+    keyOfPane.set(pane.pane_id, pane.pane_id);
+    chats.set(pane.pane_id, { turns: [], metadata: { model: agent === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", reasoning_effort: "medium" } });
+    conversationChanged(pane.pane_id);
+    setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
+  }
+  return { tabId, paneId: pane.pane_id };
+}
 
 function createDemoWorkspace(cwd: string, label: string, agent: string | null, worktree?: NonNullable<WorkspaceInfo["worktree"]>): WorkspaceCreated {
   const id = `w${(nextWorkspace++).toString(36)}`;
@@ -241,6 +269,152 @@ function relabelAutoTabs(workspaceId: string): void {
     place += 1;
     if (autoTabs.has(tab.tab_id)) tab.label = String(place);
   }
+}
+
+function recountDemoWorkspace(workspaceId: string): void {
+  const snap = snapshot();
+  const workspace = snap.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+  if (!workspace) return;
+  const panes = snap.panes.filter((pane) => pane.workspace_id === workspaceId);
+  const tabs = snap.tabs.filter((tab) => tab.workspace_id === workspaceId);
+  for (const tab of tabs) {
+    const own = panes.filter((pane) => pane.tab_id === tab.tab_id);
+    tab.pane_count = own.length;
+    tab.agent_status = rollupStatus(own.map((pane) => pane.agent_status));
+  }
+  workspace.pane_count = panes.length;
+  workspace.tab_count = tabs.length;
+  workspace.agent_status = rollupStatus(panes.map((pane) => pane.agent_status));
+  if (!tabs.some((tab) => tab.tab_id === workspace.active_tab_id)) workspace.active_tab_id = tabs[0]?.tab_id ?? workspace.active_tab_id;
+}
+
+/** a tab's layout as herdr reports one: the fixture's where it has one, else its panes side by side */
+function demoLayout(tabId: string): Layout {
+  const snap = snapshot();
+  const existing = snap.layouts.find((layout) => layout.tab_id === tabId);
+  if (existing) return existing;
+  const own = snap.panes.filter((pane) => pane.tab_id === tabId);
+  const width = Math.floor(120 / Math.max(1, own.length));
+  return {
+    workspace_id: own[0]?.workspace_id ?? "", tab_id: tabId, zoomed: false, area: { x: 0, y: 0, width: 120, height: 40 },
+    focused_pane_id: own.find((pane) => pane.focused)?.pane_id ?? own[0]?.pane_id ?? "",
+    panes: own.map((pane, index) => ({ pane_id: pane.pane_id, focused: pane.focused, rect: { x: index * width, y: 0, width, height: 40 } })),
+    splits: [],
+  };
+}
+
+// herdr's `pane move`: the pane into another tab, a new tab or a new workspace, under a new id
+// when it leaves its workspace; the tab and workspace it emptied close behind it
+function moveDemoPane(pane: Pane, destination: Record<string, unknown>, focus = false): PaneMoved | Response {
+  const snap = snapshot();
+  const previous = { pane_id: pane.pane_id, workspace_id: pane.workspace_id, tab_id: pane.tab_id };
+  const makeTab = (workspaceId: string, label: string): Tab => {
+    const number = Math.max(0, ...snap.tabs.filter((tab) => tab.workspace_id === workspaceId).map((tab) => tab.number)) + 1;
+    const tab: Tab = { ...structuredClone(newTabTemplate), tab_id: `${workspaceId}:t${number}`, workspace_id: workspaceId, label, number, agent_status: pane.agent_status, focused: false, pane_count: 0 };
+    snap.tabs.push(tab);
+    if (label === "") autoTabs.add(tab.tab_id); else autoTabs.delete(tab.tab_id);
+    return tab;
+  };
+  let targetTab: Tab;
+  let createdTab: Tab | null = null;
+  let createdWorkspace: WorkspaceInfo | null = null;
+  switch (destination["type"]) {
+    case "tab": {
+      const tab = snap.tabs.find((candidate) => candidate.tab_id === destination["tab_id"]);
+      if (!tab) return error("tab_not_found", "no such tab", 404);
+      if (tab.tab_id === pane.tab_id) {
+        return { changed: false, reason: "same_tab", previous_pane_id: pane.pane_id, previous_workspace_id: pane.workspace_id, previous_tab_id: pane.tab_id, pane, focused_pane_id: snap.focused_pane_id ?? pane.pane_id, target_layout: demoLayout(tab.tab_id) };
+      }
+      targetTab = tab;
+      break;
+    }
+    case "new_tab": {
+      const workspace = snap.workspaces.find((candidate) => candidate.workspace_id === (destination["workspace_id"] ?? pane.workspace_id));
+      if (!workspace) return error("workspace_not_found", "no such workspace", 404);
+      targetTab = createdTab = makeTab(workspace.workspace_id, String(destination["label"] ?? ""));
+      break;
+    }
+    case "new_workspace": {
+      const id = `w${(nextWorkspace++).toString(36)}`;
+      const cwd = pane.cwd ?? pane.foreground_cwd ?? "/home/demo";
+      const label = String(destination["label"] ?? "") || cwd.split("/").pop() || id;
+      createdWorkspace = { ...structuredClone(newWorkspaceTemplate), workspace_id: id, label, number: snap.workspaces.length + 1, active_tab_id: `${id}:t1`, agent_status: pane.agent_status, focused: false, pane_count: 0, tab_count: 1, worktree: worktreeMetadata(repositoryAt(cwd)) };
+      snap.workspaces.push(createdWorkspace);
+      targetTab = createdTab = makeTab(id, String(destination["tab_label"] ?? ""));
+      break;
+    }
+    default:
+      return error("invalid_destination", "destination.type must be \"tab\", \"new_tab\" or \"new_workspace\"", 400);
+  }
+  const crossing = targetTab.workspace_id !== previous.workspace_id;
+  const paneId = crossing ? `${targetTab.workspace_id}:p${(nextWorkspace++).toString(36)}` : pane.pane_id;
+  const target = snap.layouts.find((layout) => layout.tab_id === targetTab.tab_id);
+  if (target) {
+    const beside = target.panes.find((candidate) => candidate.pane_id === (destination["target_pane_id"] ?? target.focused_pane_id)) ?? target.panes.at(-1);
+    if (!beside || !splitLayout(target, beside.pane_id, { pane_id: paneId, focused: false, rect: beside.rect }, destination["split"] === "down" ? "down" : "right")) {
+      return error("split_failed", "The demo pane is too small to split.", 400);
+    }
+  } else addDemoLayout(targetTab.workspace_id, targetTab.tab_id, paneId);
+  if (crossing) {
+    movedPaneIds.set(previous.pane_id, paneId);
+    const key = keyOfPane.get(previous.pane_id);
+    if (key !== undefined) { keyOfPane.delete(previous.pane_id); keyOfPane.set(paneId, key); }
+    if (replying.delete(previous.pane_id)) replying.add(paneId);
+    for (const agent of snap.agents) if (agent.pane_id === previous.pane_id) agent.pane_id = paneId;
+    for (const socket of sockets) socket.holdPending(previous.pane_id, "pane_not_found", "This demo pane moved to another workspace. Copy the message before discarding it.");
+  }
+  pane.pane_id = paneId;
+  pane.workspace_id = targetTab.workspace_id;
+  pane.tab_id = targetTab.tab_id;
+  const source = snap.layouts.find((layout) => layout.tab_id === previous.tab_id);
+  if (source) {
+    closeLayoutPane(source, previous.pane_id);
+    if (source.focused_pane_id === previous.pane_id) source.focused_pane_id = source.panes[0]?.pane_id ?? "";
+    for (const candidate of source.panes) candidate.focused = candidate.pane_id === source.focused_pane_id;
+  }
+  let closedTabId: string | null = null;
+  let closedWorkspaceId: string | null = null;
+  if (!snap.panes.some((candidate) => candidate.tab_id === previous.tab_id)) {
+    closedTabId = previous.tab_id;
+    snap.tabs = snap.tabs.filter((tab) => tab.tab_id !== previous.tab_id);
+    autoTabs.delete(previous.tab_id);
+    snap.layouts = snap.layouts.filter((layout) => layout.tab_id !== previous.tab_id);
+    if (!snap.tabs.some((tab) => tab.workspace_id === previous.workspace_id)) {
+      closedWorkspaceId = previous.workspace_id;
+      snap.workspaces = snap.workspaces.filter((workspace) => workspace.workspace_id !== previous.workspace_id);
+    }
+  }
+  relabelAutoTabs(previous.workspace_id);
+  relabelAutoTabs(targetTab.workspace_id);
+  recountDemoWorkspace(previous.workspace_id);
+  recountDemoWorkspace(targetTab.workspace_id);
+  if (focus) {
+    snap.focused_pane_id = paneId;
+    snap.focused_tab_id = targetTab.tab_id;
+    snap.focused_workspace_id = targetTab.workspace_id;
+  } else {
+    // focus was not asked to follow, but it cannot stay on a tab or workspace that closed behind
+    // the pane: a pane still there takes it, one outside the destination when there is one
+    if (snap.focused_pane_id === previous.pane_id || !snap.tabs.some((tab) => tab.tab_id === snap.focused_tab_id) || !snap.workspaces.some((workspace) => workspace.workspace_id === snap.focused_workspace_id)) {
+      const heir = snap.panes.find((candidate) => candidate.pane_id === source?.focused_pane_id)
+        ?? snap.panes.find((candidate) => candidate.workspace_id === previous.workspace_id && candidate.pane_id !== paneId)
+        ?? snap.panes.find((candidate) => candidate.workspace_id !== targetTab.workspace_id)
+        ?? pane;
+      snap.focused_pane_id = heir.pane_id;
+      snap.focused_tab_id = heir.tab_id;
+      snap.focused_workspace_id = heir.workspace_id;
+    }
+  }
+  for (const candidate of snap.panes) candidate.focused = candidate.pane_id === snap.focused_pane_id;
+  for (const tab of snap.tabs) tab.focused = tab.tab_id === snap.focused_tab_id;
+  snap.workspaces.forEach((workspace, index) => { workspace.number = index + 1; workspace.focused = workspace.workspace_id === snap.focused_workspace_id; });
+  const focused = snap.panes.find((candidate) => candidate.pane_id === snap.focused_pane_id);
+  if (focused) focusDemoPane(focused);
+  return {
+    changed: true, previous_pane_id: previous.pane_id, previous_workspace_id: previous.workspace_id, previous_tab_id: previous.tab_id, pane,
+    created_tab: createdTab, created_workspace: createdWorkspace, closed_tab_id: closedTabId, closed_workspace_id: closedWorkspaceId,
+    focused_pane_id: snap.focused_pane_id ?? paneId, target_layout: demoLayout(targetTab.tab_id),
+  };
 }
 
 function emitSse(event: MachineEvent): void {
@@ -303,8 +477,12 @@ function agentOf(paneId: string): string {
 
 const now = () => new Date().toISOString();
 
+/** the id a pane answers to after a move took it to another workspace, for a mock turn begun under the old one */
+const movedPaneIds = new Map<string, string>();
+
 /** The bridge takes one accepted pending message when the current mock turn finishes. */
 function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void {
+  while (movedPaneIds.has(paneId)) paneId = movedPaneIds.get(paneId)!;
   replying.delete(paneId);
   if (!paneOf(paneId)) return;
   setStatus(paneId, status);
@@ -376,85 +554,34 @@ async function layoutBodyOf(method: string, init: RequestInit | undefined, input
 
 const DEMO_FILES = ["src/routes/payments.ts", "src/lib/idempotency.ts", "src/metrics.ts", "src/pages/Reports.tsx", "src/money.ts", "src/money.test.ts", "package.json", "README.md"];
 
-/**
- * The demo repository's uncommitted work, as GET /api/workspace/diff/* answers it: one file of
- * each kind a diff view has to draw. The patches are what git would print, hunk counts included.
- */
-const DEMO_DIFF_LIMITS = { max_files: 2000, max_list_bytes: 2 * 1024 * 1024, max_patch_bytes: 1024 * 1024, context_lines: 3 };
-const DEMO_DIFF: { file: RepoDiffFile; patch: string | null }[] = [
-  { file: { path: "docs/checkout-flow.png", old_path: null, status: "modified", additions: null, deletions: null, binary: true }, patch: null },
-  { file: { path: "src/lib/idempotency.ts", old_path: "src/idempotency.ts", status: "renamed", additions: 0, deletions: 0, binary: false }, patch: [
-    "diff --git a/src/idempotency.ts b/src/lib/idempotency.ts",
-    "similarity index 100%",
-    "rename from src/idempotency.ts",
-    "rename to src/lib/idempotency.ts",
-    "",
-  ].join("\n") },
-  { file: { path: "src/money.test.ts", old_path: null, status: "untracked", additions: null, deletions: null, binary: false }, patch: [
-    "diff --git a/src/money.test.ts b/src/money.test.ts",
-    "new file mode 100644",
-    "index 0000000..5d2e8c1",
-    "--- /dev/null",
-    "+++ b/src/money.test.ts",
-    "@@ -0,0 +1,6 @@",
-    "+import { expect, it } from \"bun:test\";",
-    "+import { toCents } from \"./money.ts\";",
-    "+",
-    "+it(\"rounds half a cent away from zero\", () => {",
-    "+  expect(toCents(10.075)).toBe(1008);",
-    "+});",
-    "",
-  ].join("\n") },
-  { file: { path: "src/money.ts", old_path: null, status: "modified", additions: 4, deletions: 1, binary: false }, patch: [
-    "diff --git a/src/money.ts b/src/money.ts",
-    "index 3f1c2aa..9b7d410 100644",
-    "--- a/src/money.ts",
-    "+++ b/src/money.ts",
-    "@@ -1,5 +1,8 @@",
-    " export type Cents = number;",
-    " ",
-    "+/** Rounds half away from zero, so 10.075 is 1008 cents and not 1007. */",
-    " export function toCents(amount: number): Cents {",
-    "-  return amount * 100;",
-    "+  const scaled = Math.abs(amount) * 100;",
-    "+  const rounded = Math.round(scaled + Number.EPSILON * scaled);",
-    "+  return Math.sign(amount) * rounded;",
-    " }",
-    "",
-  ].join("\n") },
-];
-
 /** Settings → Subscription usage on the demo: plans as the workstation's CLIs might report them, resets counted from now. */
 function usageReport(): UsageReport {
   const now = Date.now();
   const at = (hours: number) => new Date(now + hours * 3_600_000).toISOString();
-  // Claude and Codex state a window's length (5 h, 7 days), so the server knows when it began; the others do not
-  const session = (hours: number) => ({ resets_at: at(hours), starts_at: at(hours - 5) });
-  const week = (hours: number) => ({ resets_at: at(hours), starts_at: at(hours - 168) });
   const checked = new Date(now).toISOString();
   return { providers: [
     { id: "claude", key: "claude:demo-claude", account: "sam@example.com", plan: "max", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 38, ...session(2.4) },
-      { kind: "week", scope: null, used_percent: 61, ...week(78) },
-      { kind: "week", scope: "Sonnet", used_percent: 12, ...week(78) },
+      { kind: "session", scope: null, used_percent: 38, resets_at: at(2.4) },
+      { kind: "week", scope: null, used_percent: 61, resets_at: at(78) },
+      { kind: "week", scope: "Sonnet", used_percent: 12, resets_at: at(78) },
     ] },
     { id: "codex", key: "codex:demo-codex-work", account: "sam@work.example", plan: "pro", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 22, ...session(1.2) },
-      { kind: "week", scope: null, used_percent: 84, ...week(97) },
+      { kind: "session", scope: null, used_percent: 22, resets_at: at(1.2) },
+      { kind: "week", scope: null, used_percent: 84, resets_at: at(97) },
     ] },
     { id: "codex", key: "codex:demo-codex-home", account: "sam@example.com", plan: "plus", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 5, ...session(3.1) },
-      { kind: "week", scope: null, used_percent: 31, ...week(140) },
+      { kind: "session", scope: null, used_percent: 5, resets_at: at(3.1) },
+      { kind: "week", scope: null, used_percent: 31, resets_at: at(140) },
     ] },
     { id: "cursor", key: "cursor:demo-cursor", account: "sam@example.com", plan: "pro", problem: null, checked_at: checked, windows: [
-      { kind: "month", scope: null, used_percent: 27, resets_at: at(290), starts_at: null },
-      { kind: "month", scope: "Cursor models", used_percent: 19, resets_at: at(290), starts_at: null },
-      { kind: "month", scope: "Other models", used_percent: 8, resets_at: at(290), starts_at: null },
+      { kind: "month", scope: null, used_percent: 27, resets_at: at(290) },
+      { kind: "month", scope: "Cursor models", used_percent: 19, resets_at: at(290) },
+      { kind: "month", scope: "Other models", used_percent: 8, resets_at: at(290) },
     ] },
     { id: "opencode", key: "opencode:demo-opencode", account: null, plan: "Go", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 10, resets_at: at(3.2), starts_at: null },
-      { kind: "week", scope: null, used_percent: 28, resets_at: at(18), starts_at: null },
-      { kind: "month", scope: null, used_percent: 15, resets_at: at(520), starts_at: null },
+      { kind: "session", scope: null, used_percent: 10, resets_at: at(3.2) },
+      { kind: "week", scope: null, used_percent: 28, resets_at: at(18) },
+      { kind: "month", scope: null, used_percent: 15, resets_at: at(520) },
     ] },
   ] };
 }
@@ -488,20 +615,20 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   // the demo sends no counts: a server without telemetry answers 404, and the app shows neither its notice nor its switch
   if (path === "/api/telemetry") return json({ error: { code: "not_found", message: "This server sends no telemetry" } }, 404, { "cache-control": "no-store" });
   if (path === "/api/herdr/update") return json({ supported: false, phase: "idle", server_version: null, binary_version: null, stale: false, output: null, finished_at: null }, 200, { "cache-control": "no-store" });
-  // the demo opens no public address: the Portal section stays hidden
-  if (path === "/api/portal") return json({ supported: false, version: null, min_version: "v2.6.1", usable: false, phase: "idle", relay: null, url: null, blocked: null, error: null, output: null } satisfies PortalStatus, 200, { "cache-control": "no-store" });
-  if (path === "/api/portal/start" || path === "/api/portal/stop") return error("portal_unsupported", "The demo opens no public address.", 409);
   if (path === "/api/access") return json({ port: 7317, tailscale: { state: "running", dns_name: "workstation.example.ts.net", serving_url: "https://workstation.example.ts.net", serve_command: null, serve_url: null } });
   if (path === "/api/usage") return json(usageReport(), 200, { "cache-control": "no-store" });
+  // the demo runs in the visitor's browser and has no server display to show: the viewer explains that it is unavailable
+  if (path === "/api/browsers" || path.startsWith("/api/browsers/")) return error("not_available", "The browser view is not available on this server", 404);
   if (path === "/api/push" || path.startsWith("/api/push/")) return error("push_unavailable", "the demo sends no alerts", 404);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 
-  if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {
+  if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove" || path === "/api/worktree/tab" || path === "/api/worktree/status" || path === "/api/worktree/merge") {
     const listing = path === "/api/worktree/list";
-    if (method !== (listing ? "GET" : "POST")) return error("method_not_allowed", listing ? "use GET" : "use POST", 400);
-    const body = listing ? {} : await bodyOf(init, input);
-    const workspaceId = listing ? query.get("workspace_id") : body["workspace_id"];
+    const reading = listing || path === "/api/worktree/status";
+    if (method !== (reading ? "GET" : "POST")) return error("method_not_allowed", reading ? "use GET" : "use POST", 400);
+    const body = reading ? {} : await bodyOf(init, input);
+    const workspaceId = reading ? query.get("workspace_id") : body["workspace_id"];
     if (typeof workspaceId !== "string" || !workspaceId) return error("missing_workspace_id", "workspace_id is required", 400);
     const workspace = snapshot().workspaces.find((candidate) => candidate.workspace_id === workspaceId);
     if (!workspace) return error("workspace_not_found", "no such workspace", 404);
@@ -512,15 +639,49 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       const worktrees = repo.checkouts.map((checkout) => ({ ...checkout, open_workspace_id: snapshot().workspaces.find((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path)?.workspace_id ?? null }));
       return json({ source: { repo_key: repo.repoKey, repo_name: repo.repoName, repo_root: repo.repoRoot, source_checkout_path: info.checkout_path, source_workspace_id: workspaceId }, worktrees } satisfies WorktreeListing);
     }
+    // a linked checkout named by its path (a worktree tab's), against the repository's main one
+    const main = repo.checkouts.find((checkout) => !checkout.is_linked_worktree);
+    const linkedAt = (value: unknown) => typeof value === "string" ? repo.checkouts.find((checkout) => checkout.is_linked_worktree && checkout.path === value) : undefined;
+    if (path === "/api/worktree/status" || path === "/api/worktree/merge") {
+      const checkout = linkedAt(reading ? query.get("path") : body["path"]);
+      if (!checkout || !main) return error("worktree_not_found", "no such worktree checkout of this repository", 404);
+      const work = workIn(checkout.path);
+      if (path === "/api/worktree/status") {
+        return json({
+          path: checkout.path, branch: checkout.branch,
+          target: { path: main.path, branch: main.branch, changed: 0, busy: false },
+          busy: false, changed: work.changed.length, changed_files: work.changed, ahead: work.ahead, behind: 0, conflicts: [], size_bytes: 48 * 1024 * 1024,
+        } satisfies WorktreeStatus, 200, { "cache-control": "no-store" });
+      }
+      const message = body["commit_message"];
+      if (message !== undefined && message !== null && (typeof message !== "string" || message.trim() === "")) return error("invalid_commit_message", "commit_message must not be empty", 400);
+      const committed = typeof message === "string" && work.changed.length > 0;
+      const commits = work.ahead + (committed ? 1 : 0);
+      if (commits === 0) return error("nothing_to_merge", `${checkout.branch} has no commits that ${main.branch} lacks`, 409);
+      checkoutWork.set(checkout.path, { ahead: 0, changed: committed ? [] : work.changed });
+      return json({ ok: true, branch: checkout.branch ?? "", target_branch: main.branch ?? "main", commits, committed, head: "4f2a9c1" } satisfies WorktreeMerged);
+    }
     if (path === "/api/worktree/remove") {
       if (body["force"] !== undefined && typeof body["force"] !== "boolean") return error("invalid_force", "force must be a boolean", 400);
-      if (!info.is_linked_worktree) return error("not_linked_worktree", "the repository's main checkout cannot be removed", 404);
-      const checkoutPath = info.checkout_path;
-      repo.checkouts = repo.checkouts.filter((checkout) => checkout.path !== checkoutPath);
-      // Removing a checkout leaves its branch available for a later create, as git does.
-      closeDemoWorkspaces(new Set([workspaceId]));
+      if (body["delete_branch"] !== undefined && typeof body["delete_branch"] !== "boolean") return error("invalid_delete_branch", "delete_branch must be a boolean", 400);
+      const named = body["path"] !== undefined && body["path"] !== null;
+      const checkout = named ? linkedAt(body["path"]) : repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.path === info.checkout_path);
+      if (!checkout) return error(named ? "worktree_not_found" : "not_linked_worktree", named ? "no such worktree checkout of this repository" : "the repository's main checkout cannot be removed", 404);
+      // a checkout a workspace is on is that workspace's to remove, never a tab's that sits in it
+      if (named && snapshot().workspaces.some((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path)) return error("worktree_open_as_workspace", "this checkout is open as a workspace; delete it from that workspace's menu", 409);
+      const work = workIn(checkout.path);
+      if (work.changed.length > 0 && body["force"] !== true) return error("dirty_worktree_requires_force", `'${checkout.path}' contains modified or untracked files, use --force to delete it`, 409);
+      repo.checkouts = repo.checkouts.filter((candidate) => candidate.path !== checkout.path);
+      checkoutWork.delete(checkout.path);
+      // Removing a checkout leaves its branch available for a later create, as git does; a
+      // branch asked to go with it goes only when the main checkout has its commits.
+      const branchDeleted = body["delete_branch"] === true && checkout.branch !== null && work.ahead === 0;
+      if (branchDeleted) repo.branches.delete(checkout.branch!);
+      // a checkout open as a workspace closes with it; a tab's is the tab's own to close
+      const open = snapshot().workspaces.filter((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path).map((candidate) => candidate.workspace_id);
+      if (open.length > 0) closeDemoWorkspaces(new Set(open));
       structureChanged();
-      return json({ ok: true, path: checkoutPath, forced: body["force"] === true } satisfies WorktreeRemoved);
+      return json({ ok: true, path: checkout.path, forced: body["force"] === true, ...(body["delete_branch"] === true ? { branch_deleted: branchDeleted } : {}) } satisfies WorktreeRemoved);
     }
     for (const field of ["branch", "base", "label", "path"] as const) {
       if (body[field] !== undefined && body[field] !== null && typeof body[field] !== "string") return error(`invalid_${field}`, `${field} must be a string`, 400);
@@ -529,7 +690,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const label = typeof body["label"] === "string" ? body["label"].trim() || undefined : undefined;
     const checkoutPath = typeof body["path"] === "string" ? body["path"] || undefined : undefined;
     if (checkoutPath && !checkoutPath.startsWith("/")) return error("invalid_path", "path must be absolute", 400);
-    const creating = path === "/api/worktree/create";
+    const asTab = path === "/api/worktree/tab";
+    const creating = path === "/api/worktree/create" || asTab;
     if (creating && !branch) return error("missing_branch", "branch is required", 400);
     if (!creating && !branch && !checkoutPath) return error("missing_target", "path or branch is required", 400);
     const agent = creating ? body["agent"] as { kind?: unknown; name?: unknown; args?: unknown } | null | undefined : null;
@@ -539,12 +701,27 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       return error("invalid_agent", "agent.kind is required; agent.name must be a string and agent.args must be an array of strings", 400);
     }
     let checkout: Omit<WorktreeEntry, "open_workspace_id"> | undefined;
+    // a branch that has its checkout already (a closed tab left it) opens as a tab in that one
+    const openAsWorkspace = (checkout: { path: string }) => snapshot().workspaces.some((candidate) => candidate.worktree?.repo_key === repo.repoKey && candidate.worktree.checkout_path === checkout.path);
+    const kept = asTab && !checkoutPath ? repo.checkouts.find((candidate) => candidate.is_linked_worktree && candidate.branch === branch && !openAsWorkspace(candidate)) : undefined;
+    if (kept) {
+      const made = createDemoTab(workspace, kept.path, label ?? branch!.replace(/^worktree\//, "").replaceAll("/", "-"), typeof agent?.kind === "string" ? agent.kind : null);
+      structureChanged();
+      return json({ workspace_id: workspace.workspace_id, tab_id: made.tabId, pane_id: made.paneId, path: kept.path, branch: branch!, existing: true, agent_started: typeof agent?.kind === "string" } satisfies WorktreeTabCreated);
+    }
     if (creating) {
       const targetPath = checkoutPath ?? `/home/demo/.herdr/worktrees/${repo.repoName}/${branch}`;
       if (repo.checkouts.some((candidate) => candidate.path === targetPath || candidate.branch === branch)) return error("worktree_exists", "that branch or path already has a checkout; open it instead", 404);
       checkout = { path: targetPath, branch: branch!, label: label ?? branch!, is_linked_worktree: true, is_bare: false, is_detached: false, is_prunable: false };
       repo.branches.add(branch!);
       repo.checkouts.push(checkout);
+      checkoutWork.set(targetPath, { ahead: 2, changed: ["notes/plan.md"] });
+      if (asTab) {
+        // the worktree is a tab of the workspace it was asked from, named after its branch
+        const made = createDemoTab(workspace, targetPath, label ?? branch!.replace(/^worktree\//, "").replaceAll("/", "-"), typeof agent?.kind === "string" ? agent.kind : null);
+        structureChanged();
+        return json({ workspace_id: workspace.workspace_id, tab_id: made.tabId, pane_id: made.paneId, path: targetPath, branch: branch!, existing: false, agent_started: typeof agent?.kind === "string" } satisfies WorktreeTabCreated);
+      }
     } else {
       checkout = repo.checkouts.find((candidate) => checkoutPath ? candidate.path === checkoutPath : candidate.branch === branch);
       if (!checkout) return error("worktree_not_found", "no such checkout", 404);
@@ -565,15 +742,21 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const agent = agentOf(paneId);
     if (!chat) return json({ source: "scrollback", turns: [] });
     const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "devin" ? "devin-transcript" : agent === "hermes" ? "hermes-transcript" : "omp-transcript";
-    // These demo fixtures have no native Grok/Agy lifecycle: omit optional activity.
-    return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null });
+    return json({ source, turns: chat.turns, metadata: agent === "codex" ? { ...chat.metadata, fast: fastPanes.has(paneId) } : chat.metadata, cursor: null });
   }
-  if (path === "/api/pane/plan") {
-    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
-    if (!paneId) return error("missing_pane_id", "pane_id query parameter is required", 400);
-    return json({ plan: keyOfPane.get(paneId) === "api" ? { steps: planSteps } : null, server_time: new Date().toISOString() } satisfies PanePlan);
+  if (path === "/api/pane/prompt") {
+    return json({ prompt: keyOfPane.get(paneId) === "web" && promptOpen ? { ...PROMPT, id: promptId } : null, ...(agentOf(paneId) === "codex" ? { fast: fastPanes.has(paneId) } : {}) });
   }
-  if (path === "/api/pane/prompt") return json({ prompt: keyOfPane.get(paneId) === "web" && promptOpen ? { ...PROMPT, id: promptId } : null });
+  // Codex's Fast mode: the demo's Codex has the toggle bound, and turns it at once
+  if (path === "/api/pane/fast") {
+    const target = String((await bodyOf(init, input))["pane_id"] ?? "");
+    if (!target) return error("missing_pane_id", "pane_id is required", 400);
+    if (agentOf(target) !== "codex") return error("not_codex", "Fast mode is Codex's: this pane runs no Codex", 409);
+    if (paneOf(target)?.agent_status === "blocked") return error("agent_blocked", "The terminal is waiting for an answer; Fast mode was left as it is", 409);
+    if (fastPanes.has(target)) fastPanes.delete(target); else fastPanes.add(target);
+    conversationChanged(target);
+    return json({ ok: true });
+  }
   if (path === "/api/pane/prompt/answer") {
     const body = await bodyOf(init, input);
     const target = String(body["pane_id"] ?? "");
@@ -733,6 +916,19 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     }
     structureChanged();
     return json({ ok: true });
+  }
+  if (path === "/api/pane/move") {
+    const body = await bodyOf(init, input);
+    const pane = paneOf(String(body["pane_id"] ?? ""));
+    if (!pane) return error("pane_not_found", "source pane not found", 404);
+    const destination = body["destination"];
+    if (!destination || typeof destination !== "object" || Array.isArray(destination)) return error("invalid_destination", "destination must be an object", 400);
+    const focus = body["focus"];
+    if (focus !== undefined && typeof focus !== "boolean") return error("invalid_focus", "focus must be a boolean", 400);
+    const moved = moveDemoPane(pane, destination as Record<string, unknown>, focus === true);
+    if (moved instanceof Response) return moved;
+    structureChanged();
+    return json(moved satisfies PaneMoved);
   }
   if (path === "/api/layout/ratio") {
     const body = await layoutBodyOf(method, init, input);
@@ -899,22 +1095,13 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/workspace/move") {
     const body = await bodyOf(init, input);
     const snap = snapshot();
-    const workspace = snap.workspaces.find((w) => w.workspace_id === body["workspace_id"]);
-    if (!workspace) return error("not_found", "no such workspace", 404);
-    const ids = snap.workspaces.map((workspace) => workspace.workspace_id);
-    const order = movedTabOrder(ids, workspace.workspace_id, Number(body["insert_index"] ?? 0));
-    if (order) snap.workspaces.sort((a, b) => order.indexOf(a.workspace_id) - order.indexOf(b.workspace_id));
+    const index = snap.workspaces.findIndex((w) => w.workspace_id === body["workspace_id"]);
+    if (index < 0) return error("not_found", "no such workspace", 404);
+    const [workspace] = snap.workspaces.splice(index, 1);
+    snap.workspaces.splice(Math.max(0, Math.min(snap.workspaces.length, Number(body["insert_index"] ?? 0))), 0, workspace!);
     snap.workspaces.forEach((w, i) => { w.number = i + 1; });
     structureChanged();
     return json({ ok: true });
-  }
-  if (path === "/api/workspace/directories" && method === "POST") {
-    // New folder: the demo has no disk, so the folder opens empty and is not listed again
-    const body = await bodyOf(init, input);
-    const name = String(body["name"] ?? "").trim();
-    if (name === "" || name === "." || name === ".." || /[/\\]/.test(name)) return error("invalid_name", "name must be one folder name", 400);
-    const parent = String(body["path"] ?? "/home/demo");
-    return json({ path: `${parent.replace(/\/$/, "")}/${name}` }, 201);
   }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
@@ -931,59 +1118,17 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/tab/create") {
     const body = await bodyOf(init, input);
-    const snap = snapshot();
-    const workspace = snap.workspaces.find((w) => w.workspace_id === body["workspace_id"]);
+    const workspace = snapshot().workspaces.find((w) => w.workspace_id === body["workspace_id"]);
     if (!workspace) return error("not_found", "no such workspace", 404);
     const agent = (body["agent"] as { kind?: string } | null | undefined)?.kind ?? null;
-    const id = workspace.workspace_id;
-    const siblings = snap.panes.filter((p) => p.workspace_id === id);
-    const cwd = String(body["cwd"] ?? siblings[0]?.cwd ?? "/home/demo");
-    const tabs = snap.tabs.filter((tab) => tab.workspace_id === id);
-    const number = Math.max(0, ...tabs.map((tab) => tab.number)) + 1;
-    const tabId = `${id}:t${number}`;
-    const template = snap.panes[0]!;
-    const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
-    snap.panes.push(pane);
-    addAgent(pane);
-    const label = String(body["label"] ?? "");
-    snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: tabId, workspace_id: id, label, number, agent_status: pane.agent_status, focused: false, pane_count: 1 });
-    addDemoLayout(id, tabId, pane.pane_id);
-    if (label === "") autoTabs.add(tabId);
-    else autoTabs.delete(tabId);
-    relabelAutoTabs(id);
-    workspace.tab_count = tabs.length + 1;
-    workspace.pane_count = siblings.length + 1;
-    if (agent) {
-      keyOfPane.set(pane.pane_id, pane.pane_id);
-      chats.set(pane.pane_id, { turns: [], metadata: { model: agent === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", reasoning_effort: "medium" } });
-      conversationChanged(pane.pane_id);
-      setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
-    }
+    const made = createDemoTab(workspace, typeof body["cwd"] === "string" ? body["cwd"] : null, String(body["label"] ?? ""), agent);
     structureChanged();
-    return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
+    return json({ workspace_id: workspace.workspace_id, pane_id: made.paneId, agent_started: agent !== null } satisfies WorkspaceCreated);
   }
   // no key in the demo: the app falls back to the browser's own speech recognition
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);
   if (path === "/api/voice/transcribe") return error("voice_not_configured", "transcription is unavailable in the demo", 409);
-  if (path === "/api/workspace/diff/files" || path === "/api/workspace/diff/file") {
-    const scope = query.get("scope") || "workspace";
-    if (scope !== "workspace" && scope !== "staged" && scope !== "commit") return error("invalid_scope", "scope must be workspace, staged or commit", 400);
-    // the demo keeps no history to name commits in
-    if (scope === "commit") return error("revision_not_found", "the demo repository has no commits to compare", 404);
-    const root = snapshot().panes.find((pane) => pane.pane_id === paneId)?.cwd ?? query.get("directory") ?? "/home/demo/checkout-api";
-    const repository: RepoDiffRepository = { root, branch: "main", head: "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c", detached: false, unborn: false };
-    // everything in the demo is unstaged work
-    const changed = scope === "workspace" ? DEMO_DIFF : [];
-    const compared: RepoDiffScope = scope;
-    const shared = { repository, scope: compared, base: null, head: null };
-    if (path === "/api/workspace/diff/files") {
-      return json({ ...shared, files: changed.map((entry) => entry.file), total: changed.length, truncated: false, limits: { max_files: DEMO_DIFF_LIMITS.max_files, max_list_bytes: DEMO_DIFF_LIMITS.max_list_bytes } } satisfies RepoDiffFileList);
-    }
-    const entry = changed.find((candidate) => candidate.file.path === query.get("path"));
-    if (!entry) return error("not_found", "nothing changed at that path in this comparison", 404);
-    return json({ ...shared, file: entry.file, patch: entry.patch, unavailable: entry.patch === null ? "binary" : null, truncated: false, limits: { max_patch_bytes: DEMO_DIFF_LIMITS.max_patch_bytes, context_lines: DEMO_DIFF_LIMITS.context_lines } } satisfies RepoDiffFilePatch);
-  }
   if (path.startsWith("/api/fs/")) return error("not_found", "the demo has no files to open", 404);
   return error("demo", `${method} ${path} is not part of the demo`, 404);
 }
@@ -1098,7 +1243,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "secret-input", "input-ready", "conversation-watch"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1131,10 +1276,10 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; send_anyway?: unknown; resend_id?: unknown; resend_generation?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; stop?: unknown; keep_size?: boolean };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
-      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, send_anyway: message.send_anyway, resend_id: message.resend_id, resend_generation: message.resend_generation, pending_id: message.pending_id, action: message.action });
+      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, pending_id: message.pending_id, action: message.action });
       const previous = this.requests.get(message.id!);
       if (previous) {
         if (previous.signature !== signature) {
@@ -1170,25 +1315,11 @@ class DemoSocket extends EventTarget {
       case "presence":
         // the demo sends no alerts, so whether the page is in use holds nothing back
         break;
-      // the demo socket never goes half-open, but it answers the liveness probe as the server does
-      case "ping":
-        if (Number.isSafeInteger(message.id)) this.push({ type: "pong", id: message.id! });
-        break;
       case "attach":
-        if (message.pane_id) {
-          // keep_size (the chat lens) and an observer leave the shared grid alone and learn it instead
-          const keepsSize = message.keep_size === true || this.mode === "observe";
-          if (!keepsSize) this.resizeGrid(message.pane_id, message.cols, message.rows);
-          this.attach(message.pane_id);
-          const grid = demoGrid(message.pane_id);
-          if (keepsSize && this.attached.has(message.pane_id)) this.push({ type: "pane-geometry", pane_id: message.pane_id, ...grid });
-        }
+        if (message.pane_id) { this.resizeGrid(message.pane_id, message.cols, message.rows); this.attach(message.pane_id); }
         break;
       case "resize":
         if (message.pane_id && this.attached.has(message.pane_id) && this.mode === "interact") this.resizeGrid(message.pane_id, message.cols, message.rows);
-        break;
-      // the demo page is its pane's only terminal: no other grid to hand the pty to, and the server answers nothing
-      case "release-size":
         break;
       // The demo has no competing attach slots and does not advertise this capability.
       case "take-over":
@@ -1217,7 +1348,6 @@ class DemoSocket extends EventTarget {
           this.conversationInterests.delete(message.pane_id);
         }
         break;
-      // a Stop (`stop`) is typed like any key: the demo has no pty for a following message to overtake
       case "input": if (message.pane_id && message.text !== undefined) this.typed(message.pane_id, message.text); break;
       case "keys": if (message.pane_id) for (const key of message.keys ?? []) this.typed(message.pane_id, chordText(key)); break;
       case "secret":
@@ -1229,42 +1359,22 @@ class DemoSocket extends EventTarget {
           break;
         }
         if (message.pane_id && message.text !== undefined && message.id !== undefined) {
-          if (message.resend_id !== undefined && message.send_anyway !== undefined) {
-            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
-            break;
-          }
-          const queued = message.delivery === "queue" || message.delivery === "hold";
-          for (const [key, receipt] of heldCopyResends) if (Date.now() - receipt.at >= 60_000) heldCopyResends.delete(key);
-          const resendKey = message.resend_id === undefined ? null : JSON.stringify([message.pane_id, message.resend_id, message.resend_generation ?? 0]);
-          const previous = resendKey === null ? undefined : heldCopyResends.get(resendKey);
-          if (previous && this.mode !== "observe" && message.clear_draft === undefined) {
-            this.push(previous.text === message.text ? { ...previous.reply, id: message.id }
-              : { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_submit_id", message: "This resend id already belongs to another message." });
-            break;
-          }
+          const queued = message.delivery === "queue";
           const text = queued ? message.text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n") : message.text;
           let code: string | null = null;
           if ((message.delivery !== undefined && message.delivery !== "immediate" && !queued) || (queued && message.typed !== undefined && message.typed !== false)) code = "invalid_delivery";
           else if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
             || queued || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
-          else if (message.send_anyway !== undefined && (message.send_anyway !== true || queued || message.clear_draft !== undefined
-            || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
           else if (this.mode === "observe") code = "read_only";
-          // the demo agent never refuses over its input box, so there is nothing to clear or send over
-          else if (message.clear_draft !== undefined || message.send_anyway !== undefined) code = "unsupported";
-          else if (message.resend_id !== undefined && (typeof message.resend_id !== "string" || !message.resend_id || message.resend_id.length > 128 || queued || message.typed === true)) code = "invalid_delivery";
-          else if (message.resend_generation !== undefined && (typeof message.resend_generation !== "number" || !Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0 || message.resend_id === undefined)) code = "invalid_delivery";
-          else if (resendKey !== null && heldCopyResends.size >= 256) code = "pending_limit";
+          else if (message.clear_draft !== undefined) code = "unsupported";
           else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
           else if (queued) code = this.pendingTargetError(message.pane_id);
           if (code) {
-            const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." };
-            if (resendKey !== null && this.mode !== "observe" && code !== "pending_limit" && !previous) heldCopyResends.set(resendKey, { text: message.text, reply, at: Date.now() });
-            this.completeRequest(reply);
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." });
             break;
           }
-          if (queued && (message.delivery === "hold" || paneOf(message.pane_id)?.agent_status === "working")) {
-            const pending: PendingMessage = { id: `demo-pending-${nextPending++}`, request_id: message.id, text, state: message.delivery === "hold" ? "held" : "queued", created_at: now() };
+          if (queued && paneOf(message.pane_id)?.agent_status === "working") {
+            const pending: PendingMessage = { id: `demo-pending-${nextPending++}`, request_id: message.id, text, state: "queued", created_at: now() };
             this.pending.set(message.pane_id, [...(this.pending.get(message.pane_id) ?? []), pending]);
             const reply: ServerMessage = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true, pending: structuredClone(pending) };
             this.rememberRequest(reply);
@@ -1272,9 +1382,7 @@ class DemoSocket extends EventTarget {
             this.push(reply);
           } else {
             submitToChat(message.pane_id, text);
-            const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true };
-            if (resendKey !== null) heldCopyResends.set(resendKey, { text: message.text, reply, at: Date.now() });
-            this.completeRequest(reply);
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true });
           }
         }
         break;
@@ -1282,9 +1390,6 @@ class DemoSocket extends EventTarget {
         if (message.id !== undefined && message.pane_id && message.pending_id) {
           const result = (ok: boolean, code?: string) => this.completeRequest({ type: "pending-result", id: message.id!, pane_id: message.pane_id!, pending_id: message.pending_id!, ok, ...(code ? { code, message: "The demo pending message was not changed." } : {}) });
           if (message.action !== "steer" && message.action !== "discard") { result(false, "invalid_pending_action"); break; }
-          if (message.resend_generation !== undefined && (typeof message.resend_generation !== "number" || !Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0)) {
-            result(false, "invalid_pending_action"); break;
-          }
           if (this.mode === "observe") { result(false, "read_only"); break; }
           const pending = this.pending.get(message.pane_id)?.find((item) => item.id === message.pending_id);
           if (!pending) {
@@ -1300,27 +1405,11 @@ class DemoSocket extends EventTarget {
             this.removePending(message.pane_id, pending.id, "discarded");
             result(true);
           } else {
-            const key = JSON.stringify([message.pane_id, pending.id, message.resend_generation ?? 0]);
-            for (const [id, receipt] of heldCopyResends) if (Date.now() - receipt.at >= 60_000) heldCopyResends.delete(id);
-            const previous = heldCopyResends.get(key);
-            if (previous) {
-              if (previous.text !== pending.text) { result(false, "invalid_submit_id"); break; }
-              if (previous.reply.ok) this.removePending(message.pane_id, pending.id, "sent");
-              result(previous.reply.ok, previous.reply.code);
-              break;
-            }
-            if (heldCopyResends.size >= 256) { result(false, "pending_limit"); break; }
-            const resendResult = (ok: boolean, code?: string) => {
-              heldCopyResends.set(key, { text: pending.text, at: Date.now(), reply: {
-                type: "submit-result", id: message.id!, pane_id: message.pane_id!, ok, ...(code ? { code } : {}),
-              } });
-              result(ok, code);
-            };
             const code = this.pendingTargetError(message.pane_id);
-            if (code) { resendResult(false, code); break; }
+            if (code) { result(false, code); break; }
             if (pending.state === "uncertain") { result(false, "pending_uncertain"); break; }
             const sent = this.deliverPending(message.pane_id, pending);
-            resendResult(sent, sent ? undefined : pending.error?.code ?? "pending_changed");
+            result(sent, sent ? undefined : pending.error?.code ?? "pending_changed");
           }
         }
         break;
@@ -1412,12 +1501,7 @@ class DemoSocket extends EventTarget {
 
   private resizeGrid(paneId: string, cols: number | undefined, rows: number | undefined): void {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols! < 2 || rows! < 1 || cols! > 1000 || rows! > 1000) return;
-    const before = terminalGrids.get(paneId);
     terminalGrids.set(paneId, { cols: cols!, rows: rows! });
-    // like the server: a changed grid reaches every client of the pane, this one included even if it is still attaching
-    if (before?.cols !== cols || before?.rows !== rows) {
-      for (const socket of sockets) if (socket === this || socket.attached.has(paneId)) socket.push({ type: "pane-geometry", pane_id: paneId, cols: cols!, rows: rows! });
-    }
     if (histories.get(paneId)?.resize(cols!, rows!)) redrawHistory(paneId);
   }
 

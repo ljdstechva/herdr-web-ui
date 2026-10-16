@@ -10,8 +10,6 @@ interface Props {
   messages: PendingMessageView[];
   active?: boolean;
   connected: boolean;
-  /** the pane's agent, which names the input a refusal is about */
-  agent?: string | null;
   blocked: boolean;
   unsaved: boolean;
   isBusy: (id: string) => boolean;
@@ -19,21 +17,8 @@ interface Props {
   onDiscard: (id: string) => Promise<void>;
 }
 
-/**
- * What a row says of its state. A held message waits for Send now only while this connection
- * holds it on the bridge: a copy restored from storage (another tab's live hold, or one from before
- * a reload) is reviewed first, since the tab that held it may still send it.
- */
-export function pendingStatus(message: Pick<PendingMessageView, "state" | "error" | "serverOwned">, busy: boolean, t: (text: string) => string): string {
-  if (busy) return t("Sending…");
-  if (message.state === "queued") return t("Next turn");
-  if (message.state === "held" && !message.error && message.serverOwned) return t("Waits for Send now");
-  if (message.state === "uncertain") return t("Not confirmed. Check the terminal before sending again.");
-  return t("Held message — review and send");
-}
-
 /** Pending text is separate from the transcript; Send now acts on its ID, never on its text. */
-export function PendingMessages({ messages, active = true, connected, agent, blocked, unsaved, isBusy, onSendNow, onDiscard }: Props) {
+export function PendingMessages({ messages, active = true, connected, blocked, unsaved, isBusy, onSendNow, onDiscard }: Props) {
   const t = useT();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -51,7 +36,7 @@ export function PendingMessages({ messages, active = true, connected, agent, blo
     {messages.map((message) => {
       const busy = isBusy(message.id) || message.state === "sending";
       const uncertain = message.state === "uncertain";
-      const status = pendingStatus(message, busy, t);
+      const status = busy ? t("Sending…") : message.state === "queued" ? t("Next turn") : uncertain ? t("Not confirmed. Check the terminal before sending again.") : t("Held message — review and send");
       return <li key={message.id} className="pending-message" data-state={message.state}>
         <div className="pending-message-bubble" aria-busy={busy || undefined}>{message.text}</div>
         <div className="pending-message-meta">
@@ -74,7 +59,7 @@ export function PendingMessages({ messages, active = true, connected, agent, blo
               void onDiscard(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
             }}><X aria-hidden="true" /></button>
         </div>
-        {message.error && !uncertain && <p className="pending-message-note" role="status">{(message.error.code === "input_draft" || message.error.code === "held_input") ? submitNote(message.error.code, message.error.message, agent) : t("Not sent: {message}", { message: message.error.message })}</p>}
+        {message.error && !uncertain && <p className="pending-message-note" role="status">{message.error.code === "input_draft" ? submitNote(message.error.code, message.error.message) : t("Not sent: {message}", { message: message.error.message })}</p>}
       </li>;
     })}
   </ol>;

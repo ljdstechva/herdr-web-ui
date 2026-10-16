@@ -12,6 +12,8 @@ export type {
   AgentSessionInfo,
   AgentStatus,
   PaneInfo,
+  PaneMoveReason,
+  PaneMoveResult,
   PaneLayoutPane,
   PaneLayoutRect,
   PaneLayoutSnapshot,
@@ -20,12 +22,13 @@ export type {
   ReadFormat,
   ReadSource,
   SessionSnapshot,
+  SplitDirection,
   Subscription as HerdrSubscriptionSpec,
   TabInfo,
   WorkspaceInfo,
 } from "./herdr-api.generated.ts";
 
-import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { AgentStatus, PaneInfo, PaneMoveResult, PaneScrollInfo, SessionSnapshot, SplitDirection, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -33,9 +36,8 @@ export type HerdrTab = TabInfo;
 /**
  * `background_tasks`: an OmO pane's `task` children, or a Claude Code pane's subagents and background commands, still running, counted by the server; absent when none.
  * `background_wait`: the pane is at rest while work its turn started still runs, and the turn goes on when it ends (server/background-wait.ts); absent when not.
- * `plan`: how far the pane's agent's task list or checklist has progressed; absent when it keeps none.
  */
-export type HerdrPane = PaneInfo & { background_tasks?: number; background_wait?: true; plan?: PlanSummary };
+export type HerdrPane = PaneInfo & { background_tasks?: number; background_wait?: true };
 
 export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
 
@@ -43,8 +45,6 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  * GET /api/health?scope=bridge -> BridgeHealth, never waits for herdr
  * GET /api/bridge -> authenticated BridgeIdentity (socket + runtime compatibility)
  * GET /api/machines -> { machines: Machine[] }; GET /api/machines/events -> MachineEvent SSE
- * Machine action_required=connect: a saved herdr PC awaits explicit POST /api/machines/setup before SSH.
- * Connection permission survives successful setup; installation/startup approval remains separate.
  * SetupJob/Machine action_required=bridge_conflict: align app versions, then retry setup without update_remote.
  * POST /api/machines/setup -> SetupJob; GET/POST/DELETE /api/machines/setup/:job_id
  * PATCH /api/machines/:id { name?, enabled? }; DELETE /api/machines/:id
@@ -61,30 +61,17 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
  *  GET    /api/access                    -> RemoteAccess (how a phone can reach this server: what
  *         Tailscale on this PC already serves, or the command to run), no-store
- *  GET    /api/portal                    -> PortalStatus (an optional public HTTPS address through
- *         Portal, server/portal.ts), no-store
- *  POST   /api/portal/start              -> 202 { accepted: true }; body { relay }; 400 invalid_relay,
- *         409 token_required / serve_only / portal_busy / portal_state_in_use / portal_unsupported
- *  POST   /api/portal/stop               -> 202 { accepted: true }; 409 portal_unsupported
- *         Portal POSTs require X-Herdr-Update: 1 and same-origin, like the update POSTs:
- *         403 invalid_portal_request (or invalid_origin from the outer origin gate).
- *         Unsupported methods/actions get 405 method_not_allowed; a watch-only device gets
- *         403 read_only. Startup holds HTTP/WS requests until leftover Portal cleanup completes;
- *         unreadable saved state or unverifiable cleanup fails closed with 500 internal_error.
  *  GET    /api/updates                   -> UpdateStatus (shared/update.ts), no-store
  *  POST   /api/updates/check             -> 202 { accepted: true }
  *  POST   /api/updates/install           -> 202 { accepted: true }
  *         Update POSTs require X-Herdr-Update: 1, same-origin browser requests,
  *         and the usual token gate. Managed starts only; status is polled during restart.
  *  GET    /api/telemetry                 -> TelemetryStatus (shared/telemetry.ts), no-store
- *  POST   /api/telemetry                 -> TelemetryStatus; TelemetryChange (shared/telemetry.ts):
- *         { enabled?, notice_seen?: true, notice_version?, settings? }. A notice acknowledgement
- *         requires the current NOTICE_VERSION. X-Herdr-Update: 1 and same-origin.
- *         404 from a server that sends no telemetry.
+ *  POST   /api/telemetry                 -> TelemetryStatus; body { enabled?, notice_seen?: true },
+ *         X-Herdr-Update: 1 and same-origin. 404 from a server that sends no telemetry.
  *  GET    /api/agents                    -> { agents: AgentKind[] } (herdr's agent manifests: the
  *         kinds `agent.start` accepts, plus omo and gjc when they are on this server's PATH,
- *         each with `installed`: whether its command is on this server's PATH; for the
- *         new-session dialog)
+ *         for the new-session dialog)
  *  GET    /api/integrations              -> IntegrationsResponse (herdr's `integration.list`, in
  *         herdr's order; read only: nothing here installs or removes one, Settings shows the
  *         `herdr integration install` command instead)
@@ -119,16 +106,18 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         history, soft-wrapped lines joined; a terminal selection that outlives one screen)
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
  *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured agent
- *         transcript turns - claude, codex, omp, omo, gjc, pi, devin, OpenCode, hermes, grok or agy;
- *         source:"scrollback" when the pane has no recognized, readable store.
- *         Grok requires exact live process/session evidence, Agy live process/session evidence;
- *         rewinds invalidate cursors.
- *         Grok/Agy optional activity describes the latest native turn, independently of pane status.)
+ *         transcript turns - claude, codex, omp, omo, gjc, pi, devin, OpenCode or hermes; source:"scrollback" when the pane has no
+ *         recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
  *  POST   /api/pane/rename { pane_id, label } -> { ok: true } (pane.rename; empty label clears it)
  *  POST   /api/pane/focus { pane_id } -> { ok: true } (pane.focus: herdr brings its workspace,
  *         tab and pane to the front, also while the tab is zoomed)
+ *  POST   /api/pane/move   { pane_id, destination, focus? } -> PaneMoved (pane.move: the pane into
+ *         another tab of its workspace, a new tab there or in another workspace, or a new workspace;
+ *         a pane that leaves its workspace gets a NEW pane id, reported beside previous_pane_id; an
+ *         emptied tab or workspace closes behind it; focus defaults to false, so herdr's own focus
+ *         stays where it was and only the caller follows the pane)
  *  POST   /api/agent/rename { pane_id, name } -> { ok: true } (agent.rename on the pane's live agent:
  *         the name other tools address it by, `herdr agent prompt <name>`; null clears it. herdr
  *         owns the rule (shared/agent-name.ts) and answers invalid_agent_name, agent_name_taken or,
@@ -154,33 +143,21 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         (layout.set_split_ratio: a split in that tab, root at [], false follows the first child,
  *         true the second; finite ratio in 0.1..0.9; an absent split answers split_not_found)
  *  POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
- *         pasted image -> file under <pane cwd>/.herdr-web-ui/ (under HERDR_WEB_PASTE_DIR when the
- *         server's environment sets it), path for the prompt
+ *         pasted image -> file under <pane cwd>/.herdr-web-ui/, falling back to private
+ *         stateDir/attachments if that location is read-only; an explicit HERDR_WEB_PASTE_DIR
+ *         overrides both. Returns the saved path for the prompt.
  *  GET    /api/pane/commands?pane_id=   -> { commands: SlashCommand[] } (the agent's slash
  *         commands: built-ins per agent kind + the user's and the project's custom commands)
  *  GET    /api/pane/omo-tasks?pane_id=  -> OmoActivity (the background tasks and workflows the
  *         pane's OmO session started, or a Claude Code pane's subagents (no workflows): running ones, then
  *         those that ended in the last day; empty for any other pane or one whose session is not
  *         known yet. server_time: that PC's clock, which the times are on)
- *  GET    /api/pane/plan?pane_id=       -> PanePlan (the plan the pane's Claude Code or Codex session
- *         keeps: its task list or checklist, read from the transcript; null when it keeps none)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
- *  GET    /api/workspace/diff/files?pane_id=&directory=&scope=&base=&head= -> RepoDiffFileList
- *         (what changed in the git repository the pane's folder, or `directory`, is inside: read
- *         only, on the PC that owns the pane. `directory` is absolute, `~/…`, or relative to the
- *         pane's folder; one of pane_id and directory is required. scope: workspace (the default:
- *         working tree against the index, plus untracked files), staged (index against HEAD) or
- *         commit (`base` against `head`, HEAD when absent; each one commit). The list is capped
- *         (`limits`), and `truncated` says when it was. 400 invalid_scope / invalid_revision /
- *         invalid_cwd / missing_directory, 404 revision_not_found, 409 not_a_repository,
- *         503 git_unavailable, 504 git_timeout; 403 read_only for a watching device, as a file read)
- *  GET    /api/workspace/diff/file?pane_id=&directory=&scope=&base=&head=&path=&old_path=
- *         -> RepoDiffFilePatch (one file of that comparison as a standard `diff --git` unified
- *         patch; `path` and, for a rename, `old_path` are the list's own, relative to the
- *         repository root. The patch is whole or null: `unavailable` says why it is null, and no
- *         cut hunk is ever sent. 400 invalid_path, 404 not_found when nothing changed there)
- *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null, restored: string | null }
+ *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null, restored: string | null, fast?: boolean }
+ *                                            `fast`: a Codex pane's Fast mode as its status line shows it now; absent where the screen does not say
+ *  POST   /api/pane/fast  { pane_id }   -> { ok: true }   presses the key Codex's config binds to its Fast mode toggle
+ *                                            409 fast_unbound: Codex binds no key to it on this PC; 409 not_codex / agent_blocked
  *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
  *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box, and
  *         `restored`: the chat's last message when Claude Code put it back as typed text in that box,
@@ -193,31 +170,40 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/tab/create { workspace_id, cwd?, label?, agent?: { kind, name?, args? } }
  *         -> TabCreated (tab.create in that workspace, then the same agent launch in the tab's root
  *         pane; without cwd herdr uses the workspace's folder, without label the tab's number)
- *         Both creates trim `label`; a blank one counts as not given, one over MAX_LABEL_CHARS
- *         (shared/labels.ts) is refused with 400 label_too_long.
  *  POST   /api/tab/rename { tab_id, label } -> { ok: true } (tab.rename; an empty label is refused:
- *         herdr would keep it as the name; over MAX_LABEL_CHARS: 400 label_too_long)
+ *         herdr would keep it as the name)
  *  POST   /api/tab/move { tab_id, insert_index } -> TabMoved
  *         (tab.move: an insertion boundary in the original workspace tab order, 0..tab count;
  *         preserves the active tab/pane and returns the authoritative workspace tab order)
  *  POST   /api/tab/close  { tab_id } -> { ok: true } (tab.close: every pane in the tab closes, and
  *         a workspace's last tab takes the workspace with it)
- *  POST   /api/workspace/rename { workspace_id, label } -> { ok: true } (trimmed; empty: 400
- *         missing_label, over MAX_LABEL_CHARS: 400 label_too_long)
+ *  POST   /api/workspace/rename { workspace_id, label } -> { ok: true }
  *  POST   /api/workspace/move   { workspace_id, insert_index } -> { ok: true } (sidebar reorder)
  *  POST   /api/workspace/close  { workspace_id, close_group? } -> { ok: true } (close_group takes the
  *         repository's open worktree workspaces with it; without it herdr refuses: workspace_group_close_required)
  *  POST   /api/worktree/create { workspace_id, branch, base?, label?, path?, agent?: { kind, name?, args? } } -> WorktreeOpened
  *         (worktree.create: a git worktree of that workspace's repo, checked out under herdr's
- *         worktree directory unless `path` says where, and opened as a new workspace grouped with it;
- *         409 repository_without_commits when no base is named and the repository has no commit yet;
- *         both worktree routes refuse a label over MAX_LABEL_CHARS with 400 label_too_long)
+ *         worktree directory unless `path` says where, and opened as a new workspace grouped with it)
  *  GET    /api/worktree/list?workspace_id= -> WorktreeListing (worktree.list: the repo's checkouts)
  *  POST   /api/worktree/open   { workspace_id, path | branch, label? } -> WorktreeOpened
  *         (worktree.open: an existing checkout as a workspace; already_open names the one it has)
- *  POST   /api/worktree/remove { workspace_id, force? } -> WorktreeRemoved (worktree.remove: deletes the
- *         checkout and closes its workspace, keeps the branch; a dirty checkout is refused without force:
- *         dirty_worktree_requires_force)
+ *  POST   /api/worktree/remove { workspace_id, path?, force?, delete_branch? } -> WorktreeRemoved (worktree.remove:
+ *         deletes the checkout and closes its workspace, keeps the branch; a dirty checkout is refused
+ *         without force: dirty_worktree_requires_force. With `path`, the checkout is that linked one of the
+ *         workspace's repository, which a tab is in: git removes it, or herdr when it is open as a workspace.
+ *         `delete_branch` also deletes its branch, only when the main checkout already has its commits.
+ *         409 worktree_open_as_workspace: a checkout named by `path` that a workspace is on is that workspace's to remove)
+ *  POST   /api/worktree/tab    { workspace_id, branch, base?, label?, path?, agent?: { kind, name?, args? } } -> WorktreeTabCreated
+ *         (`git worktree add`, then tab.create in that workspace with the checkout as its folder, and the
+ *         same agent launch: the worktree is a tab of the repository's workspace, not a workspace of its own.
+ *         A branch that already has a checkout opens in that one when no `path` is given: `existing`)
+ *  GET    /api/worktree/status?workspace_id=&path= -> WorktreeStatus (a linked checkout against the
+ *         repository's main one: uncommitted files, commits each side lacks, the files a merge would
+ *         conflict in, its size; reads only)
+ *  POST   /api/worktree/merge  { workspace_id, path, commit_message? } -> WorktreeMerged (`git merge` of the
+ *         checkout's branch in the main checkout; with commit_message its uncommitted files are committed
+ *         first. 409 merge_conflict / merge_refused: the merge is taken back and nothing changed;
+ *         409 nothing_to_merge, detached_head, target_detached, target_busy, worktree_busy, commit_failed)
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204, clears the token and the device cookies
  *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's)
@@ -228,10 +214,8 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  PATCH  /api/devices/:id  { label }    -> PairedDevice;  DELETE /api/devices/:id -> 204 (revoked at its next request)
  *  GET    /api/push                      -> PushKey (the VAPID application server key)
  *  POST   /api/push/subscribe { subscription }  -> 204 (a browser PushSubscription JSON; upsert by endpoint)
- *         | 410 subscription_gone (its push service answered 404/410 for that endpoint since the server
- *         started: the browser must unsubscribe and subscribe anew; an older server never says it)
  *  DELETE /api/push/subscribe { endpoint }      -> 204
- *  POST   /api/push/test      { endpoint }      -> 204 | 404 subscription_not_found | 410 subscription_gone | 502 push_failed
+ *  POST   /api/push/test      { endpoint }      -> 204 | 404 subscription_not_found | 502 push_failed
  *  GET    /api/usage[?refresh=1]         -> UsageReport (plan limits of the AI subscriptions signed in on this PC)
  *  Errors: non-2xx with { error: { code, message } }
  *
@@ -290,8 +274,6 @@ export interface UsageWindow {
   readonly used_percent: number;
   /** ISO 8601; null when the provider does not say */
   readonly resets_at: string | null;
-  /** ISO 8601 time this window began counting; null when the provider states neither it nor the window's length */
-  readonly starts_at: string | null;
 }
 
 /**
@@ -341,20 +323,6 @@ export interface HealthAuth {
   readonly reason?: AccessRefusal;
 }
 
-/**
- * GET /api/health, authenticated requests only: this server answers on an address beyond this
- * PC while no access token is set and no device has ever been paired, so anything that can
- * reach that address is let in (`open` in `server/access.ts`). It is a warning, never a gate:
- * nothing about who is let in changes because this field exists.
- *
- * Never sent to a request that did not get in. "This host runs herdr-web-ui with no token"
- * is reconnaissance for whoever is asking, not help.
- */
-export interface LanExposure {
-  /** the address the server is bound to, so the warning can name where it is reachable */
-  readonly host: string;
-}
-
 export interface PairedDevice {
   readonly id: string;
   readonly label: string;
@@ -390,32 +358,6 @@ export interface TailscaleAccess {
   readonly serve_command: string | null;
   /** ... and the address that command gives, when the DNS name is known */
   readonly serve_url: string | null;
-}
-
-/**
- * GET /api/portal: a public HTTPS address for this server through the Portal on its PC
- * (gosuda/portal-tunnel), which the app starts and stops (Settings → Phone & devices).
- */
-export interface PortalStatus {
-  /** false on a server started without Portal (tests, the demo): the section stays hidden */
-  readonly supported: boolean;
-  /** what `portal version` says of the `portal` on PATH; null when there is none or it does not answer */
-  readonly version: string | null;
-  /** the oldest Portal that can run this app's tunnel */
-  readonly min_version: string;
-  /** `version` is `min_version` or later: Start is offered */
-  readonly usable: boolean;
-  readonly phase: "idle" | "starting" | "running" | "stopping" | "error";
-  /** the relay the tunnel uses, or used last; an https origin */
-  readonly relay: string | null;
-  /** the public address while it runs, without the default port */
-  readonly url: string | null;
-  /** why a start would be refused now: no token set, or tailscale serve declared the only way in */
-  readonly blocked: "token_required" | "serve_only" | null;
-  /** what went wrong last; null after a success */
-  readonly error: string | null;
-  /** the tail of what Portal printed, for when the error alone does not say enough */
-  readonly output: string | null;
 }
 
 /** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
@@ -495,6 +437,12 @@ export interface ConversationMetadata {
    * response reports its usage. `window` is null when the transcript does not say it.
    */
   context?: { used: number; window: number | null };
+  /**
+   * Codex's Fast mode, as its session last recorded its service tier; absent for an agent that
+   * has no such mode, or a session that has recorded no settings yet (before its first turn the
+   * prompt read's `fast` says it, from the screen).
+   */
+  fast?: boolean;
 }
 
 /** One background task of an OmO session, or one subagent of a Claude Code session (GET /api/pane/omo-tasks), from OmO's task record or the subagent's files. */
@@ -541,45 +489,11 @@ export interface OmoActivity {
   server_time: string;
 }
 
-/**
- * One step of the plan an agent keeps for its session (GET /api/pane/plan): a task of Claude
- * Code's task list (`TaskCreate`/`TaskUpdate`), or an item of Codex's `update_plan` checklist.
- */
-export interface PlanStep {
-  id: string;
-  label: string;
-  /** what it does now, in the agent's own words (Claude's `activeForm`), when it gave some */
-  active: string | null;
-  status: "pending" | "in_progress" | "completed";
-  /** the steps it waits on: Claude's `blockedBy`, or for Codex the step before it */
-  blocked_by: string[];
-  /** the teammate it was given to, in a Claude Code agent team */
-  owner: string | null;
-  started_at: string | null;
-  ended_at: string | null;
-}
-
-/** GET /api/pane/plan: the plan the pane's agent keeps now, null when it keeps none. */
-export interface PanePlan {
-  plan: { steps: PlanStep[] } | null;
-  /** the PC's clock, which the times are on */
-  server_time: string;
-}
-
-/** How far a pane's plan has got, for the sidebar: `current` names the step in progress. */
-export interface PlanSummary {
-  done: number;
-  total: number;
-  current: string | null;
-}
-
 /** GET /api/pane/conversation: native conversation with settings, or scrollback fallback. */
 export interface ConversationResponse {
-  /** Grok/Agy latest native turn; display feedback only, never input-delivery authority. */
-  activity?: "thinking" | "working" | "idle";
   /** Stable across appends; changes on transcript replacement or native context clear. */
   history_id?: string;
-  source: "grok-transcript" | "agy-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
@@ -676,30 +590,10 @@ export interface DirectoryListing {
   files?: { name: string; size: number }[];
 }
 
-/**
- * POST /api/workspace/directories: makes one folder `name` directly inside `path` (absolute,
- * `~` or `~/…`), for the folder browser's New folder. 201 with the folder made; 400
- * invalid_cwd / invalid_name (empty, `.`, `..`, a separator, over 255 bytes), 403
- * permission_denied, 409 folder_exists. Nothing is made recursively or overwritten.
- */
-export interface CreateDirectoryRequest {
-  path: string;
-  name: string;
-}
-
-export interface DirectoryCreated {
-  /** the folder made, absolute */
-  path: string;
-}
-
 /** How the file viewer shows a file. */
 export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
 
-/**
- * GET /api/fs/stat: a file the viewer can open (GET /api/fs/file streams it). An HTML page is
- * `text` with `mime` "text/html": `/api/fs/file` serves it as plain text, and as the page itself
- * only with `render=1`, in a sandbox with no origin and no network of its own.
- */
+/** GET /api/fs/stat: a file the viewer can open (GET /api/fs/file streams it). */
 export interface FileInfo {
   path: string;
   name: string;
@@ -710,81 +604,9 @@ export interface FileInfo {
   kind: FileKind;
 }
 
-/** Which two states of a repository are compared. */
-export type RepoDiffScope = "workspace" | "staged" | "commit";
-
-/** How one file changed. `untracked` exists only in the `workspace` scope. */
-export type RepoDiffStatus = "added" | "deleted" | "modified" | "renamed" | "copied" | "type_changed" | "unmerged" | "untracked";
-
-/** The repository a comparison was read from, on the PC that owns it. */
-export interface RepoDiffRepository {
-  /** the working tree's top folder, absolute */
-  root: string;
-  /** the checked-out branch; null on a detached HEAD */
-  branch: string | null;
-  /** HEAD's commit hash; null before the first commit */
-  head: string | null;
-  detached: boolean;
-  /** no commit yet: `staged` then lists everything added so far */
-  unborn: boolean;
-}
-
-export interface RepoDiffFile {
-  /** relative to the repository root, forward slashes, as git names it (never quoted) */
-  path: string;
-  /** where a renamed or copied file came from; null otherwise */
-  old_path: string | null;
-  status: RepoDiffStatus;
-  /** lines added and removed; null for a binary file, an untracked one, and past the list's byte cap */
-  additions: number | null;
-  deletions: number | null;
-  /** null when not determined: an untracked file in a list is not opened to find out */
-  binary: boolean | null;
-}
-
-/** GET /api/workspace/diff/files */
-export interface RepoDiffFileList {
-  repository: RepoDiffRepository;
-  scope: RepoDiffScope;
-  /** the commits compared, as full hashes, in the `commit` scope; null in the others */
-  base: string | null;
-  head: string | null;
-  /** sorted by path, at most `limits.max_files` */
-  files: RepoDiffFile[];
-  /** how many files changed in all; null when git printed more than `limits.max_list_bytes` */
-  total: number | null;
-  /** `files` is not the whole list */
-  truncated: boolean;
-  limits: { max_files: number; max_list_bytes: number };
-}
-
-/**
- * GET /api/workspace/diff/file. `patch` is git's own output for that one file, from its
- * `diff --git` line on, and is either complete or null.
- */
-export interface RepoDiffFilePatch {
-  repository: RepoDiffRepository;
-  scope: RepoDiffScope;
-  base: string | null;
-  head: string | null;
-  file: RepoDiffFile;
-  patch: string | null;
-  /**
-   * Why there is no patch: `binary` (no text to show), `too_large` (past `limits.max_patch_bytes`),
-   * `unmerged` (a conflict: git prints a combined diff, which is not a unified patch) or
-   * `unsupported` (an untracked path that is not a regular file). Null when `patch` is set.
-   */
-  unavailable: "binary" | "too_large" | "unmerged" | "unsupported" | null;
-  /** the patch exists and was left out for its size */
-  truncated: boolean;
-  limits: { max_patch_bytes: number; context_lines: number };
-}
-
 export interface AgentKind {
   kind: string;
   label: string;
-  /** whether the server finds the agent's command (its kind) on its PATH; absent from an older bridge */
-  installed?: boolean;
 }
 
 /**
@@ -869,13 +691,81 @@ export interface AgentRenameRequest {
 /** POST /api/worktree/remove: `git worktree remove` of the workspace's checkout; force when git refuses a dirty one. */
 export interface RemoveWorktreeRequest {
   workspace_id: string;
+  /** a linked checkout of the workspace's repository (a worktree tab's), instead of the workspace's own */
+  path?: string | null;
   force?: boolean;
+  /** `git branch -d` after the checkout went: git keeps a branch whose commits the main checkout lacks */
+  delete_branch?: boolean;
 }
 
 export interface WorktreeRemoved {
   ok: true;
   path: string;
   forced: boolean;
+  /** with `delete_branch` only: whether git deleted the branch */
+  branch_deleted?: boolean;
+}
+
+/** POST /api/worktree/tab: as CreateWorktreeRequest, for a checkout that opens as a tab of that workspace. */
+export type CreateWorktreeTabRequest = CreateWorktreeRequest;
+
+/** The tab a checkout opened in. A failed agent launch leaves both there, as tab creation does. */
+export interface WorktreeTabCreated extends WorkspaceCreated {
+  tab_id: string;
+  path: string;
+  branch: string;
+  /** the branch already had a checkout (one a closed tab left on disk): the tab opened in that one */
+  existing: boolean;
+}
+
+/**
+ * GET /api/worktree/status: a linked checkout against the repository's main one, which a merge
+ * lands in. Counts are whole; `changed_files` and `conflicts` name the first few.
+ */
+export interface WorktreeStatus {
+  path: string;
+  /** null on a detached HEAD */
+  branch: string | null;
+  target: {
+    path: string;
+    branch: string | null;
+    /** files with uncommitted changes there: git refuses a merge that touches one */
+    changed: number;
+    /** in the middle of a merge, rebase, cherry-pick or revert */
+    busy: boolean;
+  };
+  /** the checkout itself is in the middle of a merge, rebase, cherry-pick or revert: its agent has not finished */
+  busy: boolean;
+  /** files with uncommitted changes in the checkout, untracked ones included */
+  changed: number;
+  changed_files: string[];
+  /** commits on the checkout's branch that the target lacks, and the reverse */
+  ahead: number;
+  behind: number;
+  /** files a merge would conflict in; null when this git cannot tell without merging (before 2.38) */
+  conflicts: string[] | null;
+  /** null when it could not be measured in time */
+  size_bytes: number | null;
+}
+
+/** POST /api/worktree/merge: the checkout's branch into the branch the main checkout is on. */
+export interface MergeWorktreeRequest {
+  workspace_id: string;
+  path: string;
+  /** set, the checkout's uncommitted files are committed with this message before the merge */
+  commit_message?: string | null;
+}
+
+export interface WorktreeMerged {
+  ok: true;
+  branch: string;
+  target_branch: string;
+  /** commits the target gained */
+  commits: number;
+  /** whether uncommitted files were committed first */
+  committed: boolean;
+  /** the target's new HEAD, abbreviated */
+  head: string;
 }
 
 /** One checkout of a repository, from herdr's `worktree.list` (git worktree list, annotated). */
@@ -887,8 +777,8 @@ export interface WorktreeEntry {
   is_bare: boolean;
   is_detached: boolean;
   is_prunable: boolean;
-  /** the herdr workspace this checkout is open in, if any */
-  open_workspace_id: string | null;
+  /** the herdr workspace this checkout is open in, if any; herdr 0.9.3 leaves the field out for a checkout no workspace is on */
+  open_workspace_id?: string | null;
 }
 
 /** GET /api/worktree/list: the repository the workspace is in, and every checkout of it. */
@@ -911,6 +801,33 @@ export interface WorkspaceCreated {
  * launch leaves the tab there, reachable through pane_id, as workspace creation does.
  */
 export type TabCreated = WorkspaceCreated;
+
+/**
+ * POST /api/pane/move: where the pane goes. herdr's PaneMoveDestination with the `type` the
+ * generated union widens to a string spelled out, so a caller cannot send a kind herdr has not got.
+ * `tab` lands beside the tab's focused pane (`target_pane_id` names another) on the side `split`
+ * says, right when absent; `new_tab` without a workspace stays in the pane's own.
+ */
+export type MovePaneDestination =
+  | { type: "tab"; tab_id: string; split?: SplitDirection; target_pane_id?: string | null; ratio?: number | null }
+  | { type: "new_tab"; workspace_id?: string | null; label?: string | null }
+  | { type: "new_workspace"; label?: string | null; tab_label?: string | null };
+
+export interface MovePaneRequest {
+  pane_id: string;
+  destination: MovePaneDestination;
+  /** herdr's focus follows the pane when true; absent or false leaves it where it was */
+  focus?: boolean;
+}
+
+/**
+ * POST /api/pane/move: herdr's move result. `pane` is the pane where it now stands, under a new
+ * `pane_id` when it changed workspace (`previous_pane_id` is the one the caller sent); `changed`
+ * false with `reason: "same_tab"` means it already was where it was asked to go. `created_tab`
+ * and `created_workspace` name what the move made, `closed_tab_id` and `closed_workspace_id` what
+ * it emptied and herdr closed behind it.
+ */
+export type PaneMoved = PaneMoveResult;
 
 /** The two ways herdr splits a pane: a new pane to its right, or below it. */
 export type SplitPaneDirection = "right" | "down";
@@ -1032,8 +949,6 @@ export interface InteractivePrompt {
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;
-  /** Claude's plan file behind a plan card, whose whole text is then the body: opened in the file viewer */
-  plan_file?: string;
 }
 
 export interface InteractivePromptStep {
@@ -1065,8 +980,6 @@ export interface PushPayload {
   /** Absent in legacy payloads means local. */
   machine_id?: string;
   pane_id: string | null;
-  /** The workspace the pane was last seen in, so the tap of an ended pane opens that workspace. Absent when not known. */
-  workspace_id?: string;
   title: string;
   body: string;
   tag: string;
@@ -1075,7 +988,7 @@ export interface PushPayload {
 /** WebSocket at /ws
  *
  *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
- *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | release-size {pane_id} | role {mode}
+ *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | role {mode}
  *    | pty-ack {pane_id, stream_id, offset} | secret {id, pane_id, prompt, secret}
  *    | watch {pane_id, cols, rows} | unwatch {pane_id} | conversation-watch {pane_id, enabled}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
@@ -1124,9 +1037,7 @@ export type ClientMessage =
   | { type: "conversation-watch"; pane_id: string; enabled: boolean }
   /** a pane another web bridge holds (`attach_held`): take herdr's attach slot from it, here, now */
   | { type: "take-over"; pane_id: string }
-  /** `stop`: the composer's Stop (text a lone ESC). The bridge sends it in the pane's turn, after typing
-   * still on its way, and a message sent next waits for it; an older bridge types it like any key. */
-  | { type: "input"; pane_id: string; text: string; stop?: true }
+  | { type: "input"; pane_id: string; text: string }
   | { type: "keys"; pane_id: string; keys: string[] }
   /** a composer message, sent to servers whose snapshot lists "submit": the server types it and
    * its own Enter after a short gap, and answers with a submit-result of the same id. `text` is
@@ -1135,34 +1046,18 @@ export type ClientMessage =
    * input line, which types `payload` like the keyboard would even into an agent's open menu.
    * `delivery:queue` requires "pending-input" and a live interact attachment: while the agent
    * works the bridge keeps the message until its next turn, or the owner explicitly steers it.
-   * `delivery:hold` (feature "pending-hold") is the same, except the message is kept as held, also
-   * when it arrives after the turn ended: it never goes on its own, only when the owner steers it.
    * Omission keeps the legacy immediate submission. Queued messages never resume after lease loss.
    * Queue request ids increase monotonically per connection; recent duplicates replay their
    * receipt, and retired ids are rejected rather than executed after history eviction.
    * `clear_draft`: an immediate chat message only, sent again over the `draft` its input_draft
    * refusal named: the server clears Claude's input box first while it still holds exactly that,
-   * and refuses again (input_draft) when it holds anything else or does not read empty after.
-   * `send_anyway`: an immediate chat message only, sent again after an input_draft refusal that
-   * named no draft and showed the box (`box`): the server sends once over that box, only into the same
-   * Claude terminal and session that refusal was for (else pending_target_changed), and only while the
-   * box still shows that `box` or reads empty (else input_draft again, with the new box). Not with
-   * `clear_draft`.
-   * `resend_id`: stable held-copy ID for immediate chat resends across connections; the bridge
-   * shares the first outcome for 60 seconds after settlement. `resend_generation` defaults to 0;
-   * only a definitive no-input refusal permits the next attempt generation. Not with `send_anyway`:
-   * that combination returns invalid_delivery before reserving or replaying an ID. No `clear_draft`.
-   * Older peers ignore it. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold"; clear_draft?: string; send_anyway?: true; resend_id?: string; resend_generation?: number }
-  | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard"; resend_generation?: number }
+   * and refuses again (input_draft) when it holds anything else or does not read empty after. */
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue"; clear_draft?: string }
+  | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" }
   /** Masked input: revalidate the visible prompt, type literal bytes + Enter immediately.
    * Never queued, retried, sent through agent.prompt, or echoed in a result. */
   | { type: "secret"; id: number; pane_id: string; prompt: string; secret: string }
   | { type: "resize"; pane_id: string; cols: number; rows: number }
-  /** this client's terminal is covered again (the chat lens): if the pty has its grid, the server sizes
-   * the pty for the latest grid of another interact client still showing the terminal, or leaves it.
-   * Never answered; an older server ignores it, so it needs no feature. */
-  | { type: "release-size"; pane_id: string }
   /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
   | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
   | { type: "role"; mode: ClientRole }
@@ -1173,15 +1068,10 @@ export type ClientMessage =
   | { type: "presence"; active: boolean }
   /** a read-only view of the pane at this grid, for a tab out of use (feature "watch"); never resizes the pane */
   | { type: "watch"; pane_id: string; cols: number; rows: number }
-  | { type: "unwatch"; pane_id: string }
-  /** liveness only (feature "ping"): answered at once with a `pong` of the same id, for any role. The
-   * client sends it when the page comes back, the network changes or nothing arrived for a while,
-   * and drops a socket that stays silent: a half-open one still reads OPEN in the browser. A remote
-   * PC's socket relays it unchanged, so the remote server's snapshot decides whether it is sent. */
-  | { type: "ping"; id: number };
+  | { type: "unwatch"; pane_id: string };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping";
+export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
@@ -1198,18 +1088,15 @@ export type ServerMessage =
   /** ok after Enter delivery, or bridge acceptance (`pending`); never an agent execution acknowledgement.
    * `draft`: on an immediate send's input_draft, the one-row draft in Claude's input box that a send
    * with `clear_draft` may clear (absent when the box is not one the server clears).
-   * `box`: on an immediate send's input_draft that names no draft, what the server read in Claude's
-   * input box (plain rows, cut at 200 characters; empty when no whole box could be read). Present
-   * only when a send with `send_anyway` may follow; an older server never sends it.
    * `submit_partial`: the explicitly confirmed terminal draft was cleared, but the send's
    * deadline then expired before the message was sent; never a nothing-typed receipt. */
-  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string; box?: string }
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string }
   | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string }
   /** Owner-only receipt and state; only an explicit removed outcome permits deleting a retained client message. */
   | { type: "pending-messages"; pane_id: string; messages: PendingMessage[]; removed?: Array<{ id: string; outcome: "sent" | "discarded" }> }
   | { type: "secret-result"; id: number; pane_id: string; ok: boolean; code?: string }
   /** agent-status push for ANY pane, attached or not (server-side status collector) */
-  | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true; /** a pane's plan, when the frame is about it (null: it keeps none now); it changes no status */ plan?: PlanSummary | null }
+  | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true }
   /** Native transcript invalidation for an interested attached pane; signature is opaque, not a REST ETag. Refetch the existing conversation endpoint. */
   | { type: "conversation-changed"; pane_id: string; signature: string }
   /** a pane's process exited (pushed even when nobody is attached to it) */
@@ -1220,8 +1107,6 @@ export type ServerMessage =
   | { type: "watch-data"; pane_id: string; data: string }
   /** the watch ended (pane gone, herdr closed it, or this herdr has no read-only view); the client keeps its last screen */
   | { type: "watch-end"; pane_id: string }
-  /** the answer to a `ping`, with its id; only this frame, for a ping in flight, ends the client's liveness probe */
-  | { type: "pong"; id: number }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 

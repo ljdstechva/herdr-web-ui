@@ -1,0 +1,128 @@
+/* The server's browser, over the whole app (components/BrowserView.tsx). */
+
+.browser-view {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  /* the visual viewport's height (lib/viewport.ts): the phone's keyboard takes its room from the screen below, not from the bar */
+  height: var(--app-height, 100dvh);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.browser-view-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: content-box;
+  min-height: var(--header-h);
+  padding: env(safe-area-inset-top, 0px) var(--space-2) 0 var(--space-3);
+  background: var(--bg-panel);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.browser-view-mark {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-right: var(--space-1);
+  color: var(--text-dim);
+}
+
+.browser-view-title,
+.browser-view-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.browser-view-title {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-view-bar .icon-button[aria-pressed="true"] {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.browser-view-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* every touch here is the remote browser's: the phone must not scroll, zoom or select with it */
+.browser-view-screen {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.browser-view-status,
+.browser-view-error {
+  position: absolute;
+  inset-inline: 0;
+  margin: 0;
+  padding: 0 var(--space-4);
+  text-align: center;
+  pointer-events: none;
+}
+
+.browser-view-status {
+  top: 40%;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+}
+
+.browser-view-status p {
+  margin: 0 0 var(--space-3);
+}
+
+.browser-view-status [role="alert"] {
+  color: var(--danger-text);
+}
+
+.browser-view-status .btn {
+  pointer-events: auto;
+}
+
+.browser-view-error {
+  bottom: var(--space-4);
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+
+/* The phone keyboard's field: on the page so it can hold the focus, never seen or touched. */
+.browser-view-keys {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  font-size: var(--fs-input);
+  opacity: 0;
+  pointer-events: none;
+  resize: none;
+}
+
+/* visible in the app bar even when the workspace drawer is closed */
+.browser-view-open {
+  color: var(--text-dim);
+}

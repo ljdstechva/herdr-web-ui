@@ -171,12 +171,7 @@ describe("POST /api/pane/find", () => {
       });
       expect(response.status).toBe(409);
       expect((await response.json() as ApiError).error.code).toBe("stale_content");
-      const afterResponse = await paneScrollInfo(paneId);
-      // The substring receipt can precede cat's remaining output. History growth
-      // raises both bottom-relative offsets without moving the viewport's top row.
-      expect(afterResponse && afterResponse.max_offset_from_bottom - afterResponse.offset_from_bottom)
-        .toBe(afterOutput && afterOutput.max_offset_from_bottom - afterOutput.offset_from_bottom);
-      expect(afterResponse?.viewport_rows).toBe(afterOutput?.viewport_rows);
+      expect(await paneScrollInfo(paneId)).toEqual(afterOutput);
     });
   }
 

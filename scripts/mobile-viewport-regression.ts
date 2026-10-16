@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Browser } from "playwright-core";
-import { sheetsSettled } from "./sheets-settled.ts";
+import { moreItem } from "./header-more.ts";
 
 type ViewportQA = Window & { viewportQA: { resize: (height: number) => void; pointer: (touch: boolean) => void } };
 
@@ -11,8 +11,6 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     await context.addInitScript(() => {
-      // the walk starts in the input line, where a tapped grid raises no keyboard
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "line" }));
       const viewport = window.visualViewport!;
       let height = 795; // a standalone app's idle visual viewport can exclude its status bar
       Object.defineProperty(viewport, "height", { get: () => height });
@@ -35,19 +33,9 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
-    // read in one step: the transcript's first node is replaced as the conversation loads, and a node
-    // found before that and read after it is out of the document, with no style at all
-    assert.equal(await page.evaluate(() => { const view = document.querySelector(".chat-view"); return view ? getComputedStyle(view).overscrollBehaviorY : "no .chat-view"; }), "contain",
+    assert.equal(await page.locator(".chat-view").evaluate((node) => getComputedStyle(node).overscrollBehaviorY), "contain",
       "a drag past the transcript's top stays in the transcript, or Android Chrome reloads the app");
-    assert.deepEqual(await page.evaluate(() => [document.documentElement, document.body].map((node) => getComputedStyle(node).overscrollBehaviorY)),
-      ["contain", "contain"], "a drag on a surface with nothing to scroll reaches the page, which Android Chrome before 144 reloads unless html and body contain it");
-    const blur = () => page.evaluate(() => new Promise<void>((resolve) => {
-      const active = document.activeElement;
-      if (!(active instanceof HTMLElement) || active === document.body) { resolve(); return; }
-      // Registered after viewport.ts's handler: resolve after its deferred focusout sync.
-      document.addEventListener("focusout", () => window.setTimeout(resolve, 0), { once: true });
-      active.blur();
-    }));
+    const blur = () => page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); });
     const height = (value: number) => page.evaluate((value) => (window as ViewportQA).viewportQA.resize(value), value);
     const shell = async (keyboard: boolean, appHeight: string, pixels: number) => {
       try {
@@ -90,9 +78,6 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await page.waitForTimeout(20);
     await shell(true, "500px", 500);
     await blur();
-    // Focus loss alone does not dismiss the still-occluding keyboard.
-    await shell(true, "500px", 500);
-    await height(795);
     await shell(false, "", 844);
     await page.locator("#qa-next-field").evaluate((node) => node.remove());
     // WebKit need not report focusout when a focused field leaves the page with its pane:
@@ -102,7 +87,6 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
       document.body.append(field);
       field.focus();
     });
-    await height(500);
     await shell(true, "500px", 500);
     await page.evaluate(() => {
       const swallow = (event: Event) => event.stopImmediatePropagation();
@@ -124,7 +108,7 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     const terminal = page.locator(".xterm-helper-textarea");
     await terminal.focus();
     await shell(false, "", 844);
-    const direct = page.getByRole("button", { name: "Input line", exact: true });
+    const direct = page.getByRole("button", { name: "Type straight into the terminal", exact: true });
     await direct.click();
     await page.locator("[data-direct-typing]").waitFor();
     await shell(true, "500px", 500);
@@ -133,55 +117,40 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
       await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "viewport-direct-typing.png") });
     }
     await direct.click();
-    await shell(true, "500px", 500);
-    await height(795);
-    await shell(false, "", 844);
-    await height(500);
     await shell(false, "", 844);
     await page.getByRole("textbox", { name: "Terminal input line", exact: true }).focus();
     await shell(true, "500px", 500);
     await blur();
-    await shell(true, "500px", 500);
-    await height(795);
     await shell(false, "", 844);
 
     await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
     await composer.focus();
-    await height(500);
     await shell(true, "500px", 500);
-    // A hardware pointer cannot clear existing occlusion, but cannot start keyboard sizing.
+    // Switching to a hardware pointer must clear sizing even when the text field keeps focus.
     await page.evaluate(() => (window as ViewportQA).viewportQA.pointer(false));
-    await shell(true, "500px", 500);
-    await height(795);
-    await shell(false, "", 844);
-    await height(500);
     await shell(false, "", 844);
     await page.evaluate(() => (window as ViewportQA).viewportQA.pointer(true));
     await shell(true, "500px", 500);
     await blur();
-    await shell(true, "500px", 500);
     await height(795);
     await shell(false, "", 844);
     if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "viewport-idle.png") });
 
     // A sheet with a text field ends where the keyboard begins: an iPhone home screen app keeps
     // the layout viewport at full height, so a sheet on its bottom edge would sit under the keyboard.
-    // at phone width the palette's header button is gone: a hardware keyboard's shortcut opens it
+    // at phone width the palette's header button is gone: it is the More menu's first item
     assert.equal(await page.locator(".app-header .palette-button").isVisible(), false, "a phone's header has no palette button");
-    await page.keyboard.press("ControlOrMeta+Shift+K");
-    await page.getByRole("dialog", { name: "Command palette", exact: true }).waitFor();
+    const palette = await moreItem(page, "Command palette");
+    assert.equal(await page.locator(".row-sheet-item").first().textContent(), "Command palette", "the palette is the More menu's first item");
+    await palette.click();
     const search = page.locator(".palette-search input");
     await search.focus();
     await height(500);
     await shell(true, "500px", 500);
-    const sheet = async () => {
-      // where the palette comes to rest, not where it is while it rises
-      await sheetsSettled(page);
-      return page.evaluate(() => {
-        const edges = (selector: string) => { const r = document.querySelector(selector)!.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom) }; };
-        return { scrim: edges(".modal-scrim"), palette: edges(".command-palette"), search: edges(".palette-search input") };
-      });
-    };
+    const sheet = () => page.evaluate(() => {
+      const edges = (selector: string) => { const r = document.querySelector(selector)!.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom) }; };
+      return { scrim: edges(".modal-scrim"), palette: edges(".command-palette"), search: edges(".palette-search input") };
+    });
     for (const query of ["", "no pane or action is named like this"]) {
       await search.fill(query);
       const at = await sheet();
@@ -193,19 +162,9 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await page.keyboard.press("Escape");
     await page.locator(".command-palette").waitFor({ state: "hidden" });
     await blur();
-    await shell(true, "500px", 500);
     await height(795);
     await shell(false, "", 844);
     assert.deepEqual(errors, []);
     console.log("PASS viewport contract: idle, keyboard resize, field handoff, blur, rotation, xterm modes, pointer changes and a sheet above the keyboard");
   } finally { await context.close(); }
-}
-
-// Reuse the existing disposable demo fixture when this helper is invoked as a script.
-if (import.meta.main) {
-  if (process.env.HERDR_TEST_MODE === "unit") throw new Error("HERDR_TEST_MODE=unit cannot run mobile viewport checks");
-  const runner = Bun.spawn([process.execPath, join(import.meta.dir, "keyboard-viewport-demo-regression.ts")], {
-    stdin: "inherit", stdout: "inherit", stderr: "inherit",
-  });
-  process.exitCode = await runner.exited;
 }

@@ -26,7 +26,7 @@ run_script() {
   if [ -n "${CI:-}${CHECK_DIR:-}" ]; then
     # These evidence branches add viewport changes, assertions or font waits, not just captures.
     case "$1" in
-      scripts/ui-regression.ts|scripts/ui-contexts-regression.ts|scripts/key-bar-customization-demo-regression.ts) evidence="";;
+      scripts/ui-regression.ts|scripts/key-bar-customization-demo-regression.ts) evidence="";;
     esac
   fi
   UI_EVIDENCE_DIR="$evidence" bun "$@" || code=$?
@@ -41,7 +41,15 @@ if [ -n "${CI:-}${CHECK_DIR:-}" ]; then
   export CHECK_BROWSER_EVIDENCE_DIR="${CHECK_DIR:-.ci}/browser-evidence"
   mkdir -p "$UI_EVIDENCE_DIR" "$CHECK_BROWSER_EVIDENCE_DIR"
 fi
-CHROME_PATH="$(bash scripts/ci-chromium.sh)"
+# CI's runner image has none of Chromium's system libraries; a PC is not asked for sudo
+if [ -n "${CI:-}" ]; then
+  # as root, so a timed-out attempt's apt can be killed (an unprivileged timeout cannot SIGKILL root's apt)
+  sudo bash scripts/ci-bounded-retry.sh 300 "$(command -v bun)" node_modules/playwright-core/cli.js install-deps chromium
+  bun node_modules/playwright-core/cli.js install chromium
+else
+  bun node_modules/playwright-core/cli.js install chromium
+fi
+CHROME_PATH="$(bun -e 'console.log(require("playwright-core").chromium.executablePath())')"
 export CHROME_PATH
 # The demo scripts below all show the same client: it is built once here and each copies it
 # (scripts/demo-build.ts), instead of each building it again.
@@ -49,58 +57,40 @@ HERDR_DEMO_BUILD="$(mktemp -d)"
 export HERDR_DEMO_BUILD
 run_script scripts/demo-build.ts "$HERDR_DEMO_BUILD"
 run_script scripts/ui-regression.ts
-run_script scripts/ui-contexts-regression.ts
 run_script scripts/workspace-rows-regression.ts
 run_script scripts/pending-pane-switch-regression.ts
-run_script scripts/lan-exposure-notice-regression.ts
 run_script scripts/terminal-dispose-browser-qa.ts
-run_script scripts/herdr-restart-regression.ts
 run_script scripts/sticky-modifiers-regression.ts
 run_script scripts/terminal-arrows-clicks-regression.ts
 run_script scripts/terminal-viewport-regression.ts
-run_script scripts/application-paging-regression.ts
-run_script scripts/pane-paging-demo-regression.ts
 run_script scripts/key-bar-customization-demo-regression.ts
 run_script scripts/key-bar-hold-repeat-regression.ts
 run_script scripts/settings-pages-demo-regression.ts
-run_script scripts/pane-input-focus-demo-regression.ts
-run_script scripts/shortcut-exact-modifiers-demo-regression.ts
-run_script scripts/portal-regression.ts
 run_script scripts/deep-link-demo-regression.ts
+run_script scripts/notification-read-regression.ts
 run_script scripts/chat-history-browser-qa.ts
-run_script scripts/chat-virtual-browser-qa.ts
-run_script scripts/chat-scroll-padding-regression.ts
-run_script scripts/chat-selection-copy-regression.ts
-run_script scripts/chat-fallback-browser-qa.ts
-run_script scripts/grok-chat-browser-qa.ts
-run_script scripts/omo-chat-browser-qa.ts
-run_script scripts/agy-chat-browser-qa.ts
-run_script scripts/gjc-status-browser-regression.ts
 run_script scripts/math-browser-qa.ts
 run_script scripts/file-viewer-regression.ts
-run_script scripts/pwa-update-browser-qa.ts
-run_script scripts/file-preview-text-browser-qa.ts
-run_script scripts/virtual-source-browser-qa.ts
-run_script scripts/repo-diff-browser-qa.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
+run_script scripts/download-regression.ts
 run_script scripts/droplet-demo-regression.ts
 run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/restored-draft-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts
+run_script scripts/composer-selection-demo-regression.ts
 run_script scripts/held-rows-demo-regression.ts
+run_script scripts/instant-send-demo-regression.ts
+run_script scripts/browser-view-demo-regression.ts
+run_script scripts/tab-swipe-demo-regression.ts
+run_script scripts/model-label-demo-regression.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-spacing-demo-regression.ts
 run_script scripts/workspace-touch-reorder-demo-regression.ts
+run_script scripts/worktree-tabs-demo-regression.ts
+run_script scripts/worktree-tabs-regression.ts
 run_script scripts/prompt-dock-demo-regression.ts
 run_script scripts/plugin-actions-demo-regression.ts
 run_script scripts/palette-machines-demo-regression.ts
-run_script scripts/narrow-pane-demo-regression.ts
-run_script scripts/touch-long-press-demo-regression.ts
-run_script scripts/render-crash-demo-regression.ts
-run_script scripts/phone-split-grid-demo-regression.ts
-run_script scripts/recent-folders-regression.ts
-run_script scripts/preferences-sync-regression.ts
 run_script scripts/machine-dialog-regression.ts
 run_script scripts/machine-conflict-regression.ts
-run_script scripts/herdr-profiles-browser-qa.ts

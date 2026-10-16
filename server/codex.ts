@@ -2,16 +2,16 @@
  * conversation records belong in chat; developer prompts and terminal chrome do not. */
 import { Database } from "bun:sqlite";
 import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
-import { open, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
 import type { ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { patchFiles, patchText } from "../shared/patch.ts";
-import { processStartedAt, processStartUpperBound } from "./process-start.ts";
+import { processStartedAt } from "./process-start.ts";
 import { codexImageParts } from "./codex-images.ts";
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
-import { agentGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue => value !== null && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -967,7 +967,6 @@ function displayedFirstExchange(screen: string): CodexExchange | null {
   let promptAt = -1;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] ?? "";
-    if (/^• (?:Model changed|Unrecognized command|Working directory changed)(?:[ \t]|$)/.test(line)) continue;
     if (/^•(?:[ \t]|$)/.test(line)) return null;
     if (/^›[ \t]+/.test(line)) { promptAt = index; break; }
   }
@@ -986,12 +985,12 @@ function displayedFirstExchange(screen: string): CodexExchange | null {
   return { user, assistant: response };
 }
 
-function matchingCodexExchanges(screen: string, candidates: readonly CodexFirstExchangeCandidate[], answerFloor: number): { candidate: CodexFirstExchangeCandidate; index: number }[] {
+function matchingCodexExchanges(screen: string, candidates: readonly CodexFirstExchangeCandidate[]): { candidate: CodexFirstExchangeCandidate; index: number }[] {
   const shown = displayedFirstExchange(screen);
   if (shown === null) return [];
   const prompt = normalizePrompt(shown.user);
   const answer = normalizePrompt(shown.assistant);
-  if (prompt === "" || normalizeDisplay(answer).length < answerFloor) return [];
+  if (normalizeDisplay(prompt).length < 8 || normalizeDisplay(answer).length < 16) return [];
   const matches: { candidate: CodexFirstExchangeCandidate; index: number }[] = [];
   for (const candidate of candidates) {
     for (const [index, exchange] of codexExchanges(candidate.text).entries()) {
@@ -1015,14 +1014,14 @@ export function matchCodexFirstExchange(
   if (!Number.isFinite(startedAtMs)) return null;
   if (candidates.filter((candidate) => typeof candidate.createdAtMs === "number"
     && candidate.createdAtMs >= startedAtMs).length !== 1) return null;
-  const matches = matchingCodexExchanges(screen, candidates, 1);
+  const matches = matchingCodexExchanges(screen, candidates);
   if (matches.length !== 1) return null;
   const match = matches[0]!;
   const first = codexExchanges(match.candidate.text)[0];
   const storedPrompt = normalizePrompt(match.candidate.firstUserMessage ?? "");
   const shown = displayedFirstExchange(screen);
   if (match.index !== 0 || first === undefined || shown === null
-    || storedPrompt === ""
+    || normalizeDisplay(storedPrompt).length < 8
     || normalizePrompt(first.user) !== storedPrompt
     || normalizePrompt(first.assistant) !== normalizePrompt(shown.assistant)
     || typeof match.candidate.createdAtMs !== "number"
@@ -1090,10 +1089,10 @@ const VALUELESS_OPTIONS = new Set([
 
 /** A pane's Codex executables (or interpreter scripts), and their pids as one key. */
 async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
-  const processInfo = await paneProcessInfo(paneId);
-  // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list
-  // (the cast is the inline result type herdrRpc was given before the typed seam)
-  const list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
+  const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
+    "pane.process_info", { pane_id: paneId },
+  );
+  const list = (processInfo.process_info?.foreground_processes ?? [])
     .map((foreground) => {
       if (foreground.argv?.length || process.platform !== "linux") return foreground;
       // herdr can report only pid/name. Read this process, never infer argv from
@@ -1201,54 +1200,9 @@ interface CodexThreadRow {
 
 const SHORT_THREAD_LIMIT = 32;
 const SHORT_ROLLOUT_LIMIT = 1024 * 1024;
-/** How far a rollout was validated: `offset` bytes of whole lines; `dead` once a line can never pass. */
-interface ShortScan { offset: number; retained: number; text: string; dead: boolean }
-
-// A chat polls every 2 s and nothing binds a short match. Rollouts only grow, so an unchanged
-// one is not read again and a grown one is read from where the last read stopped.
-const shortScans = new Map<string, { ino: number; size: number; mtimeMs: number; scan: ShortScan }>();
-const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
-
-/** Validate every record, retaining only messages: tool output cannot identify a conversation. */
-async function scanShortText(path: string, size: number, from: ShortScan): Promise<ShortScan> {
-  const fd = await open(path, "r");
-  const buffer = Buffer.alloc(64 * 1024);
-  let { offset, retained, text } = from;
-  let carry = Buffer.alloc(0), position = offset;
-  const dead = (): ShortScan => ({ offset, retained, text, dead: true });
-  try {
-    while (position < size) {
-      const { bytesRead: length } = await fd.read(buffer, 0, Math.min(buffer.length, size - position), position);
-      if (length === 0) break;
-      position += length;
-      carry = Buffer.concat([carry, buffer.subarray(0, length)]);
-      let start = 0, newline: number;
-      while ((newline = carry.indexOf(10, start)) >= 0) {
-        if (newline - start > SHORT_ROLLOUT_LIMIT) return dead();
-        let line: string, entry: Record<string, unknown>;
-        try {
-          line = strictUtf8.decode(carry.subarray(start, newline));
-          entry = record(JSON.parse(line));
-        } catch { return dead(); }
-        const payload = record(entry.payload);
-        if (entry.type === "response_item" && payload.type === "message"
-          || entry.type === "event_msg" && (payload.type === "user_message" || payload.type === "agent_message")) {
-          retained += newline - start + 1;
-          if (retained > SHORT_ROLLOUT_LIMIT) return dead();
-          text += line + "\n";
-        }
-        offset += newline - start + 1;
-        start = newline + 1;
-      }
-      carry = carry.subarray(start);
-      if (carry.length > SHORT_ROLLOUT_LIMIT) return dead();
-    }
-    return { offset, retained, text, dead: false };
-  } finally { await fd.close(); }
-}
 
 /** Short matching needs every competing exchange, so incomplete or unsafe rows disable it. */
-async function safeShortThreads(rows: readonly CodexThreadRow[], home: string): Promise<CodexFirstExchangeCandidate[] | null> {
+function safeShortThreads(rows: readonly CodexThreadRow[], home: string): CodexFirstExchangeCandidate[] | null {
   if (rows.length === 0 || rows.length > SHORT_THREAD_LIMIT) return null;
   const candidates: CodexFirstExchangeCandidate[] = [];
   for (const row of rows) {
@@ -1257,26 +1211,17 @@ async function safeShortThreads(rows: readonly CodexThreadRow[], home: string): 
     try {
       const stat = statSync(path);
       const header = rolloutHeader(path);
-      if (!stat.isFile() || stat.size <= 0 || header === null
+      if (!stat.isFile() || stat.size <= 0 || stat.size > SHORT_ROLLOUT_LIMIT || header === null
         || Object.keys(record(header.history_base)).length > 0) return null;
-      const cached = shortScans.get(path);
-      const sameFile = cached !== undefined && cached.ino === stat.ino;
-      let scan: ShortScan;
-      if (sameFile && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-        scan = cached.scan;
-      } else {
-        const grown = sameFile && stat.size > cached.size;
-        scan = grown && cached.scan.dead ? cached.scan
-          : await scanShortText(path, stat.size, grown ? cached.scan : { offset: 0, retained: 0, text: "", dead: false });
-        const after = statSync(path);
-        if (after.size !== stat.size || after.ino !== stat.ino || after.mtimeMs !== stat.mtimeMs) return null;
-        shortScans.delete(path);
-        shortScans.set(path, { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, scan });
-        if (shortScans.size > 128) shortScans.delete(shortScans.keys().next().value!);
-      }
-      // a line still being written leaves the rollout unread to its end
-      if (scan.dead || scan.offset !== stat.size) return null;
-      const text = scan.text;
+      const text = readRange(path, 0, stat.size);
+      const after = statSync(path);
+      if (Buffer.byteLength(text, "utf8") !== stat.size
+        || after.size !== stat.size || after.ino !== stat.ino || after.mtimeMs !== stat.mtimeMs
+        || !text.endsWith("\n")) return null;
+      const lines = text.slice(0, -1).split(/\r?\n/);
+      if (lines.length === 0 || lines.some((line) => {
+        try { JSON.parse(line); return false; } catch { return true; }
+      })) return null;
       const exchanges = codexExchanges(text);
       const stored = normalizePrompt(row.firstUserMessage ?? "");
       if (stored !== "" && (exchanges[0] === undefined || normalizePrompt(exchanges[0].user) !== stored)) return null;
@@ -1293,21 +1238,23 @@ async function safeShortThreads(rows: readonly CodexThreadRow[], home: string): 
 
 /**
  * The prompt is not ownership evidence on its own. Require its submitted answer,
- * compare older conversations and other same-directory panes too. A peer showing the
- * same exchange leaves ownership ambiguous. No weak binding survives a poll.
+ * compare older conversations too, and decline while another same-directory Codex
+ * pane could own the thread. No weak binding or cached peer claim survives a poll.
  */
 async function shortThreadFromProcess(
   paneId: string, cwd: string, home: string, screen: string,
   processes: readonly { pid: number }[], panes?: HerdrPane[],
 ): Promise<string | null> {
-  const starts = processes.map(({ pid }) => processStartUpperBound(pid));
+  const starts = processes.map(({ pid }) => processStartedAt(pid));
   if (starts.length === 0 || starts.some((start) => start === null || !Number.isFinite(start))) return null;
-  const notBefore = Math.min(...starts as number[]);
+  const startedAt = Math.min(...starts as number[]);
+  const notBefore = startedAt + 1000;
   let db: Database | undefined;
   try {
     const peers = panes ?? (await sessionSnapshot()).panes;
     if (peers.some((pane) => pane.pane_id !== paneId
-      && (pane.agent ?? pane.agent_session?.agent) === "codex" && pane.cwd == null)) return null;
+      && (pane.agent ?? pane.agent_session?.agent) === "codex"
+      && (pane.cwd == null || sameDirectory(pane.cwd, cwd)))) return null;
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     const columns = new Set(db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('threads')").all().map((column) => column.name));
     if (!columns.has("first_user_message") || !columns.has("source")) return null;
@@ -1319,35 +1266,40 @@ async function shortThreadFromProcess(
        FROM threads WHERE ${where} AND archived = 0 AND agent_role IS NULL${interactive(db)} LIMIT 33`,
     ).all(...params);
     if (rows.length > SHORT_THREAD_LIMIT || rows.some((row) => !Number.isFinite(row.createdAtMs))) return null;
-    // Only a thread created after this process's start bound may be its new first exchange.
+    // Process starts are only estimated to second precision; require a full second of margin.
     const begun = rows.filter((row) => row.createdAtMs >= notBefore);
     if (begun.length !== 1) return null;
-    const candidates = await safeShortThreads(rows, home);
+    const candidates = safeShortThreads(rows, home);
     if (candidates === null) return null;
     const path = matchCodexFirstExchange(screen, candidates, notBefore);
-    if (path === null || theirs([path], paneId).length !== 1) return null;
-    const peerScreens = await Promise.all(codexPeersIn(peers, paneId, cwd).map((peer) =>
-      paneRead({ paneId: peer.pane_id, source: "recent", lines: 400, stripAnsi: true })));
-    const own = candidates.filter((candidate) => candidate.path === path);
-    for (const peer of peerScreens) {
-      // Headerless exchanges can disprove ownership, but never establish it.
-      const screens = peer.text.includes("OpenAI Codex (v") ? [peer.text]
-        : peer.text.split(/(?=^›[ \t]+)/m).map((text) => `OpenAI Codex (v\n${text}`);
-      if (screens.some((text) => matchingCodexExchanges(text, own, 1).length > 0)) return null;
-      // A missing header is unknown, not evidence of a different conversation.
-      if (displayedFirstExchange(peer.text) === null) {
-        const matched = matchCodexTranscript(peer.text, candidates);
-        if (matched === null || matched === path) return null;
-      }
-    }
-    return path;
+    return path !== null && theirs([path], paneId).length === 1 ? path : null;
   } catch { return null; }
   finally { db?.close(); }
 }
 
-/** The pane's Codex processes, and the rollouts they hold open (lsof on macOS, /proc elsewhere): one alone is the pane's. */
-async function openRollouts(paneId: string, home: string): Promise<{ codexProcesses: Awaited<ReturnType<typeof codexProcessesOf>>["list"]; processes: string; open: Set<string> }> {
+/**
+ * The rollout a pane's Codex writes, or null when nothing tells. `panes`: the session's
+ * panes, when the caller has them (saves a snapshot, and closed panes' bindings go).
+ *
+ * The thread id herdr has for a Codex pane is a hint, not proof: Codex's SessionStart
+ * hook reports it, and since Codex 0.157 that hook runs in the app-server daemon every
+ * Codex TUI shares. The daemon keeps the environment of the TUI that started it, so each
+ * TUI's thread is reported to that first pane (live-verified 2026-09-26 with Codex
+ * 0.157.1: a pane resumed on thread A left the daemon's own pane holding A). What
+ * shows on screen decides first; the id is used only when nothing does and no other
+ * pane owns that thread.
+ */
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[]): Promise<string | null> {
+  if (panes !== undefined) {
+    const open = new Set(panes.map((pane) => pane.pane_id));
+    for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
+  }
+  const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
+  const session = info.agent.agent_session;
+  if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
+
   const { list: codexProcesses, key: processes } = await codexProcessesOf(paneId);
+  const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
   const open = new Set<string>();
   if (globalThis.process.platform === "darwin" && codexProcesses.length > 0) {
     // lsof is available on macOS, where /proc does not exist. Keep the same
@@ -1381,58 +1333,7 @@ async function openRollouts(paneId: string, home: string): Promise<{ codexProces
       } catch { /* A descriptor may close while enumerating it. */ }
     }
   }
-  return { codexProcesses, processes, open };
-}
-
-/**
- * The rollout a pane's Codex writes when that is certain without reading its screen: the path
- * herdr reports, the one rollout its processes hold open, or the one a chat read last matched to
- * the same processes while no thread begun in `cwd` since may have replaced it (/new). Nothing is
- * matched or bound here, so a reader in the background (the session plan, server/session-plan.ts)
- * never changes what codexTranscriptPath decides for the chat. Unlike the chat it does not ask the
- * other panes' screens whose a newer thread is: such a thread leaves it unsure until a chat read
- * matches the pane again.
- */
-export async function codexOpenRollout(paneId: string, cwd: string | null | undefined, home = defaultCodexHome()): Promise<string | null> {
-  const session = (await agentGet(paneId)).agent_session;
-  if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
-  const { processes, open } = await openRollouts(paneId, home);
   if (open.size === 1) return [...open][0]!;
-  const bound = boundRollouts.get(paneId);
-  if (bound === undefined || bound.processes !== processes || processes === "" || !cwd || codexRolloutPath(bound.path, home) === null) return null;
-  let db: Database | undefined;
-  try {
-    db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
-    return newerThreads(db, cwd, Math.floor(bound.at / 1000), null, paneId, home).length === 0 ? bound.path : null;
-  } catch {
-    // no store to ask, as codexTranscriptPath then keeps its binding too
-    return bound.path;
-  } finally { db?.close(); }
-}
-
-/**
- * The rollout a pane's Codex writes, or null when nothing tells. `panes`: the session's
- * panes, when the caller has them (saves a snapshot, and closed panes' bindings go).
- *
- * The thread id herdr has for a Codex pane is a hint, not proof: Codex's SessionStart
- * hook reports it, and since Codex 0.157 that hook runs in the app-server daemon every
- * Codex TUI shares. The daemon keeps the environment of the TUI that started it, so each
- * TUI's thread is reported to that first pane (live-verified 2026-09-26 with Codex
- * 0.157.1: a pane resumed on thread A left the daemon's own pane holding A). What
- * shows on screen decides first; the id is used only when nothing does and no other
- * pane owns that thread.
- */
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[]): Promise<string | null> {
-  if (panes !== undefined) {
-    const open = new Set(panes.map((pane) => pane.pane_id));
-    for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
-  }
-  const session = (await agentGet(paneId)).agent_session;
-  if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
-
-  const { codexProcesses, processes, open } = await openRollouts(paneId, home);
-  if (open.size === 1) return [...open][0]!;
-  const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
 
   let db: Database | undefined;
   let paths: string[] = [...open];

@@ -34,25 +34,23 @@ export function composerPayload(text: string, bracketedPaste: boolean): string {
 /** The server refused the message before any of it reached the pane: nothing was typed. */
 export function submitNotTyped(code: string): boolean {
   return ["agent_blocked", "read_only", "submit_timeout", "agent_not_ready", "pending_input_unsupported", "invalid_delivery", "invalid_submit_text",
-    "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft",
-    // refused by this view while the terminal holds input (PaneTerminal), before anything was sent
-    "held_input"].includes(code);
+    "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft"].includes(code);
 }
 
-/**
- * A send refused over Claude's terminal input box: the note, and either the one-row draft a send may
- * clear first (`draft`), or, where the server named none but showed the box, a send anyway (`anyway`).
- */
-export type DraftRefusal = { note: string; draft: string } | { note: string; anyway: true };
+/** A send refused over a one-row draft in Claude's terminal input box: the note, and the draft a send may clear first. */
+export interface DraftRefusal { note: string; draft: string }
 
 /**
- * submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`)
- * or showed a box it could not tell empty (`box`; empty when it could not read one whole).
+ * A send that is not in the pane yet and is shown where it waits: in the bridge's own waiting
+ * list (PendingMessages), or in the prompt card as a pick that asks for Confirm.
  */
-export function submitRefusal(code: string, message: string, draft?: string, box?: string, agent?: string | null): string | DraftRefusal {
+export interface SendQueued { queued: true }
+export const SEND_QUEUED: SendQueued = Object.freeze({ queued: true as const });
+
+/** submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`). */
+export function submitRefusal(code: string, message: string, draft?: string): string | DraftRefusal {
   if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };
-  if (code === "input_draft" && box) return { note: t("Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.", { box }), anyway: true };
-  return submitNote(code, message, agent);
+  return submitNote(code, message);
 }
 
 /** The same message as typed, however a terminal wrapped or indented it: equal once all whitespace is gone. */
@@ -60,13 +58,10 @@ export function sameMessage(a: string, b: string): boolean {
   const bare = (text: string): string => text.replace(/[\s\u00a0]+/gu, "");
   return bare(a) !== "" && bare(a) === bare(b);
 }
-/** `agent`: the pane's agent, which names the input an input_draft refusal is about (Claude Code's when unknown) */
-export function submitNote(code: string, message: string, agent?: string | null): string {
+export function submitNote(code: string, message: string): string {
   if (code === "submit_partial") return t("Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.");
   if (code === "agent_blocked") return t("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
   if (code === "read_only") return t("Not sent: this view only watches the pane.");
-  if (code === "held_input") return t("Not sent: send or discard the held input first.");
-  if (code === "input_draft" && agent === "hermes") return t("Not sent: Hermes' input in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");
@@ -83,30 +78,22 @@ export function imageMention(path: string): string {
 }
 
 /**
- * Where an attached file's mention goes: at the start of the message, after a leading `/command`
- * (it must stay first to be one), and after the mentions of files picked before it in the same
- * batch that are still there, so a batch reads in pick order however its uploads finish. An upload
- * finishes while the user may be typing, so the mention never goes where the caret is: the caller
- * shifts the caret and selection by `length` when they sit at or after `at`. The mention goes in
- * whole, with its separating space, or not at all (`length` 0): a cut `@path` would name a file
- * that does not exist, so the caller keeps the attachment waiting until there is room; `missing`
- * says how many characters the message is short of it.
+ * Puts a mention over the selection [start, end) as its own token: a space goes in
+ * front when the text before it does not already end in whitespace, because the chat
+ * and the agent only read `@path` after whitespace or at the start. The insertion is
+ * cut to what still fits under MAX_COMPOSER_CHARS.
  */
-export function insertLeadingMention(
+export function insertMention(
   text: string,
+  start: number,
+  end: number,
   mention: string,
-  earlier: readonly string[],
-): { text: string; at: number; length: number; missing?: number } {
-  let at = /^\/\S+\s*/u.exec(text)?.[0].length ?? 0;
-  for (const previous of earlier) {
-    const found = text.indexOf(previous);
-    if (found >= 0) at = Math.max(at, found + previous.length);
-  }
-  const before = text.slice(0, at);
+): { text: string; caret: number } {
+  const before = text.slice(0, start);
   const snippet = before.length > 0 && !/\s$/u.test(before) ? ` ${mention}` : mention;
-  const missing = text.length + snippet.length - MAX_COMPOSER_CHARS;
-  if (missing > 0) return { text, at, length: 0, missing };
-  return { text: before + snippet + text.slice(at), at, length: snippet.length };
+  const room = Math.max(0, MAX_COMPOSER_CHARS - text.length + end - start);
+  const inserted = snippet.slice(0, room);
+  return { text: before + inserted + text.slice(end), caret: start + inserted.length };
 }
 
 /** Ready states affect the held-message hint only; sending always requires a user action. */
@@ -180,15 +167,9 @@ export function composerDelivery(agent: string | null, status?: AgentStatus): "q
  * it is uploading, and nothing else in the card would say why Stop and add are off. Otherwise
  * an upload says so while it runs.
  */
-/** Characters left at which the composer starts counting them: further off, a count is noise. */
-export const COMPOSER_CHARS_WARNING = 200;
-
-/** `noRoom`: a finished upload's path waits for the message to be shortened. */
-export function composerStatusHint(state: { uploading: boolean; connected: boolean; text: string; noRoom?: boolean }): "uploading" | "offline" | "no-room" | "near-limit" | null {
+export function composerStatusHint(state: { uploading: boolean; connected: boolean; text: string }): "uploading" | "offline" | null {
   if (!state.connected && state.text.length > 0) return "offline";
-  if (state.noRoom) return "no-room";
-  if (state.uploading) return "uploading";
-  return MAX_COMPOSER_CHARS - state.text.length <= COMPOSER_CHARS_WARNING ? "near-limit" : null;
+  return state.uploading ? "uploading" : null;
 }
 
 /**
@@ -196,18 +177,15 @@ export function composerStatusHint(state: { uploading: boolean; connected: boole
  * row. Asked of the layout, not of a width: what fits depends on the name's length, the mic, the
  * task chip, the language and the font. `modelClipped` and `effortClipped` are measured with
  * everything drawn.
- * - "full": all of it fits.
- * - "out": while Queue is showing, a label that does not fit steps out whole (read, not drawn),
- *   so Queue keeps its word and no name is cut mid-word. It is back once the draft is sent, held
- *   or cleared.
- * - "no-effort": without Queue the effort word steps out whole before the name gives a letter,
- *   so a sliver of a word is never drawn. A name still too long is ellipsized as the last resort.
+ * - "full": all of it fits beside the controls.
+ * - "row": it does not. The name and the level are always drawn, so the status takes a row of
+ *   its own over the controls, the card's whole width (Composer.css, data-status-row). A name too
+ *   long even for that is ellipsized as the last resort; the level never is.
  */
-export type ComposerModelDraw = "full" | "no-effort" | "out";
+export type ComposerModelDraw = "full" | "row";
 
 export function composerModelDraw(state: { modelClipped: boolean; effortClipped: boolean }): ComposerModelDraw {
-  if (!state.modelClipped && !state.effortClipped) return "full";
-  return "no-effort";
+  return state.modelClipped || state.effortClipped ? "row" : "full";
 }
 
 /** Herdr agent ids are machine-friendly; the composer presents a short human label. */
@@ -226,15 +204,14 @@ export function agentDisplayLabel(agent: string | null): string {
  * tried against each word of the name before it falls back to a substring, a run of letters in
  * order (`brst`), and the description.
  */
-function slashMatchTier(command: SlashCommand, needle: string, prefixOnly: boolean): number | null {
+function slashMatchTier(command: SlashCommand, needle: string): number | null {
   if (needle === "") return 0;
   const name = command.name.toLocaleLowerCase();
   if (name.startsWith(needle)) return 0;
   const first = name.indexOf(needle);
   for (let position = first; position >= 0; position = name.indexOf(needle, position + 1)) {
-    if ((prefixOnly ? /[:-]/u : /[:\-_./]/u).test(name[position - 1]!)) return 1;
+    if (position === 0 || /[:\-_./]/u.test(name[position - 1]!)) return 1;
   }
-  if (prefixOnly) return null;
   if (first >= 0) return 2;
   let at = 0;
   for (const letter of name) {
@@ -247,18 +224,16 @@ function slashMatchTier(command: SlashCommand, needle: string, prefixOnly: boole
 /**
  * Filter commands by what was typed - prefix first, then a word of the name, a substring, letters
  * in order, the description - and within a match kind prefer the commands the user selects most.
- * Away from line starts, `prefixOnly` excludes fuzzy matches that could rewrite paths such as `/tmp`.
  */
 export function rankSlashCommands(
   commands: readonly SlashCommand[],
   query: string,
   usage: Readonly<Partial<Record<string, number>>>,
-  prefixOnly = false,
 ): SlashCommand[] {
   const needle = query.toLocaleLowerCase();
   const ranked: { command: SlashCommand; tier: number }[] = [];
   for (const command of commands) {
-    const tier = slashMatchTier(command, needle, prefixOnly);
+    const tier = slashMatchTier(command, needle);
     if (tier !== null) ranked.push({ command, tier });
   }
   return ranked

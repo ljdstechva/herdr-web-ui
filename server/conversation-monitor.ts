@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { ConversationNotStarted, ConversationUnavailable, paneTranscript, type NativeTranscript } from "./conversation.ts";
-import { agyDatabasePath } from "./agy.ts";
 import { sessionSnapshot } from "./herdr/client.ts";
 
 const STAT_INTERVAL_MS = 250;
@@ -37,7 +36,6 @@ export class ConversationMonitor {
     private readonly devinDbPath?: string,
     private readonly opencodeDb?: string,
     private readonly hermesHome?: string,
-    private readonly grokHome?: string,
   ) {}
 
   get size(): number { return this.panes.size; }
@@ -82,9 +80,7 @@ export class ConversationMonitor {
     const wal = database ? fileIdentity(`${transcript.path}-wal`) : "";
     const session = transcript.source === "hermes-transcript" ? transcript.sessionId : database ? transcript.session : "";
     const cwd = transcript.source === "devin-transcript" ? transcript.cwd : "";
-    const catalog = transcript.source === "agy-transcript" ? agyDatabasePath(transcript.path) : null;
-    const catalogIdentity = catalog === null ? "" : `${fileIdentity(catalog)}:${fileIdentity(`${catalog}-wal`)}`;
-    const observed = `${transcript.source}\0${transcript.path}\0${session}\0${cwd}\0${identity}\0${wal}\0${catalogIdentity}`;
+    const observed = `${transcript.source}\0${transcript.path}\0${session}\0${cwd}\0${identity}\0${wal}`;
     // Resolve once immediately on disappearance, not on every missing-file stat.
     if (identity === "missing" && observed !== state.observed) state.nextResolve = 0;
     this.publish(paneId, state, observed);
@@ -108,7 +104,7 @@ export class ConversationMonitor {
       this.snapshot ??= sessionSnapshot().finally(() => { this.snapshot = null; });
       const snapshot = await this.snapshot;
       if (this.panes.get(paneId) !== state) return;
-      const transcript = await paneTranscript(paneId, this.codexHome, snapshot, this.devinDbPath, this.opencodeDb, this.hermesHome, this.grokHome);
+      const transcript = await paneTranscript(paneId, this.codexHome, snapshot, this.devinDbPath, this.opencodeDb, this.hermesHome);
       if (this.panes.get(paneId) !== state) return;
       state.transcript = transcript;
       present = this.read(paneId, state);

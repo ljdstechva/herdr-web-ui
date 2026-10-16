@@ -1,17 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import * as herdrClient from "./herdr/client.ts";
 import { herdrRpc, paneRead, paneScrollInfo, sessionSnapshot } from "./herdr/client.ts";
 import { noteSubmitted, parseInteractivePrompt } from "./prompt.ts";
-import type { PendingMessage, ServerMessage } from "../shared/protocol.ts";
-import * as processStart from "./process-start.ts";
-import * as pendingInput from "./pending-input.ts";
-import { OmoStatus } from "./omo-status.ts";
-
-type PendingUpdate = Extract<ServerMessage, { type: "pending-messages" }>;
+import type { PendingMessage } from "../shared/protocol.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pending-"));
 const active: Array<{ stop: () => void; sockets: Socket[]; workspace: string }> = [];
@@ -41,7 +36,6 @@ function holdConnect(rpc: "text" | "keys"): { reached: Promise<void>; release: (
   return { reached: at, release };
 }
 const approval = "Would you like to run the following command?\n\n$ rm -rf junk\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel\n";
-const codexSteering = (entry = "send this now") => `• Working (2s • esc to interrupt)\n• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\n  ↳ ${entry}\n› Ask Codex to do anything\n  gpt-6.1 default · /workspace\n`;
 
 class Socket {
   readonly seen: any[] = [];
@@ -58,20 +52,6 @@ class Socket {
       if (Date.now() >= deadline) throw new Error(`pending frame timeout: ${JSON.stringify(this.seen.slice(-5))}`);
       await Bun.sleep(25);
     }
-  }
-  /** Subscribe before triggering a state transition; retain already received frames. */
-  event(predicate: (frame: PendingUpdate) => boolean, from = 0): Promise<PendingUpdate> {
-    const found = this.seen.slice(from).find((frame) => frame.type === "pending-messages" && predicate(frame));
-    if (found) return Promise.resolve(found);
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { this.ws.removeEventListener("message", received); reject(new Error("pending event timeout")); }, 15_000);
-      const received = (event: MessageEvent) => {
-        const frame: ServerMessage = JSON.parse(String(event.data));
-        if (frame.type !== "pending-messages" || !predicate(frame)) return;
-        clearTimeout(timeout); this.ws.removeEventListener("message", received); resolve(frame);
-      };
-      this.ws.addEventListener("message", received);
-    });
   }
   send(frame: unknown) { this.ws.send(JSON.stringify(frame)); }
   result(id: number) { return this.wait((frame) => frame.type === "submit-result" && frame.id === id); }
@@ -96,7 +76,7 @@ afterEach(async () => {
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-async function setup(label: string, agent = "claude", screen = "› Message\n", options: Parameters<typeof createServer>[0] = {}, replaceable = false) {
+async function setup(label: string, agent = "claude", screen = "› Message\n", options: Parameters<typeof createServer>[0] = {}) {
   const id = ++next;
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>("workspace.create", { label: `herdr-web-ui-test-pending-${label}`, cwd: root, focus: false });
   // registered before anything below can throw, so afterEach closes the workspace of a setup that failed
@@ -105,12 +85,7 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
   const log = join(root, `${id}.jsonl`);
   const screenFile = join(root, `${id}.screen`);
   writeFileSync(screenFile, "");
-  const command = `'${join(root, agent)}' '${join(root, "record.cjs")}' '${log}' '${screen.replace(/\n/g, "\r\n")}' '${screenFile}'`;
-  // The shell immediately starts SESSION2 once SESSION1 exits, preserving terminal and lease.
-  const replacementLog = join(root, `${id}-replacement.jsonl`);
-  await herdrRpc("pane.send_text", { pane_id: pane, text: replaceable
-    ? `${command}; exec '${join(root, agent)}' '${join(root, "record.cjs")}' '${replacementLog}' 'SESSION2' '${screenFile}'\n`
-    : `exec ${command}\n` });
+  await herdrRpc("pane.send_text", { pane_id: pane, text: `exec '${join(root, agent)}' '${join(root, "record.cjs")}' '${log}' '${screen.replace(/\n/g, "\r\n")}' '${screenFile}'\n` });
   const deadline = Date.now() + 10_000;
   while (!existsSync(log)) { if (Date.now() > deadline) throw new Error("recorder did not start"); await Bun.sleep(25); }
   // "plain" is a program herdr knows as no agent
@@ -147,273 +122,10 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
   };
   const removed = (id: string, outcome = "sent", reader = socket) => reader.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane && frame.removed?.some((entry: any) => entry.id === id && entry.outcome === outcome));
   const another = async (attach = true) => { const reader = new Socket(server.port); entry.sockets.push(reader); if (attach) await reader.attach(pane); else await reader.wait((frame) => frame.type === "snapshot"); return reader; };
-  return { screenFile, pane, port: server.port, socket, bytes, waitBytes, state, showScreen, queue, removed, another, replacementLog };
+  return { pane, port: server.port, socket, bytes, waitBytes, state, showScreen, queue, removed, another };
 }
 
 describe("connection-owned pending input", () => {
-  it("holds a queued message when a hookless agent process is replaced in the same terminal (regression #540)", async () => {
-    const f = await setup("process-replaced", "claude", "SESSION1", {}, true);
-    const before = await herdrClient.paneGet(f.pane);
-    const process = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.find((entry) => entry.name === "claude");
-    if (!process) throw new Error("SESSION1 has no foreground claude process");
-    const message = await f.queue(540, "MSG-FOR-SESSION-1");
-    expect(before.agent_session ?? null).toBeNull(); // control: no native session distinguishes the processes
-    expect(f.bytes()).toBe(""); // control: enqueue never types while working
-    const started = new Promise<void>((resolve, reject) => {
-      const watcher = watch(root, () => {
-        if (!existsSync(f.replacementLog)) return;
-        clearTimeout(timeout); watcher.close(); resolve();
-      });
-      const timeout = setTimeout(() => { watcher.close(); reject(new Error("SESSION2 did not start")); }, 10_000);
-    });
-    globalThis.process.kill(process.pid, "SIGKILL");
-    await started;
-    const after = await herdrClient.paneGet(f.pane);
-    const replacement = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.find((entry) => entry.name === "claude");
-    expect(after.terminal_id).toBe(before.terminal_id); // control: same terminal and attach
-    expect(replacement).toBeDefined(); // control: SESSION2 is a live foreground agent
-    expect(replacement?.pid).not.toBe(process.pid); // control: the process really changed
-    const settled = f.socket.event((frame) => frame.removed?.some((entry) => entry.id === message.id)
-      || frame.messages.some((entry) => entry.id === message.id && entry.state === "held"));
-    await f.state("idle");
-    const outcome = await settled;
-    const bytes = readFileSync(f.replacementLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string).join("");
-    expect(outcome.messages).toContainEqual(expect.objectContaining({
-      id: message.id, state: "held", error: expect.objectContaining({ code: "pending_target_changed" }),
-    })); // regression: replacement is held instead of automatic delivery
-    expect(bytes).not.toContain("MSG-FOR-SESSION-1"); // regression: SESSION2 receives nothing
-  }, 30_000);
-
-  it("delivers to the same hookless process with unchanged pid and birth (control #540)", async () => {
-    const f = await setup("same-process");
-    const before = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0];
-    if (!before) throw new Error("No foreground recorder");
-    const birth = processStart.processStartedAt(before.pid);
-    const message = await f.queue(541, "same process");
-    const removed = f.socket.event((frame) => frame.removed?.some((entry) => entry.id === message.id) === true);
-    await f.state("idle"); await removed; await f.waitBytes("\r");
-    const after = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0];
-    expect(after?.pid).toBe(before.pid); // control
-    const afterBirth = processStart.processStartedAt(before.pid);
-    if (globalThis.process.platform === "darwin" && birth !== null && afterBirth !== null) {
-      expect(Math.abs(afterBirth - birth)).toBeLessThanOrEqual(1000); // control: macOS precision
-    } else expect(afterBirth).toBe(birth); // control: Linux birth is exact
-    expect(f.bytes()).toBe(`${paste("same process")}\r`); // control
-  }, 30_000);
-
-  for (const [drift, delivered] of [[600, true], [1500, false]] as const) {
-    it(`${delivered ? "delivers" : "holds"} a same-pid message with ${drift} ms birth drift on darwin (control #540)`, async () => {
-      const f = await setup(`darwin-birth-${drift}`);
-      const process = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0];
-      if (!process) throw new Error("No foreground recorder");
-      let reading = 100_000;
-      const birth = processStart.processStartedAt;
-      const compare = pendingInput.samePendingIdentity;
-      // Supply macOS's two observations without changing the real recorder, RPCs or delivery.
-      const startedAt = spyOn(processStart, "processStartedAt").mockImplementation((pid) => pid === process.pid ? reading : birth(pid));
-      const platform = spyOn(pendingInput, "samePendingIdentity").mockImplementation((before, after) => compare(before, after, "darwin"));
-      try {
-        const message = await f.queue(544, `darwin birth ${drift}`);
-        reading += drift;
-        const settled = f.socket.event((frame) => frame.removed?.some((entry) => entry.id === message.id)
-          || frame.messages.some((entry) => entry.id === message.id && entry.state === "held"));
-        await f.state("idle");
-        const outcome = await settled;
-        if (delivered) {
-          expect(outcome.removed).toContainEqual({ id: message.id, outcome: "sent" }); // control: tolerated 600 ms drift
-          await f.waitBytes("\r");
-          expect(f.bytes()).toBe(`${paste(message.text)}\r`); // control: actual delivery
-        } else {
-          expect(outcome.messages).toContainEqual(expect.objectContaining({
-            id: message.id, state: "held", error: expect.objectContaining({ code: "pending_target_changed" }),
-          })); // control: 1500 ms is a different birth, even on the same PID
-          expect(f.bytes()).toBe(""); // control: nothing was delivered
-        }
-      } finally { platform.mockRestore(); startedAt.mockRestore(); }
-    }, 30_000);
-  }
-
-  it("delivers when an initially unknown native session becomes known (regression #540)", async () => {
-    const f = await setup("session-upgrade");
-    const message = await f.queue(542, "session became known");
-    const snapshot = herdrClient.sessionSnapshot;
-    const upgraded = spyOn(herdrClient, "sessionSnapshot").mockImplementation(async (...args) => {
-      const current = await snapshot(...args);
-      return { ...current, panes: current.panes.map((pane) => pane.pane_id === f.pane
-        ? { ...pane, agent_session: { kind: "session_id", source: "cli", value: "now-known", agent: "claude" } } : pane) };
-    });
-    try {
-      const settled = f.socket.event((frame) => frame.removed?.some((entry) => entry.id === message.id)
-        || frame.messages.some((entry) => entry.id === message.id && entry.state === "held"));
-      await f.state("idle");
-      const outcome = await settled;
-      expect(outcome.removed ?? []).toContainEqual({ id: message.id, outcome: "sent" }); // regression: learning identity is not replacement
-      await f.waitBytes("\r");
-      expect(f.bytes()).toBe(`${paste("session became known")}\r`); // control: exactly one delivery
-    } finally { upgraded.mockRestore(); }
-  }, 30_000);
-
-  it("holds a message when OmO reports a different session on the same process (regression #540)", async () => {
-    const f = await setup("omo-session-changed");
-    let sessionId = "omo-first";
-    const session = spyOn(OmoStatus.prototype, "sessionOf").mockImplementation((paneId) => paneId === f.pane ? { cwd: root, sessionId } : null);
-    try {
-      const message = await f.queue(543, "for the first omo session");
-      sessionId = "omo-second";
-      const settled = f.socket.event((frame) => frame.messages.some((entry) => entry.id === message.id && entry.state === "held")
-        || frame.removed?.some((entry) => entry.id === message.id) === true);
-      await f.state("idle");
-      expect((await settled).messages).toContainEqual(expect.objectContaining({
-        id: message.id, state: "held", error: expect.objectContaining({ code: "pending_target_changed" }),
-      })); // regression: native OmO session is part of pending identity
-      expect(f.bytes()).toBe(""); // regression: the new session receives nothing
-    } finally { session.mockRestore(); }
-  }, 30_000);
-
-  for (const originalFirst of [false, true]) it(`regression: two connections share refusal then retry a new attempt once (original first=${originalFirst})`, async () => {
-    const rule = "\u2500".repeat(60), footer = "[Haiku 4.5] \u2502 project";
-    const f = await setup("copy-retry", "claude", `  \u273b Cooked for 1s\n${rule}\n\u276f occupied draft\n${rule}\n  ${footer}\n`);
-    let resendId = "retry-copy-id";
-    if (originalFirst) {
-      f.socket.send({ type: "submit", id: 0, pane_id: f.pane, text: "retry copy", payload: "unused", delivery: "hold" });
-      const held = await f.socket.result(0);
-      expect(held.pending?.state).toBe("held");
-      resendId = held.pending.id;
-    }
-    await f.state("idle");
-    const other = await f.another();
-    const send = (socket: Socket, id: number, generation: number) => socket.send(originalFirst && socket === f.socket
-      ? { type: "pending-action", id, pane_id: f.pane, pending_id: resendId, action: "steer", resend_generation: generation }
-      : { type: "submit", id, pane_id: f.pane, text: "retry copy", payload: paste("retry copy"), resend_id: resendId, resend_generation: generation });
-    const originalResult = (id: number) => originalFirst ? f.socket.action(id) : f.socket.result(id);
-    send(f.socket, 1, 0); send(other, 2, 0);
-    expect(await originalResult(1)).toMatchObject({ ok: false, code: "input_draft" });
-    expect(await other.result(2)).toMatchObject({ ok: false, code: "input_draft" });
-    let output = "";
-    const processed = new Set<object>();
-    const drawn = f.socket.wait((frame) => {
-      if (frame.type !== "pty-data" || processed.has(frame)) return false;
-      processed.add(frame); output += frame.data;
-      return output.includes("run the tests");
-    }, f.socket.seen.length);
-    writeFileSync(f.screenFile, `  \u273b Cooked for 1s\n${rule}\n\u276f \u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer} \n`);
-    await drawn;
-    send(other, 3, 0);
-    expect(await other.result(3)).toMatchObject({ ok: false, code: "input_draft" });
-    send(f.socket, 4, 1); send(other, 5, 1);
-    expect(await originalResult(4)).toMatchObject({ ok: true });
-    expect(await other.result(5)).toMatchObject({ ok: true });
-    const barrier = new Promise<void>((resolve, reject) => {
-      const watcher = watch(root, () => {
-        if (f.bytes().includes("retry-barrier\r")) { clearTimeout(timer); watcher.close(); resolve(); }
-      });
-      const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
-    });
-    other.send({ type: "submit", id: 6, pane_id: f.pane, text: "retry-barrier", payload: "retry-barrier", typed: true });
-    expect(await other.result(6)).toMatchObject({ ok: true });
-    await barrier;
-    expect(f.bytes().split("retry copy").length - 1).toBe(1);
-  }, 30_000);
-  for (const copyFirst of [false, true]) it(`regression: shares a held row's send with its saved copy (copy first=${copyFirst})`, async () => {
-    const f = await setup("cross-tab-held");
-    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "held cross tab", payload: "unused", delivery: "hold" });
-    const answer = await f.socket.result(1);
-    expect(answer.pending?.state).toBe("held");
-    await f.state("idle");
-    const other = await f.another();
-    const copy = () => other.send({ type: "submit", id: 2, pane_id: f.pane, text: "held cross tab", payload: paste("held cross tab"), resend_id: answer.pending.id });
-    const original = () => f.socket.send({ type: "pending-action", id: 3, pane_id: f.pane, pending_id: answer.pending.id, action: "steer" });
-    if (copyFirst) { copy(); expect(await other.result(2)).toMatchObject({ ok: true }); original(); }
-    else { original(); expect(await f.socket.action(3)).toMatchObject({ ok: true }); copy(); }
-    expect(await other.result(2)).toMatchObject({ ok: true });
-    expect(await f.socket.action(3)).toMatchObject({ ok: true });
-    const barrier = new Promise<void>((resolve, reject) => {
-      const watcher = watch(root, () => {
-        if (f.bytes().includes("barrier\r")) { clearTimeout(timer); watcher.close(); resolve(); }
-      });
-      const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
-    });
-    other.send({ type: "submit", id: 4, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
-    expect(await other.result(4)).toMatchObject({ ok: true });
-    await barrier;
-    expect(f.bytes().split("held cross tab").length - 1).toBe(1);
-  }, 30_000);
-  it("interrupts an explicit Codex Send now only after its native steering panel appears", async () => {
-    const f = await setup("codex-send-now", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r"); expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-    await f.showScreen(codexSteering());
-    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(message.id); await f.waitBytes("\u001b");
-    const received = f.socket.seen.length;
-    f.socket.send({ type: "pending-action", id: 11, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    expect(await f.socket.action(11)).toMatchObject({ ok: true });
-    await f.socket.wait((frame) => frame.type === "pending-messages" && frame.removed?.some((item: any) => item.id === message.id), received);
-    expect(f.bytes()).toBe(`${paste("send this now")}\r\u001b`);
-  }, 30_000);
-
-  it("withholds Codex Escape when its sender's lease lapses while the key RPC connects", async () => {
-    const f = await setup("codex-guard-escape", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r");
-    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
-    f.socket.send({ type: "role", mode: "observe" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
-    f.socket.send({ type: "role", mode: "interact" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact");
-    hold.release();
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-    expect((await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: any) => item.id === message.id && item.state === "uncertain"))).messages[0].state).toBe("uncertain");
-  }, 30_000);
-
-  it("withholds Codex Escape when its deadline passes while the key RPC connects", async () => {
-    const f = await setup("codex-guard-deadline", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r");
-    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
-    // the panel was read in time; by the time herdr is written to, Codex may have taken the steering itself
-    await Bun.sleep(1_600);
-    hold.release();
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-  }, 30_000);
-
-  it("withholds Codex Escape when the pane's status moves while the key RPC connects", async () => {
-    const f = await setup("codex-guard-status", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r");
-    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
-    // the turn ended on its own: Escape would now cancel whatever Codex opened next
-    await f.state("idle");
-    hold.release();
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-  }, 30_000);
-
-  it("never interrupts an ordinary queue submit that races from idle into working Codex", async () => {
-    const f = await setup("codex-send-race", "codex", "› Message\n", { submitDelayMs: 500 });
-    await f.state("idle");
-    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "ordinary send", payload: "unused", delivery: "queue" });
-    await f.waitBytes("\u001b[201~"); await f.state("working"); await f.showScreen(codexSteering());
-    expect(await f.socket.result(1)).toMatchObject({ ok: true }); await f.waitBytes("\r");
-    expect(f.bytes()).toBe(`${paste("ordinary send")}\r`);
-  }, 30_000);
-
-  it("does not send Escape when a Codex approval opens after the steering Enter", async () => {
-    const f = await setup("codex-menu-after-enter", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r"); await f.showScreen(approval);
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-    expect((await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: any) => item.id === message.id && item.state === "uncertain"))).messages[0].state).toBe("uncertain");
-  }, 30_000);
-
-  it("does not send Escape after the pending message's pane was detached", async () => {
-    const f = await setup("codex-detach-after-enter", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r"); f.socket.send({ type: "detach", pane_id: f.pane });
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-  }, 30_000);
-
   it("queues any working agent and advances one message per confirmed turn", async () => {
     const f = await setup("automatic");
     const first = await f.queue(1, "한글 👩🏽‍💻\nnext"); const second = await f.queue(2, "second");
@@ -424,38 +136,6 @@ describe("connection-owned pending input", () => {
     expect(receipt.messages.find((message: PendingMessage) => message.id === second.id)?.state).toBe("queued");
     await f.state("working"); await f.state("idle"); await f.removed(second.id); await f.waitBytes(`${paste("second")}\r`);
     expect(f.bytes()).toBe(`${paste(first.text)}\r${paste("second")}\r`);
-  }, 30_000);
-
-  it("keeps a held message through the turn's end and sends it only on Send now", async () => {
-    const f = await setup("hold");
-    expect(f.socket.seen.find((frame) => frame.type === "snapshot")?.features).toContain("pending-hold");
-    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "hold me", payload: "unused\r", delivery: "hold" });
-    const answer = await f.socket.result(1);
-    expect(answer).toMatchObject({ ok: true, pending: { request_id: 1, state: "held" } });
-    expect(answer.pending.error).toBeUndefined();
-    await f.state("idle");
-    // the turn's end sent nothing: a message typed after it is the first thing the pane gets
-    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
-    expect(await f.socket.result(2)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
-    expect(f.bytes()).toBe("barrier\r");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: answer.pending.id, action: "steer" });
-    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(answer.pending.id);
-    await f.waitBytes(`${paste("hold me")}\r`);
-    expect(f.bytes()).toBe(`barrier\r${paste("hold me")}\r`);
-  }, 30_000);
-
-  it("keeps a held message that arrives after the turn ended, typing nothing until Send now", async () => {
-    const f = await setup("hold-ready"); await f.state("idle");
-    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "late hold", payload: "unused\r", delivery: "hold" });
-    const answer = await f.socket.result(1);
-    expect(answer).toMatchObject({ ok: true, pending: { request_id: 1, state: "held" } });
-    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
-    expect(await f.socket.result(2)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
-    expect(f.bytes()).toBe("barrier\r");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: answer.pending.id, action: "steer" });
-    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(answer.pending.id);
-    await f.waitBytes(`${paste("late hold")}\r`);
-    expect(f.bytes()).toBe(`barrier\r${paste("late hold")}\r`);
   }, 30_000);
 
   it("closes a trailing @file mention with a space before its Enter", async () => {
@@ -768,9 +448,9 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe(""); expect(f.socket.seen.some((frame) => frame.type === "pending-messages")).toBe(false);
   }, 30_000);
 
-  for (const stop of [false, true]) it(`checks a new blocked state after the ${stop ? "composer's Stop" : "typed ESC"}'s settling gap, before pasting`, async () => {
-    const f = await setup(stop ? "stop-gap-intent" : "stop-gap"); const message = await f.queue(1, "must not paste");
-    f.socket.send(stop ? { type: "input", pane_id: f.pane, text: "\u001b", stop: true } : { type: "input", pane_id: f.pane, text: "\u001b" });
+  it("checks a new blocked state after the Stop key's settling gap, before pasting", async () => {
+    const f = await setup("stop-gap"); const message = await f.queue(1, "must not paste");
+    f.socket.send({ type: "input", pane_id: f.pane, text: "\u001b" });
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === message.id && item.state === "sending"));
     await f.state("blocked");
@@ -790,8 +470,7 @@ describe("connection-owned pending input", () => {
     const first = await f.queue(1, "first"); const second = await f.queue(2, "held second");
     await f.state("idle"); await f.removed(first.id);
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === second.id && item.state === "held" && item.error?.code === "pending_turn_unconfirmed"));
-    // the bridge's Enter has gone to herdr, but the recorder in the pane may not have logged it yet
-    await f.waitBytes("\r"); expect(f.bytes()).toBe(`${paste("first")}\r`);
+    expect(f.bytes()).toBe(`${paste("first")}\r`);
   }, 30_000);
 
   it("rejects ordinary queue input and Send now at a visible password prompt despite a working state", async () => {
@@ -889,7 +568,7 @@ describe("connection-owned pending input", () => {
 
   // Claude Code queues what Enter commits during a turn; its Ctrl+Enter sends it at once (#737).
   // The stand-in asks for modifyOtherKeys as Claude Code does, so herdr types Ctrl+Enter as xterm does.
-  it("steers Claude with Ctrl+Enter and Codex with Enter then a confirmed interruption", async () => {
+  it("steers a working Claude turn with Ctrl+Enter, and commits every other delivery with Enter", async () => {
     const ctrlEnter = "\u001b[27;5;13~";
     const f = await setup("steer-claude", "claude", "\\x1b[>4;2m› Message\n");
     const steer = await f.queue(1, "steer now"); const next = await f.queue(2, "next turn");
@@ -902,10 +581,8 @@ describe("connection-owned pending input", () => {
     const codex = await setup("steer-codex", "codex", "\\x1b[>4;2m› Message\n");
     const other = await codex.queue(1, "codex steer");
     codex.socket.send({ type: "pending-action", id: 10, pane_id: codex.pane, pending_id: other.id, action: "steer" });
-    await codex.waitBytes("\r");
-    await codex.showScreen(codexSteering("codex steer"));
-    expect(await codex.socket.action(10)).toMatchObject({ ok: true }); await codex.waitBytes("\u001b");
-    expect(codex.bytes()).toBe(`${paste("codex steer")}\r\u001b`);
+    expect(await codex.socket.action(10)).toMatchObject({ ok: true }); await codex.waitBytes("\r");
+    expect(codex.bytes()).toBe(`${paste("codex steer")}\r`);
   }, 45_000);
 
   // The paste and its key are written only once herdr's connect resolves; the sender's right is asked

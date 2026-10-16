@@ -109,21 +109,16 @@ const CSP_DIRECTIVES = [
 ];
 
 /**
- * The policy both headers carry. A browser script that serves a build of its own sends it as it is:
- * serveStatic reads only this checkout's dist/, and sends no policy before that is built.
- */
-export const CONTENT_SECURITY_POLICY = CSP_DIRECTIVES.join("; ");
-
-/**
  * HERDR_WEB_CSP=report-only measures the policy above without enforcing it: the browser
  *   logs what the policy would have blocked and the app keeps working. `report-only` is the
  *   measurement mode; anything else enforces.
  */
 function cspHeader(): Record<string, string> {
   const mode = process.env["HERDR_WEB_CSP"];
+  const policy = CSP_DIRECTIVES.join("; ");
   return mode === "report-only"
-    ? { "content-security-policy-report-only": CONTENT_SECURITY_POLICY }
-    : { "content-security-policy": CONTENT_SECURITY_POLICY };
+    ? { "content-security-policy-report-only": policy }
+    : { "content-security-policy": policy };
 }
 
 /**
@@ -157,21 +152,7 @@ async function body(file: BunFile, kind: "manifest" | "shell" | null): Promise<B
   return kind === "manifest" ? renameManifest(await file.text(), name) : renameShell(await file.text(), name);
 }
 
-/** Accepted representations, with a server preference for br over gzip on ties.
- * An implicit identity is the fallback; explicit identity quality participates. */
-function encodings(header: string | null | undefined): Array<"br" | "gzip" | "identity"> {
-  if (!header?.trim()) return ["identity"];
-  const weights = new Map<string, number>();
-  for (const item of header.split(",")) {
-    const match = /^\s*([\w*-]+)\s*(?:;\s*q\s*=\s*(0(?:\.\d{0,3})?|1(?:\.0{0,3})?))?\s*$/i.exec(item);
-    // x-gzip is gzip's older name (RFC 9110 §8.4.1.3): one weight for both
-    if (match) weights.set(match[1]!.toLowerCase().replace(/^x-gzip$/, "gzip"), match[2] === undefined ? 1 : Number(match[2]));
-  }
-  const weight = (coding: string): number => weights.get(coding) ?? (coding === "identity" ? (weights.get("*") === 0 ? 0 : 0.001) : weights.get("*") ?? 0);
-  return (["br", "gzip", "identity"] as const).filter(coding => weight(coding) > 0).sort((a, b) => weight(b) - weight(a));
-}
-
-export async function serveStatic(pathname: string, acceptEncoding?: string | null): Promise<Response> {
+export async function serveStatic(pathname: string): Promise<Response> {
   const indexPath = join(DIST_DIR, "index.html");
   if (!existsSync(indexPath)) {
     return new Response(
@@ -184,27 +165,11 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
   if (candidate.startsWith(DIST_DIR) && relative !== "/" && existsSync(candidate)) {
     const file = Bun.file(candidate);
     if ((await file.exists()) && !(await file.stat()).isDirectory()) {
-      // Only immutable JS/CSS get build-time sidecars. Never compress user/API
-      // data, the service worker, or the shell on a request's hot path.
-      if (pathname.startsWith("/assets/") && /\.(?:js|css)$/.test(pathname)) {
-        for (const encoding of encodings(acceptEncoding)) {
-          const body = encoding === "identity" ? file : Bun.file(`${candidate}.${encoding === "br" ? "br" : "gz"}`);
-          if (!await body.exists()) continue;
-          return new Response(body, { headers: { "content-type": contentTypeFor(candidate), "cache-control": IMMUTABLE_CACHE,
-            vary: "Accept-Encoding", ...cspHeader(), ...(encoding === "identity" ? {} : { "content-encoding": encoding }) } });
-        }
-        return new Response(null, { status: 406, headers: { vary: "Accept-Encoding", ...cspHeader() } });
-      }
       const kind = pathname === "/manifest.webmanifest" ? "manifest" : candidate === indexPath ? "shell" : null;
       return new Response(await body(file, kind), {
         headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader() },
       });
     }
-  }
-  // a missing file is not a page: the shell under a bundle's URL fails as a script anyway, and a
-  // service worker would keep it there. An old tab asks for its own build's chunks after an update.
-  if (pathname.startsWith("/assets/") || pathname.startsWith("/icons/")) {
-    return new Response(null, { status: 404, headers: { "cache-control": REVALIDATE, ...cspHeader() } });
   }
   return new Response(await body(Bun.file(indexPath), "shell"), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader() },

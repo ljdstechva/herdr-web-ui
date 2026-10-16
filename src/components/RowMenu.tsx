@@ -2,7 +2,6 @@
  * The ⋯ menu of a sidebar row. On a desktop it is a popover under its button, drawn through a
  * portal at fixed coordinates: the roster scrolls, and a menu inside it would be cut off at the
  * list's edge. At phone width it is the modal primitive, which is already a bottom sheet there.
- * The system Back closes the sheet (lib/sheetHistory.ts).
  * Escape, a press outside, focus leaving it (the palette opening over it, a Tab out) and, on a
  * desktop, a scroll of what holds the button or a resize close it. Focus goes back to the button when the menu goes,
  * unless what an item mounted (a rename field, a confirm) takes it first: the button is focused
@@ -10,14 +9,12 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, type LucideIcon } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import "./RowMenu.css";
 
 import { useT } from "../lib/i18n.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
-import { useSheetHistory } from "../lib/sheetHistory.ts";
 
 export interface RowMenuItem {
   id: string;
@@ -53,23 +50,20 @@ interface Props {
   /** which edge of the button the popover lines up with: its right one (a row's ⋯), or its left one (a tab) */
   align?: "start" | "end";
   onClose: () => void;
-  /** `paths`: each hint is a path; the menu is wider and a long path gives way before its label */
-  variant?: "paths";
 }
 
+/** where the menu is the bottom sheet; a caller that lays its header out for the sheet reads the same line */
+export const SHEET_QUERY = "(max-width: 640px)";
 const GAP = 4;
 const EDGE = 8;
 const POPOVER_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 // the sheet is modal: its Cancel is one of the stops
 const SHEET_ITEMS = '.row-sheet-item, .row-sheet-cancel';
 
-export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header, items, align = "end", onClose, variant }: Props) {
+export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header, items, align = "end", onClose }: Props) {
   const t = useT();
   const sheet = useMediaQuery(SHEET_QUERY);
   const surface = useRef<HTMLDivElement>(null);
-  useSheetSwipe(surface, sheet ? onClose : null);
-  // Back closes the sheet, not the pane under it
-  useSheetHistory(sheet, onClose);
   const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   // where the button was when the menu was placed: a scroll that leaves it there is not a reason to close
   const placedAt = useRef<{ top: number; left: number } | null>(null);
@@ -197,7 +191,6 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
                 {item.glyph ?? <item.icon aria-hidden="true" />}
                 <span className="row-sheet-label">{item.label}</span>
                 {item.hint && <span className="row-sheet-hint">{item.hint}</span>}
-                {item.checked && <Check className="row-sheet-check" aria-hidden="true" />}
               </button>
             ))}
           </div>
@@ -209,7 +202,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
   }
 
   return createPortal(
-    <div ref={surface} className={`menu row-menu${anchor.closest('[aria-modal="true"]') ? " is-over-modal" : ""}${variant === "paths" ? " row-menu-paths" : ""}`} role="menu" aria-label={title} style={place ?? { visibility: "hidden" }} onKeyDown={onKeyDown} onBlur={onBlur}>
+    <div ref={surface} className="menu row-menu" role="menu" aria-label={title} style={place ?? { visibility: "hidden" }} onKeyDown={onKeyDown} onBlur={onBlur}>
       {header && <div className="row-menu-header" role="presentation">{header}</div>}
       {items.map((item) => (
         <Fragment key={item.id}>
@@ -218,7 +211,6 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
             {item.glyph ?? <item.icon aria-hidden="true" />}
             <span className="menu-item-main">{item.label}</span>
             {item.hint && <span className="menu-item-hint">{item.hint}</span>}
-            {item.checked && <Check className="menu-item-check" aria-hidden="true" />}
           </button>
         </Fragment>
       ))}

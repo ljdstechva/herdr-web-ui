@@ -7,7 +7,6 @@ import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose, paneSendText, paneSendKeys, paneRead } from "../server/herdr/client.ts";
-import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-arrows-clicks-"));
 const owned: string[] = [];
@@ -96,7 +95,7 @@ try {
   // a PC without Node for the PTY sidecar: the pane is mirrored, and xterm never learns a mouse mode
   const mirrored = createServer({ port: 0, hostname: "127.0.0.1", stateDir: join(root, "state-mirrored"), token: "", sidecar: false });
   servers.push(mirrored);
-  const browser = launched = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
+  const browser = launched = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
 
   // 1. Application cursor keys: less, git log and vim ask for them, and herdr's attach stream
   // never says so to the browser. The program must read SS3 (ESC O A), not CSI (ESC [ A).
@@ -272,16 +271,6 @@ try {
     await until(() => click.test(got += s.received()), "a later click received");
     const later = click.exec(got)!;
     assert.ok(Number(later[1]) > Number(first[1]) && Number(later[2]) > Number(first[2]), "at its own cell, right of and below the first");
-
-    // the top right cell, under a lone pane's floating head: a program's control there (Claude Code's
-    // diff panel close) takes the click, not the head around the hidden ellipsis
-    const grid = (await s.page.locator(".xterm-screen").boundingBox())!;
-    got = "";
-    await s.page.mouse.click(grid.x + grid.width - 3, grid.y + 3);
-    await until(() => click.test(got += s.received()), "a click on the top right cell received");
-    const corner = click.exec(got)!;
-    assert.equal(corner[2], "1", "on the top row");
-    assert.ok(Number(corner[1]) > Number(later[1]), "in the rightmost column");
 
     // a drag is a selection, as before: no button report, and the dragged cells are selected
     const to = await s.point(300, 70);

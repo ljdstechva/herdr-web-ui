@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
-import { chromePath } from "./chrome-path.ts";
 
 // Deep links (lib/deepLink.ts) on the unmodified app over the demo's fixture transport: an
 // address names the PC, workspace, pane, lens and Settings page, opens there, and follows the app
@@ -60,7 +59,7 @@ try {
   url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/`;
 
   try {
-    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
     try {
       // a link to a workspace opens the pane its row opens, and the address then names it all
       await withPage(browser, `?ws=${wsOf(INFRA)}`, async (page) => {
@@ -98,98 +97,6 @@ try {
         assert.equal(await selected(page), DOCS);
       });
       console.log("PASS opening another pane is a history entry and a lens switch is not; Back and Forward return to each pane in its lens");
-
-      // an entry naming a PC since removed leaves the app where it is and says so, opens no dialog it
-      // named; Forward still works
-      await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}`, async (page) => {
-        await waitSelected(page, INFRA);
-        await waitQuery(page, "pane", INFRA);
-        const here = await page.evaluate(() => window.location.search);
-        // the entries a PC removed since would have left: one for its pane, then this pane's again
-        await page.evaluate((search) => {
-          history.pushState(null, "", `?machine=removed&ws=w9-gone&pane=${encodeURIComponent("w9:p1")}&new=workspace&name=Elsewhere`);
-          history.pushState(null, "", `${window.location.pathname}${search}`);
-        }, here);
-        const length = await page.evaluate(() => history.length);
-        await page.goBack();
-        await page.locator(".header-note", { hasText: "That link's PC is not set up here" }).waitFor();
-        await waitQuery(page, "machine", null);
-        await waitQuery(page, "pane", INFRA);
-        assert.equal(await selected(page), INFRA, "the app stays on the pane it showed");
-        await page.waitForTimeout(300);
-        assert.equal(await page.getByRole("dialog", { name: /New workspace/ }).count(), 0, "no New workspace dialog for a PC that is gone");
-        await page.goForward();
-        await waitQuery(page, "pane", INFRA);
-        assert.equal(await page.evaluate(() => history.length), length, "Back and Forward kept every entry");
-      });
-      console.log("PASS Back to an entry for a PC since removed stays on the pane shown, says so, opens none of its dialogs, and keeps Forward");
-
-      // the same Back before the PC list is in: the entry waits for it, then lands on this PC with the note
-      const heldContext = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: "en-US" });
-      try {
-        // after a reload marked to hold it, the PC list (its fetch and its stream) waits for __releaseRoster
-        await heldContext.addInitScript(`
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-          const hold = sessionStorage.getItem("hold-roster") === "1";
-          sessionStorage.removeItem("hold-roster");
-          let release = () => {};
-          const released = hold ? new Promise((done) => { release = done; }) : Promise.resolve();
-          window.__releaseRoster = () => release();
-          let fixtureFetch = window.fetch;
-          Object.defineProperty(window, "fetch", {
-            configurable: true, get: () => fixtureFetch,
-            set: (fetch) => {
-              fixtureFetch = async (input, init) => {
-                const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href).pathname;
-                if (path === "/api/machines") await released;
-                return fetch(input, init);
-              };
-            },
-          });
-          let fixtureSource = window.EventSource;
-          Object.defineProperty(window, "EventSource", {
-            configurable: true, get: () => fixtureSource,
-            set: (Source) => {
-              fixtureSource = class extends EventTarget {
-                static CONNECTING = 0; static OPEN = 1; static CLOSED = 2;
-                constructor(url, init) {
-                  super(); this.readyState = 0; this.url = String(url);
-                  this.source = new Source(url, init);
-                  const deliver = (event) => { const copy = new MessageEvent("message", { data: event.data }); this.onmessage?.(copy); this.dispatchEvent(copy); };
-                  this.source.onmessage = (event) => { void released.then(() => deliver(event)); };
-                  this.source.onopen = (event) => { this.readyState = 1; this.onopen?.(event); this.dispatchEvent(new Event("open")); };
-                  this.source.onerror = (event) => { this.onerror?.(event); this.dispatchEvent(new Event("error")); };
-                }
-                close() { this.readyState = 2; this.source.close(); }
-              };
-            },
-          });
-        `);
-        const page = await heldContext.newPage();
-        const errors: string[] = [];
-        page.on("pageerror", (error) => errors.push(error.message));
-        await page.goto(`${url}?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}`);
-        await waitSelected(page, INFRA);
-        await waitQuery(page, "pane", INFRA);
-        const here = await page.evaluate(() => window.location.search);
-        await page.evaluate((search) => {
-          history.pushState(null, "", `?machine=removed&ws=w9-gone&pane=${encodeURIComponent("w9:p1")}`);
-          history.pushState(null, "", `${window.location.pathname}${search}`);
-          sessionStorage.setItem("hold-roster", "1");
-        }, here);
-        await page.reload();
-        await page.waitForFunction(() => typeof (window as unknown as { __releaseRoster?: unknown }).__releaseRoster === "function" && document.querySelector(".sidebar-shell") !== null);
-        await page.goBack();
-        await waitQuery(page, "machine", "removed");
-        await page.evaluate(() => (window as unknown as { __releaseRoster: () => void }).__releaseRoster());
-        await page.locator(".header-note", { hasText: "That link's PC is not set up here" }).waitFor();
-        await page.locator('.agents-sidebar .agent-select[aria-current="true"]').waitFor();
-        await waitQuery(page, "machine", null);
-        assert.deepEqual(errors, []);
-      } finally {
-        await heldContext.close();
-      }
-      console.log("PASS Back before the PC list is in waits for it, then lands a removed PC's entry on this PC with the note");
 
       // a link to a Settings page opens it there; the address follows its pages and drops it on close
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&settings=terminal`, async (page) => {
@@ -301,62 +208,6 @@ try {
         await page.waitForFunction(() => new URLSearchParams(window.location.search).get("agent") !== "nope", undefined, { timeout: 5_000 });
       });
       console.log("PASS a link to the New workspace dialog fills it and creates nothing; the address follows the fields, and a tab link opens it for its workspace");
-
-      // the agent picker in that dialog closes when its anchor can move (an ancestor scrolls, the window resizes),
-      // not when something else scrolls, such as a text field's own text; its keys scroll the list alone
-      await withPage(browser, "?new=workspace", async (page) => {
-        const dialog = page.getByRole("dialog", { name: /New workspace/ });
-        await dialog.waitFor();
-        const trigger = dialog.locator(".agent-picker-trigger");
-        const menu = page.locator(".agent-picker-menu");
-        const body = dialog.locator(".modal-body");
-        const open = async () => {
-          await trigger.focus();
-          await page.keyboard.press("ArrowDown");
-          await menu.waitFor();
-        };
-        // a scroll event is delivered on the next frame; give a wrong close time to show
-        const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        await open();
-        assert.equal(await menu.evaluate((node) => node.scrollHeight > node.clientHeight), true, "the demo's agents are more than the list shows");
-        await page.locator("#new-session-cwd").evaluate((input: HTMLInputElement) => {
-          input.value = "/home/demo/".concat("a-long-folder-name/".repeat(20));
-          input.scrollLeft = input.scrollWidth;
-          input.dispatchEvent(new Event("scroll"));
-        });
-        await settle();
-        assert.equal(await trigger.getAttribute("aria-expanded"), "true", "a text field scrolling its own text leaves the picker open");
-        // the keys move through the list and scroll it alone: neither the dialog nor the page moves
-        const scrolls = () => page.evaluate(() => ({ page: scrollY, dialog: document.querySelector(".modal-body")!.scrollTop }));
-        const before = await scrolls();
-        await page.keyboard.press("End");
-        await settle();
-        const inView = (option: string) => menu.evaluate((node, id) => {
-          const list = node.getBoundingClientRect();
-          const row = document.getElementById(id)!.getBoundingClientRect();
-          return row.top >= list.top && row.bottom <= list.bottom;
-        }, option);
-        const last = (await menu.locator('[role="option"]').last().getAttribute("id"))!;
-        assert.equal(await trigger.getAttribute("aria-expanded"), "true", "End keeps the picker open");
-        assert.equal(await trigger.getAttribute("aria-activedescendant"), last);
-        assert.equal(await menu.evaluate((node) => node.scrollTop > 0), true, "End scrolls the list to the last agent");
-        assert.equal(await inView(last), true, "the last agent is in view");
-        await page.keyboard.press("Home");
-        await settle();
-        assert.equal(await trigger.getAttribute("aria-expanded"), "true", "Home keeps the picker open");
-        assert.equal(await inView((await trigger.getAttribute("aria-activedescendant"))!), true, "the first row is in view");
-        assert.deepEqual(await scrolls(), before, "the keys scroll neither the page nor the dialog");
-        // an ancestor of the picker moves it: its scroll closes the list, and so does the window's size
-        await body.evaluate((node) => node.dispatchEvent(new Event("scroll")));
-        await menu.waitFor({ state: "detached" });
-        await open();
-        await page.evaluate(() => document.dispatchEvent(new Event("scroll")));
-        await menu.waitFor({ state: "detached" });
-        await open();
-        await page.setViewportSize({ width: 1180, height: 760 });
-        await menu.waitFor({ state: "detached" });
-      });
-      console.log("PASS the agent picker stays open when a text field scrolls and closes when its anchor moves; its keys scroll the list alone");
 
       // sidebar=hidden opens a desktop with the sidebar collapsed; the address follows the toggle both ways
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&sidebar=hidden`, async (page) => {
@@ -498,115 +349,6 @@ try {
         }
       });
       console.log("PASS a pane Back selects under an open modal does not take the keyboard out of it");
-
-      // Phone touch controls cannot open the palette; resizing restores the Files entry.
-      const palettePhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
-      try {
-        await palettePhone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
-        const page = await palettePhone.newPage();
-        await page.goto(`${url}?pane=${encodeURIComponent(INFRA)}`);
-        await waitSelected(page, INFRA);
-        assert.equal(await page.locator(".palette-button").isVisible(), false, "the phone header has no palette button");
-        await page.locator(".header-more-button").tap();
-        const more = page.getByRole("dialog", { name: "More", exact: true });
-        await more.waitFor();
-        assert.equal(await more.getByRole("button", { name: "Command palette", exact: true }).count(), 0, "More has no palette entry");
-        await more.getByRole("button", { name: "Browse files", exact: true }).tap();
-        const files = page.getByRole("dialog", { name: "Files", exact: true });
-        await files.waitFor();
-        // New folder belongs to New workspace's Browse; the Files browser only reads
-        await files.locator(".dir-browser-bar").first().waitFor({ state: "attached" });
-        assert.equal(await files.locator('.dir-browser-bar button[aria-label="New folder"]').count(), 0, "Files has no New folder");
-        const browse = files.getByRole("button", { name: "Browse folders in the palette", exact: true });
-        assert.equal(await browse.count(), 0, "Files has no phone palette entry");
-        await page.setViewportSize({ width: 1024, height: 768 });
-        await browse.waitFor();
-        await browse.click();
-        const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
-        await palette.waitFor();
-        await page.keyboard.press("Escape");
-        await palette.waitFor({ state: "detached" });
-        await page.setViewportSize({ width: 390, height: 844 });
-        await browse.waitFor({ state: "detached" });
-        await page.keyboard.press("ControlOrMeta+Shift+K");
-        await palette.waitFor();
-      } finally { await palettePhone.close(); }
-      console.log("PASS phone header, More and Files omit palette entry points; wider Files and keyboard shortcuts still open it");
-
-      // a phone's ⋯ sheet is an entry of its own: Back closes it and stays on the pane; a sheet
-      // closed by Cancel or by an item leaves no entry behind, so the next Back goes to the pane before
-      const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
-      try {
-        await phone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
-        const page = await phone.newPage();
-        const errors: string[] = [];
-        page.on("pageerror", (error) => errors.push(error.message));
-        await page.goto(`${url}?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}`);
-        await page.locator(".conn-live").waitFor({ state: "attached" });
-        await waitSelected(page, INFRA);
-        // the sidebar is a closed drawer on a phone: a click on its row in the page is enough here
-        await page.locator(`.agents-sidebar .agent-item[data-pane="${DOCS}"] .agent-select`).evaluate((node) => (node as HTMLElement).click());
-        await waitQuery(page, "pane", DOCS);
-        const length = await page.evaluate(() => history.length);
-        const more = page.locator(".header-more-button");
-        const sheet = page.getByRole("dialog", { name: "More", exact: true });
-        await more.tap();
-        await sheet.waitFor();
-        assert.equal(await page.evaluate(() => history.length), length + 1, "an open sheet is an entry");
-        await page.goBack();
-        await sheet.waitFor({ state: "detached" });
-        assert.equal(await selected(page), DOCS, "Back closed the sheet and left the pane alone");
-        assert.equal((await query(page))["pane"], DOCS);
-        await more.tap();
-        await sheet.waitFor();
-        await sheet.getByRole("button", { name: "Cancel", exact: true }).tap();
-        await sheet.waitFor({ state: "detached" });
-        await page.waitForFunction(() => !Object.keys(history.state ?? {}).includes("herdr-web-ui:sheet"));
-        await page.goBack();
-        await waitSelected(page, INFRA);
-        await page.goForward();
-        await waitSelected(page, DOCS);
-        // an item that opens a dialog on the sheet's address keeps the sheet's entry: the tab menu's
-        // Rename pane dialog stays up once the sheet's closing has settled, and Back closes it alone
-        await page.locator(".tab-strip-menu").tap();
-        await page.getByRole("button", { name: "Rename pane", exact: true }).tap();
-        const creation = page.getByRole("dialog", { name: "Rename pane", exact: true });
-        await creation.waitFor();
-        await page.waitForTimeout(150);
-        assert.equal(await creation.isVisible(), true, "the Rename pane dialog stays up after the sheet's entry settles");
-        assert.equal(await page.evaluate(() => history.length), length + 1, "the dialog took the sheet's entry");
-        await page.goBack();
-        await creation.waitFor({ state: "detached" });
-        assert.equal(await selected(page), DOCS, "Back closed the dialog and left the pane alone");
-        // every other dialog is a sheet on a phone too: the plan and the palette close on Back
-        const API = panes.api;
-        await page.locator(`.agents-sidebar .agent-item[data-pane="${API}"] .agent-select`).evaluate((node) => (node as HTMLElement).click());
-        await waitQuery(page, "pane", API);
-        const atApi = await page.evaluate(() => history.length);
-        // the plan lives in the composer's background-task chip now (#846): its list is a phone dialog too
-        await page.locator(".composer .bg-tasks-toggle").tap();
-        const plan = page.locator(".bg-tasks-menu");
-        await plan.waitFor();
-        assert.equal(await page.evaluate(() => history.length), atApi + 1, "the plan is an entry");
-        await page.goBack();
-        await plan.waitFor({ state: "detached" });
-        assert.equal(await selected(page), API, "Back closed the plan and left the pane alone");
-        await page.keyboard.press("ControlOrMeta+Shift+K");
-        const palette = page.getByRole("dialog", { name: "Command palette" });
-        await palette.waitFor();
-        assert.equal(await page.evaluate(() => history.length), atApi + 1, "the palette is an entry");
-        await page.goBack();
-        await palette.waitFor({ state: "detached" });
-        assert.equal(await selected(page), API, "Back closed the palette and left the pane alone");
-        await page.goBack();
-        await waitSelected(page, DOCS);
-        await page.goBack();
-        await waitSelected(page, INFRA);
-        assert.deepEqual(errors, []);
-      } finally {
-        await phone.close();
-      }
-      console.log("PASS a phone's sheet, plan and palette close on Back without leaving their pane; Cancel and Rename pane leave no Back step behind");
     } finally {
       await browser.close();
     }

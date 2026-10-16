@@ -12,24 +12,6 @@ export const STATUS_WORD: Readonly<Record<KnownStatus, string>> = {
   unknown: "—",
 };
 
-/** herdr's two status indicator sets, its `[ui] status_indicators` ("dots" is herdr's default). */
-export type HerdrIndicators = "dots" | "symbols";
-/** The sidebar's state marks: this app's own (the default), or one of herdr's sets. */
-export type StatusIndicators = "classic" | HerdrIndicators;
-
-/**
- * The glyph herdr's TUI draws for each state (its client/shell.rs `status_icon`). BG is not a herdr
- * state: it takes RUN's glyph, held still.
- */
-const INDICATOR_GLYPH: Readonly<Record<HerdrIndicators, Readonly<Record<KnownStatus, string>>>> = {
-  dots: { idle: "\u25CB", working: "\u25CF", blocked: "\u25CF", done: "\u25CF", waiting: "\u25CF", unknown: "\u00B7" },
-  symbols: { idle: "\u25CB", working: "\u25D0", blocked: "\u00D7", done: "\u2713", waiting: "\u25D0", unknown: "\u00B7" },
-};
-
-export function indicatorGlyph(status: KnownStatus, style: HerdrIndicators): string {
-  return INDICATOR_GLYPH[style][status];
-}
-
 const KNOWN: Readonly<Record<string, KnownStatus>> = { idle: "idle", working: "working", blocked: "blocked", done: "done", waiting: "waiting" };
 
 /** herdr's AgentStatus is open-ended; the UI knows its states and files the rest under unknown. */
@@ -48,16 +30,14 @@ export function paneStatus(pane: { agent_status?: AgentStatus; background_wait?:
 }
 
 /**
- * herdr's roll-up order, on its server (workspace aggregate) and in its sidebar: a blocked agent
- * colours the whole workspace, then one that finished and was not looked at yet, then a working one,
- * then one waiting on its turn's background work (working in all but name).
+ * Keep ongoing work visible across tabs and splits. A working pane wins over one asking for
+ * input or already finished; background work stays visible until it ends too.
  */
-const ROLLUP: readonly KnownStatus[] = ["blocked", "done", "working", "waiting", "idle"];
+const ROLLUP: readonly KnownStatus[] = ["working", "blocked", "waiting", "done", "idle"];
 
 /**
- * One state for a row that stands for several panes, as herdr rolls a workspace's agents up:
- * blocked wins, then done, then working, then waiting on background work, then ready; unknown only
- * when no pane says more.
+ * One state for several panes: working, then input needed, then background work, then finished
+ * and ready. Each pane keeps its own status; unknown applies only when no pane says more.
  */
 export function rollupStatus(statuses: ReadonlyArray<AgentStatus | undefined>): KnownStatus {
   const known = statuses.map((status) => knownStatus(status));

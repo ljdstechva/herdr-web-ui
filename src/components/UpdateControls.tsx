@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
-import { CHECKOUT_CHANGED_REASON, SUMMARY_GROUPS, type SummaryGroup, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
+import { SUMMARY_GROUPS, type SummaryGroup, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import { useHerdrUpdate } from "../lib/herdrUpdate.ts";
 import { runningAppVersion, runningHerdrVersion, staleClientVersion, versionLabel } from "../lib/runningVersion.ts";
 import { useSettings } from "../lib/settings.ts";
 import { announcesUpdate, readAnnounced, summaryFor, watchAnnounced, writeAnnounced } from "../lib/updateNotes.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
-import { lazyChunkFailed, onLazyChunkFailure } from "../lib/lazyChunk.ts";
 import { Markdown } from "./Markdown.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import "./Machines.css";
@@ -17,8 +15,6 @@ import { useLocale, useT } from "../lib/i18n.ts";
 declare const __APP_VERSION__: string;
 
 const CHANGELOG = "https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.md";
-/** the restart commands for a plugin and a source install */
-const RESTART_HELP = "https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#updates";
 
 /**
  * What an update brings, or brought: each release it installs, newest first. A release is told
@@ -80,25 +76,21 @@ function UpdateProgress({ status, fallback }: { status: UpdateStatus | null; fal
 
 export function UpdateControls({ updates, bridgesFollow = false }: { updates: UpdatesModel; bridgesFollow?: boolean }) {
   const t = useT();
-  const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
+  const { status, error, busy, needsReload, notes, installed, request } = updates;
   const locale = useLocale();
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
   const tabVersion = staleClientVersion(status, __APP_VERSION__);
-  const restart = needsReload && reload === "restart";
-  // the restart line says what the check's own "checkout changed" reason says; other blockers stay
-  const blocked = restart && status?.blocked_reason === CHECKOUT_CHANGED_REASON ? null : status?.blocked_reason ?? null;
   // focusable from code only: a button that points here (the header line's) lands on it
   return <section className="settings-section settings-updates" data-section="updates" tabIndex={-1} aria-labelledby="settings-updates-title">
     <h3 id="settings-updates-title">{t("Updates")}</h3>
     <div className="settings-card"><div className="settings-item">
     {/* always a version: the sidebar no longer carries one */}
     <p className="settings-hint">{t("Running {version}", { version: runningAppVersion(status, __APP_VERSION__) })}</p>
-    {tabVersion && reload !== "restart" && <p className="settings-hint">{t("This tab still runs {version} until it is reloaded.", { version: tabVersion })}</p>}
+    {tabVersion && <p className="settings-hint">{t("This tab still runs {version} until it is reloaded.", { version: tabVersion })}</p>}
     {installing && !error ? <div role="status"><UpdateProgress status={status} fallback={t(status?.phase === "building" ? "Installing dependencies and building…" : "Restarting the bridge…")} /></div> : <p className="settings-hint" role="status">
-      {error ?? status?.error ?? (restart ? <><span>{t("herdr web ui was updated on this PC. Restart it there to load the update.")}</span> <a className="settings-link" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
+      {error ?? status?.error ?? status?.blocked_reason ?? (busy ? t("Checking for updates…") :
         status?.available ? t("Version {version} is available.", { version: versionLabel(status.latest_version, status.latest_revision) ?? "" }) : status?.checked_at ? t("Up to date.") : t("Waiting for an update check…"))}
     </p>}
-    {restart && !error && !status?.error && blocked && <p className="settings-hint">{blocked}</p>}
     {notes && <ReleaseNotes notes={notes} label={t("What's new")} />}
     {/* under the release on offer, when there is one: what runs now stays to be read */}
     {installed && installed.releases.length > 0 && <ReleaseNotes notes={installed} label={t("What the last update brought")} />}
@@ -110,7 +102,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
       </div>
     </>}
     {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(locale) })}</p>}
-    {needsReload && reload !== "restart" && <p className="settings-hint">{reload === "updated" ? t("The server was updated. Save any unsent drafts, then") : t("Part of the app could not load. Save unsent drafts, then reload.")} <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button></p>}
+    {needsReload && <p className="settings-hint">{t("The server was updated. Save any unsent drafts, then")} <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button></p>}
     </div></div>
   </section>;
 }
@@ -150,12 +142,12 @@ export function HerdrUpdateControls({ enabled, herdrVersion }: { enabled: boolea
 
 /**
  * The app-wide line for a release: one button installs it from here, and the line follows the
- * install to the reload, then tells of the update once the new version runs. It stays one line
- * on any width; Settings is where its notes and a failure are read in full.
+ * install to the reload, then tells of the update once the new version runs. Settings is
+ * where its notes and a failure are read in full.
  */
 export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpen: () => void }) {
   const t = useT();
-  const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
+  const { status, error, busy, needsReload, notes, installed, request } = updates;
   // the version whose line this device closed: opening its notes closes it too, in every tab
   const [announced, setAnnounced] = useState(readAnnounced);
   // subscribed first, then read: a dismissal in another tab between this tab's first read and its subscription is not lost
@@ -176,55 +168,29 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
     if (!installed?.version || !announcesUpdate(status, installed, announced, Date.now())) return null;
     const version = installed.version;
     const close = () => { writeAnnounced(version); setAnnounced(version); };
-    const text = t("herdr web ui was updated to v{version}.", { version });
-    return <div className="update-notice is-line" role="status">
-      <span title={text}>{text}</span>
+    return <div className="update-notice" role="status">
+      <span>{t("herdr web ui was updated to v{version}.", { version })}</span>
       {installed.releases.length > 0 && <button type="button" className="btn btn-ghost" onClick={() => { close(); onOpen(); }}>{t("What's new")}</button>}
-      <button type="button" className="icon-button update-notice-dismiss" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={close}><X /></button>
+      <button type="button" className="btn btn-ghost" onClick={close}>{t("Dismiss")}</button>
     </div>;
   }
   if (installing || started || looking) {
-    return <div className="update-notice is-line is-progress" role="status">
+    return <div className="update-notice is-progress" role="status">
       <UpdateProgress status={status} fallback={t(installing ? status?.phase === "building" ? "Installing dependencies and building…" : "Restarting the bridge…" : started ? "Starting the update…" : "Checking for updates…")} />
     </div>;
   }
   if (needsReload) {
-    // a reload cannot help here: the line only tells what to do, and goes when the server restarts
-    if (reload === "restart") return <div className="update-notice is-line is-warning" role="status">
-      <span>{t("herdr web ui was updated on this PC. Restart it there to load the update.")}</span>
-      <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>
-    </div>;
-    // a warning before a step that loses unsent drafts: read in full, so this line alone may wrap
-    const text = reload === "updated" ? t("App updated. Save unsent drafts before reloading.") : t("Part of the app could not load. Save unsent drafts, then reload.");
-    return <div className="update-notice is-line is-warning" role="status">
-      <span>{text}</span>
+    return <div className="update-notice" role="status">
+      <span>{t("App updated. Save unsent drafts before reloading.")}</span>
       <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button>
     </div>;
   }
   // without a release in reach the server refuses an install: ask it to look again first
   const retry = status?.available ? "install" : "check";
-  const text = failed ? t("The update could not be installed.") : status?.latest_version ? t("herdr web ui v{version} is available.", { version: status.latest_version }) : t("A herdr web ui update is available.");
-  return <div className="update-notice is-line" role="status">
-    <span title={text}>{text}</span>
+  return <div className="update-notice" role="status">
+    <span>{failed ? t("The update could not be installed.") : status?.latest_version ? t("herdr web ui v{version} is available.", { version: status.latest_version }) : t("A herdr web ui update is available.")}</span>
     {failed ? <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("Details")}</button>
       : notes && <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("What's new")}</button>}
     <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setAttempted(true); setStarted(retry === "install"); void request(retry); }}>{t(failed ? "Try again" : "Update")}</button>
-  </div>;
-}
-
-/**
- * The reload line alone, for a page without the update model: the markdown reader tab
- * (FileReader). A part of the app that failed to load there (lib/lazyChunk.ts) leaves math as its
- * source or a diagram as code until a reload, which this line offers. No status is polled.
- */
-export function ChunkFailureNotice() {
-  const t = useT();
-  const [failed, setFailed] = useState(lazyChunkFailed);
-  // subscribed first, then read: a failure between the first render and the subscription is kept
-  useEffect(() => { const stop = onLazyChunkFailure(() => setFailed(true)); setFailed(lazyChunkFailed()); return stop; }, []);
-  if (!failed) return null;
-  return <div className="update-notice is-line is-warning" role="status">
-    <span>{t("Part of the app could not load. Save unsent drafts, then reload.")}</span>
-    <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button>
   </div>;
 }

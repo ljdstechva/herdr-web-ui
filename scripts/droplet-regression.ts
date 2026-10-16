@@ -8,7 +8,7 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
 /**
  * In-app alerts on a phone-sized page: real herdr status changes reach the open app, which
  * drops a card for a pane other than the open one (and none for the open one). A tap opens
- * that pane; a flick up or its close button puts one away; one left alone goes by itself.
+ * that pane; a flick up puts one away; one left alone goes by itself.
  */
 export async function checkDroplet(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-droplet-"));
@@ -58,15 +58,19 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     await card.waitFor({ state: "visible" });
     assert.match((await card.getAttribute("aria-label")) ?? "", /Needs input/);
     assert.equal(await droplet.getAttribute("data-kind"), "blocked");
-    // the compact drop and expanded card clear both native UI and header controls
+    // the compact drop and expanded card clear both native UI and what holds the top of the screen:
+    // the header, or the tab strip over a phone's bottom bar (lib/droplet.ts dropletTop)
     await Bun.sleep(1_000);
     const box = (await card.boundingBox())!;
     const clearance = await page.evaluate(() => {
       const probe = document.querySelector(".droplet-probe")!;
       const safeTop = Number.parseFloat(getComputedStyle(probe).paddingTop) || 0;
-      return Math.max(safeTop, document.querySelector(".app-header")?.getBoundingClientRect().bottom ?? 0) + 12;
+      const header = document.querySelector(".app-header")?.getBoundingClientRect();
+      const top = header && header.top < innerHeight / 2 ? header.bottom : document.querySelector(".tab-strip")?.getBoundingClientRect().bottom ?? 0;
+      return Math.max(safeTop, top) + 12;
     });
     assert.ok(Math.abs(box.y - clearance) <= 2, `card top ${box.y}, clearance ${clearance}`);
+    assert.ok(box.y >= 0 && box.y + box.height <= 844, `the card is on a phone's screen: ${box.y}..${box.y + box.height}`);
     assert.ok(Math.abs(box.x + box.width / 2 - 195) <= 1, `card centre ${box.x + box.width / 2}`);
     // the phone layout's card: one line, as wide as its text, and the shape under it the same width
     assert.ok(box.height === 44 && box.width < 300, `phone card ${box.width}x${box.height}`);
@@ -103,15 +107,6 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     await droplet.waitFor({ state: "detached", timeout: 2_000 });
     assert.equal(await selected(), otherPane, "a flick up opens nothing");
     console.log("PASS a flick up puts an in-app alert away");
-
-    // its close button puts it away, and opens nothing
-    await report(openPane, "idle");
-    await block(openPane);
-    await card.waitFor({ state: "visible", timeout: 5_000 });
-    await page.locator(".droplet-close").tap();
-    await droplet.waitFor({ state: "detached", timeout: 2_000 });
-    assert.equal(await selected(), otherPane, "the close button opens nothing");
-    console.log("PASS the close button puts an in-app alert away");
 
     // left alone, it goes by itself
     await report(openPane, "idle");

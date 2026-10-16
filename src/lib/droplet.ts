@@ -145,3 +145,17 @@ export function onDroplet(listener: Listener): () => void {
     listeners.delete(listener);
   };
 }
+
+type Edges = Pick<DOMRect, "top" | "bottom">;
+
+/**
+ * Where the card's top goes: clear of the safe area and of what holds the top of the screen.
+ * That is the header, except on a phone, whose bar sits at the bottom (styles.css, 640px and
+ * under): measured against that bar the card was drawn under the screen, and never seen. There
+ * it clears the tab strip, which is what the top of a phone's screen holds.
+ */
+export function dropletTop(safeTop: number, header: Edges | null, strip: Edges | null, viewportHeight: number): number {
+  const headerOnTop = header !== null && header.top < viewportHeight / 2;
+  const clear = headerOnTop ? header.bottom : strip !== null && strip.top < viewportHeight / 2 ? strip.bottom : 0;
+  return Math.max(safeTop, clear) + 12;
+}

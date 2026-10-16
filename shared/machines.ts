@@ -1,9 +1,8 @@
-import type { SharedPreferences } from "./preferences.ts";
 import type { HealthAuth, ServerMessage, SessionSnapshot } from "./protocol.ts";
 
 export const LOCAL_MACHINE = "local";
 export const BRIDGE_PROTOCOL = 1;
-export const REMOTE_BUNDLE_VERSION = "30";
+export const REMOTE_BUNDLE_VERSION = "25";
 export interface PaneTarget { machine_id: string; pane_id: string }
 export type MachineState = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
 export interface SshTarget {
@@ -13,8 +12,6 @@ export interface SshTarget {
   session?: string;
 }
 export interface Machine {
-  /** Read-only identity inherited from the local herdr catalog. */
-  herdr_profile_id?: string;
   id: string;
   name: string;
   kind: "local" | "ssh";
@@ -43,7 +40,7 @@ export interface HerdrIdentity {
   /** without attach, the terminal lens shows the pane's screen repainted a few times a second (server/mirror.ts) */
   terminal_mirror?: boolean;
 }
-export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict";
+export type MachineAction = "update_bridge" | "setup" | "bridge_conflict";
 export interface MachineUpdate { job_id: string; step: string; progress: SetupProgress | null }
 /**
  * Where a bridge install is. download (the web server fetching the bundle) and upload (the
@@ -79,9 +76,7 @@ export interface SetupJob {
   progress?: SetupProgress | null;
 }
 export type SetupAction = { action: "answer"; challenge_id: string; answer: string } | { action: "approve" } | { action: "cancel" };
-/** `preferences`: what every browser of this server shares changed (shared/preferences.ts) */
-export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "machine-message"; machine_id: string; message: ServerMessage }
-  | { type: "preferences"; preferences: SharedPreferences };
+export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "machine-message"; machine_id: string; message: ServerMessage };
 export interface BridgeHealth { ok: true; auth: HealthAuth; bridge_protocol: number }
 export interface BridgeIdentity {
   pid: number;

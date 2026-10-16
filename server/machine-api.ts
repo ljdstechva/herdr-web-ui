@@ -1,13 +1,12 @@
-import type { MachineEvent, SetupAction, SetupRequest } from "../shared/machines.ts";
-import type { SharedPreferences } from "../shared/preferences.ts";
-import type { InteractivePrompt } from "../shared/protocol.ts";
+import type { SetupAction, SetupRequest } from "../shared/machines.ts";
 import { MachineManager } from "./machines.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse } from "./http.ts";
-import { crossSiteFileRead } from "./file-view.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
-export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|plan|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|focus)|workspace\/(?:create|rename|move|close|directories|diff\/files|diff\/file)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
+/** git, then agent.start or the repository's hooks: these wait longer than any other PC call */
+export const SLOW_WORKTREE_PATH = /^worktree\/(?:create|tab|merge)$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove|tab|status|merge)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
 
 
 /**
@@ -24,16 +23,13 @@ function transportFailure(id: string, path: string, error: unknown): Response {
     : fail("machine_unavailable", "The PC connection was interrupted; retry after reconnecting", 502);
 }
 
-export async function handleMachineRequest(request: Request, manager: MachineManager, onRevoke?: (close: () => void) => () => void,
-  preferences?: { get(): SharedPreferences; subscribe(listener: (preferences: SharedPreferences) => void): () => void }, readOnly = false): Promise<Response> {
+export async function handleMachineRequest(request: Request, manager: MachineManager, onRevoke?: (close: () => void) => () => void): Promise<Response> {
   const url = new URL(request.url);
   // A PC's file opens as this PC's /api/fs/file does, from any navigation: reading it changes
   // nothing, and Chrome on Android shows a PDF in the viewer's frame as an "Open" button whose
   // navigation is cross-site. Every other PC route still answers only this app.
   const fileRead = ["GET", "HEAD"].includes(request.method) && /^\/api\/machines\/[^/]+\/fs\/file$/.test(url.pathname);
   if (!fileRead && !sameOrigin(request)) return fail("invalid_origin", "Use PC controls from this app", 403);
-  // a navigation may open a PC's file from anywhere; another page loading it as a picture may not
-  if (fileRead && crossSiteFileRead(request)) return fail("cross_site", "A file is read from this app or opened in a tab, not loaded by another page", 403);
   if (!["GET", "HEAD"].includes(request.method) && request.headers.get("x-herdr-machine") !== "1") return fail("invalid_machine_request", "Use PC controls from this app", 403);
   // an empty segment is never a route: dropping it would forward `<id>//fs/file` as `fs/file`
   if (url.pathname.includes("//")) return fail("not_found", "not found", 404);
@@ -42,12 +38,11 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
     if (!parts.length && request.method === "GET") return jsonResponse({ machines: manager.list() });
     if (parts[0] === "events" && parts.length === 1 && request.method === "GET") {
       let stop: (() => void) | undefined;
-      let stopPreferences: (() => void) | undefined;
       let unwatchDevice: (() => void) | undefined;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let close = () => {};
       const cleanup = () => {
-        stop?.(); stopPreferences?.(); unwatchDevice?.(); clearInterval(heartbeat);
+        stop?.(); unwatchDevice?.(); clearInterval(heartbeat);
         request.signal.removeEventListener("abort", close);
       };
       const encoder = new TextEncoder();
@@ -59,11 +54,6 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
           if (closed) return;
           const send = (text: string) => { if (closed) return; if ((controller.desiredSize ?? 0) < -4) { close(); return; } try { controller.enqueue(encoder.encode(text)); } catch { close(); } };
           stop = manager.subscribe((event) => send(`data: ${JSON.stringify(event)}\n\n`));
-          // the shared preferences ride the same stream, one connection per browser; the document
-          // opens it, so a page that reconnects (or whose GET lost a race) holds the latest
-          const sendPreferences = (shared: SharedPreferences) => send(`data: ${JSON.stringify({ type: "preferences", preferences: shared } satisfies MachineEvent)}\n\n`);
-          stopPreferences = preferences?.subscribe(sendPreferences);
-          if (preferences) sendPreferences(preferences.get());
           if (closed) { cleanup(); return; }
           heartbeat = setInterval(() => send(": heartbeat\n\n"), 15_000);
           request.signal.addEventListener("abort", close, { once: true });
@@ -131,26 +121,11 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
           return new Response(response.body, { status: response.status, headers: passed });
         } catch (error) { return transportFailure(id, path, error); }
       }
-      // A watching device gets a plan card as the PC's screen shows it, never Claude's plan file:
-      // the PC is asked for that (`plan=0`), and a PC that ignores the ask loses the file here.
-      const watchedPrompt = readOnly && path === "pane/prompt";
-      const target = new URL(`${endpoint.url}/api/${path}${url.search}`);
-      if (watchedPrompt) target.searchParams.set("plan", "0");
       const untrack = manager.trackTerminal(id, () => abort.abort());
       try {
-        const response = await fetch(target, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(path === "worktree/create" ? 165_000 : 75_000)]) });
+        const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(SLOW_WORKTREE_PATH.test(path) ? 165_000 : 75_000)]) });
         const etag = response.headers.get("etag");
-        let body = response.status === 304 ? null : await response.arrayBuffer();
-        if (watchedPrompt && response.ok && body) {
-          const answer = JSON.parse(new TextDecoder().decode(body)) as { prompt?: InteractivePrompt | null };
-          if (answer.prompt?.plan_file !== undefined) {
-            // the body is the plan file's text and the screen's is not in the answer: the card keeps
-            // its question and options, without a body
-            const { plan_file: _planFile, ...card } = answer.prompt;
-            body = new TextEncoder().encode(JSON.stringify({ ...answer, prompt: { ...card, body: null } })).buffer as ArrayBuffer;
-          }
-        }
-        return new Response(body, { status: response.status, headers: {
+        return new Response(response.status === 304 ? null : await response.arrayBuffer(), { status: response.status, headers: {
           "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", ...(etag ? { etag } : {}),
         } });
       } catch (error) { return transportFailure(id, path, error); }

@@ -8,7 +8,6 @@ import { chromium, type Browser } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose, paneSendText, paneSendKeys, paneRead } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
-import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-sticky-qa-"));
 const owned: string[] = [];
@@ -26,7 +25,7 @@ async function until(check: () => boolean | Promise<boolean>, label: string) {
   }
 }
 try {
-  const browser = launched = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
+  const browser = launched = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   for (const mode of ["legacy", "kitty"] as const) {
     const made = await workspaceCreate({ cwd: root, label: `herdr-web-ui-test-sticky-${mode}`, focus: false });
     owned.push(made.workspace.workspace_id);
@@ -149,8 +148,7 @@ try {
         box.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: text }));
         box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: text }));
       }, text);
-      // a commit can reach the program in more than one read: wait for all of its bytes, two hex digits each
-      await until(() => read().length - imeBefore.length >= Buffer.byteLength(text) * 2, "IME commit received");
+      await until(() => read().length > imeBefore.length, "IME commit received");
       assert.equal(frames.slice(imeFrames).some((frame) => frame.type === "keys"), false, "IME commit bypasses held modifiers");
       assert.equal(Buffer.from(read().slice(imeBefore.length), "hex").toString(), text);
     }

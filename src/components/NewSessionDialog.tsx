@@ -1,19 +1,18 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { FolderOpen, X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { FolderOpen, GitBranch, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
-import type { AgentKind } from "../../shared/protocol.ts";
-import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
+import type { AgentKind, WorktreeEntry } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
-import { DirectoryBrowser, homeRelative } from "./DirectoryBrowser.tsx";
-import { RecentFolderChips } from "./RecentFolderChips.tsx";
+import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
+import { Toggle } from "./SettingsControls.tsx";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
-import { useSheetSwipe } from "../lib/sheets.ts";
-import { passingFolder, recentDirectories } from "../lib/recent-directories.ts";
+import { worktreeTabLabel } from "../lib/tabWorktrees.ts";
+import { suggestWorktreeBranch } from "../lib/worktreeName.ts";
 
 /** The dialog as New tab: the workspace the tab joins, whose folder it uses, and the number herdr will give it. */
 export interface NewTabTarget {
@@ -21,6 +20,18 @@ export interface NewTabTarget {
   workspaceLabel: string;
   cwd: string | null;
   number: number;
+}
+
+/** how many kept worktrees the dialog names: the rest are still opened by typing their branch */
+const MAX_CHECKOUTS = 6;
+
+/** whether the last tab made in a repository was a worktree: the switch starts where it was left */
+const WORKTREE_KEY = "herdr-web-ui:new-tab-worktree";
+function rememberedWorktree(): boolean {
+  try { return localStorage.getItem(WORKTREE_KEY) === "1"; } catch { return false; }
+}
+function rememberWorktree(on: boolean): void {
+  try { if (on) localStorage.setItem(WORKTREE_KEY, "1"); else localStorage.removeItem(WORKTREE_KEY); } catch { /* private mode: the switch starts off */ }
 }
 
 export interface NewSessionDialogProps {
@@ -36,8 +47,6 @@ export interface NewSessionDialogProps {
   prefill?: DialogFields | null;
   /** what the fields say, a moment after they change, for the address */
   onDraft?: (fields: DialogFields) => void;
-  /** the PC's open linked worktree checkouts: no project to offer among the recent folders */
-  worktrees?: readonly string[];
 }
 
 export interface DialogFields {
@@ -49,32 +58,33 @@ export interface DialogFields {
 
 /** how long the fields rest before the address follows them: Safari refuses a burst of history writes */
 const DRAFT_MS = 400;
-/** recent folders offered: one row a phone swipes sideways; a wider screen fits what one row holds and lists the rest under "+N" */
-const RECENT_FOLDERS_SHOWN = 8;
 
 function directoryBasename(value: string): string {
-  const trimmed = value.replace(/\\/g, "/").replace(/\/+$/, "");
-  return trimmed.split("/").pop() || value;
+  const trimmed = value.replace(/\/+$/, "");
+  return trimmed.split("/").pop() ?? "";
 }
 
-export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [] }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft }: NewSessionDialogProps) {
   const t = useT();
   const machineId = useMachineId();
-  const { createTab, createWorkspace, fetchAgentKinds } = useMachineApi();
+  const { createTab, createWorkspace, createWorktreeTab, fetchAgentKinds, listWorktrees } = useMachineApi();
   const [agents, setAgents] = useState<AgentKind[]>([]);
   const [agentKind, setAgentKind] = useState(rememberedAgent);
   const [cwd, setCwd] = useState(defaultCwd ?? "");
   const [name, setName] = useState("");
+  // the workspace is in a git repository, so the tab can be a worktree of it: herdr's listing of
+  // its checkouts says so (the snapshot names a repository only once a worktree was opened from it)
+  const [repository, setRepository] = useState(false);
+  // the worktrees the repository already has on disk: a tab can open in one again
+  const [checkouts, setCheckouts] = useState<WorktreeEntry[]>([]);
+  const [asWorktree, setAsWorktree] = useState(rememberedWorktree);
+  const [branch, setBranch] = useState(suggestWorktreeBranch);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdPaneId, setCreatedPaneId] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
-  const [recentFolders, setRecentFolders] = useState(() => recentDirectories.read(machineId));
-  // folders kept before worktrees and temporary folders were left out are left out here too
-  const shownFolders = recentFolders.filter((path) => !passingFolder(path, worktrees)).slice(0, RECENT_FOLDERS_SHOWN);
   const firstFieldRef = useRef<HTMLButtonElement>(null);
   const surface = useFocusTrap<HTMLFormElement>(open, { initialFocus: firstFieldRef });
-  useSheetSwipe(surface, pending ? null : onClose);
   const defaultCwdRef = useRef(defaultCwd);
   defaultCwdRef.current = defaultCwd;
   const prefillRef = useRef(prefill);
@@ -85,11 +95,14 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     const filled = prefillRef.current;
     setCwd(filled?.cwd ?? defaultCwdRef.current ?? "");
     setName(filled?.name ?? "");
+    setAsWorktree(rememberedWorktree());
+    setBranch(suggestWorktreeBranch());
+    setRepository(false);
+    setCheckouts([]);
     setError(null);
     setPending(false);
     setCreatedPaneId(null);
     setBrowsing(false);
-    setRecentFolders(recentDirectories.read(machineId));
     const remembered = rememberedAgent();
     const stored = filled?.agent ?? remembered;
     setAgentKind(stored);
@@ -108,6 +121,20 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
       cancelled = true;
     };
   }, [open]);
+
+  const tabWorkspaceId = tab?.workspaceId ?? null;
+  useEffect(() => {
+    if (!open || tabWorkspaceId === null) return;
+    let cancelled = false;
+    // a folder that is no repository, or a PC from before worktrees: the tab is a plain one
+    listWorktrees(tabWorkspaceId).then((listing) => {
+      if (cancelled) return;
+      setRepository(true);
+      // one a workspace is on is that workspace's, not a tab's to open and later delete
+      setCheckouts((Array.isArray(listing.worktrees) ? listing.worktrees : []).filter((entry) => entry.is_linked_worktree && !entry.is_bare && !entry.is_prunable && !entry.open_workspace_id && entry.branch !== null));
+    }, () => undefined);
+    return () => { cancelled = true; };
+  }, [open, tabWorkspaceId, listWorktrees]);
 
   useEffect(() => {
     if (!open || !onDraft) return;
@@ -129,11 +156,15 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
 
   if (!open) return null;
 
+  // a worktree only where there is a repository to make one of
+  const worktree = tab !== null && repository && asWorktree;
+  const existing = worktree && checkouts.some((entry) => entry.branch === branch.trim());
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
-  const pendingLabel = selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
+  const pendingLabel = worktree ? (existing ? t("Opening…") : t("Creating the checkout…")) : selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
   const fieldsDisabled = pending || createdPaneId !== null;
 
-  const startWorkspace = async (directory: string): Promise<void> => {
+  const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
     if (pending) return;
     if (createdPaneId !== null) { onCreated(createdPaneId, false); return; }
     setPending(true);
@@ -141,18 +172,19 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     try {
       rememberAgent(agentKind);
       const agent = agentKind ? { kind: agentKind } : null;
-      // a tab keeps the workspace's folder, which the dialog shows and does not ask for
-      const result = tab
+      if (tab && repository) rememberWorktree(asWorktree);
+      // a tab keeps the workspace's folder, which the dialog shows and does not ask for; a
+      // worktree tab gets a checkout of its own, on its own branch, and opens there
+      const result = worktree
+        ? await createWorktreeTab({ workspace_id: tab.workspaceId, branch: branch.trim(), label: name.trim() || null, agent })
+        : tab
         ? await createTab({ workspace_id: tab.workspaceId, cwd: tab.cwd, label: name.trim() || null, agent })
-        : await createWorkspace({ cwd: directory.trim() || null, label: name.trim() || null, agent });
+        : await createWorkspace({ cwd: cwd.trim() || null, label: name.trim() || null, agent });
       if (agentKind && !result.agent_started && result.error?.message) {
         setPending(false);
         setError(result.error.message);
         setCreatedPaneId(result.pane_id);
         return;
-      }
-      if (!tab && (!agentKind || result.agent_started)) {
-        setRecentFolders(recentDirectories.remember(machineId, [directory.trim()], true));
       }
       // the dialog closes on this: left pending, its next opening would start a frame with the
       // fields disabled and Escape ignored, until the open effect's reset has rendered
@@ -161,6 +193,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     } catch (reason: unknown) {
       setPending(false);
       if (reason instanceof ApiError && reason.code === "invalid_cwd") setError(t("Directory not found"));
+      // git's own words about a refused checkout (a branch another checkout is on, a folder that exists)
+      else if (reason instanceof ApiError && worktree) setError(reason.detail);
       else setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
@@ -171,7 +205,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
 
   return (
     <div className="modal-scrim new-session-scrim" onMouseDown={closeFromScrim}>
-      <form ref={surface} className="modal new-session-modal" role="dialog" aria-modal="true" aria-labelledby="new-session-title" tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void startWorkspace(cwd); }}>
+      <form ref={surface} className="modal new-session-modal" role="dialog" aria-modal="true" aria-labelledby="new-session-title" tabIndex={-1} onSubmit={(event) => void submit(event)}>
         <header className="modal-header">
           <h2 className="modal-title" id="new-session-title">{tab ? `${t("New tab")} · ${tab.workspaceLabel}` : `${t("New workspace")} · ${machineName ?? machineId}`}</h2>
           <button type="button" className="icon-button" aria-label={t("Close dialog")} disabled={pending} onClick={onClose}>
@@ -183,7 +217,32 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <span className="field-label" id="new-session-agent">{t("Agent")}</span>
             <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" onChange={setAgentKind} />
           </div>
-          {tab ? (
+          {tab && repository && (
+            <div className="field">
+              <div className="new-session-switch">
+                <span className="new-session-switch-copy"><GitBranch aria-hidden="true" />{t("New worktree")}</span>
+                <Toggle checked={asWorktree} label={t("New worktree")} disabled={fieldsDisabled} onChange={setAsWorktree} />
+              </div>
+              <span className="field-hint">{t("The tab works on a branch and a checkout of its own, so several agents can work on this project at once. Merge it back from the tab's menu.")}</span>
+            </div>
+          )}
+          {worktree ? (
+            <div className="field">
+              <label className="field-label" htmlFor="new-session-branch">{t("Branch")}</label>
+              <input id="new-session-branch" className="input" value={branch} disabled={fieldsDisabled} required autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(event) => setBranch(event.target.value)} />
+              <span className="field-hint">{existing
+                ? t("This branch has a worktree on disk already: the tab opens in it.")
+                : t("A new branch from where this workspace is now, or an existing one to check out. The checkout goes under herdr's worktree folder.")}</span>
+              {checkouts.length > 0 && (
+                <span className="new-session-checkouts" role="group" aria-label={t("Worktrees on disk")}>
+                  <span className="field-hint">{t("Worktrees on disk")}</span>
+                  {checkouts.slice(0, MAX_CHECKOUTS).map((entry) => (
+                    <button type="button" key={entry.path} className="new-session-checkout" aria-pressed={entry.branch === branch.trim()} disabled={fieldsDisabled} title={entry.path} onClick={() => setBranch(entry.branch ?? "")}>{worktreeTabLabel(entry.branch ?? "")}</button>
+                  ))}
+                </span>
+              )}
+            </div>
+          ) : tab ? (
             <div className="field">
               <span className="field-label">{t("Directory")}</span>
               <div className="new-session-folder">
@@ -202,27 +261,18 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
                   {t("Browse")}
                 </button>
               </div>
-              {/* Browse updates Directory as you open folders, so Start uses what the path bar shows
-                  even when Use this folder was never pressed (issue #1162); a folder under home
-                  keeps the `~/…` form typed or picked, rather than turning absolute on opening Browse. */}
-              {browsing && <DirectoryBrowser start={cwd} onPick={(picked) => { setCwd(picked); setBrowsing(false); }} onFolder={(path, home) => setCwd(homeRelative(path, home))} />}
+              {browsing && <DirectoryBrowser start={cwd} onPick={(picked) => { setCwd(picked); setBrowsing(false); }} />}
               <span className="field-hint">{t("absolute path or ~/…")}</span>
             </div>
           )}
-          {!tab && shownFolders.length > 0 && <div className="field new-session-recents">
-            <span className="field-label" id="new-session-recents">{t("Recent folders")}</span>
-            <RecentFolderChips folders={shownFolders} disabled={fieldsDisabled} labelledBy="new-session-recents" basename={directoryBasename}
-              onPick={(path) => { setCwd(path); setBrowsing(false); }} />
-          </div>}
           <label className="field">
             <span className="field-label">{t("Name")}</span>
             <input
               className="input"
               value={name}
-              maxLength={MAX_LABEL_CHARS}
               disabled={fieldsDisabled}
               autoComplete="off"
-              placeholder={tab ? String(tab.number) : directoryBasename(cwd)}
+              placeholder={worktree ? worktreeTabLabel(branch) : tab ? String(tab.number) : directoryBasename(cwd)}
               onChange={(event) => setName(event.target.value)}
             />
             <span className="field-hint">{t(tab ? "Tab name (optional)" : "Optional workspace label")}</span>
@@ -232,7 +282,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
+          <button type="submit" className="btn btn-primary" disabled={pending || (worktree && createdPaneId === null && branch.trim() === "")}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
         </footer>
       </form>
     </div>

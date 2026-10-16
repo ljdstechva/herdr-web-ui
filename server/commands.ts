@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { piAgentDir } from "./pi-models.ts";
 import { join, relative, sep } from "node:path";
 
@@ -65,13 +65,11 @@ function skills(root: string, source: SlashCommand["source"], options: { prefix?
   if (!existsSync(root)) return [];
   const result: SlashCommand[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
-    const directory = join(root, entry.name);
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const file = join(root, entry.name, "SKILL.md");
+    if (!existsSync(file)) continue;
     let markdown: string;
-    try {
-      if (!statSync(directory).isDirectory()) continue;
-      markdown = readFileSync(join(directory, "SKILL.md"), "utf8");
-    } catch { continue; }
+    try { markdown = readFileSync(file, "utf8"); } catch { continue; }
     const name = skillName(markdown, entry.name);
     result.push({ name: options.prefix ? `${options.prefix}:${name}` : name, description: description(markdown), source, ...(options.trigger ? { trigger: options.trigger } : {}) });
   }
@@ -100,26 +98,15 @@ function pluginCommands(home: string): SlashCommand[] {
 
 function customCommands(root: string, source: SlashCommand["source"]): SlashCommand[] {  if (!existsSync(root)) return [];
   const result: SlashCommand[] = [];
-  // Guard only the current ancestry: sibling links can expose different command namespaces.
-  const ancestors = new Set<string>();
   const visit = (directory: string): void => {
-    let canonical: string;
-    try { canonical = realpathSync(directory); } catch { return; }
-    if (ancestors.has(canonical)) return;
-    ancestors.add(canonical);
-    try {
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        const path = join(directory, entry.name);
-        try {
-          const target = statSync(path);
-          if (target.isDirectory()) visit(path);
-          else if (target.isFile() && entry.name.endsWith(".md")) {
-            const relativeName = relative(root, path).slice(0, -3).split(sep).join(":");
-            result.push({ name: relativeName, description: description(readFileSync(path, "utf8")), source });
-          }
-        } catch { continue; }
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && entry.name.endsWith(".md")) {
+        const relativeName = relative(root, path).slice(0, -3).split(sep).join(":");
+        result.push({ name: relativeName, description: description(readFileSync(path, "utf8")), source });
       }
-    } finally { ancestors.delete(canonical); }
+    }
   };
   visit(root);
   return result;

@@ -19,3 +19,10 @@ export function focusWorkspaceListToggle(): void {
 export function modalOpen(): boolean {
   return document.querySelector("[aria-modal='true'], dialog[open]") !== null;
 }
+
+export const MODAL_CHANGE_EVENT = "herdr-modal-change";
+
+/** A removed modal need not restore focus (its opener may be gone). Observe the committed DOM. */
+export function announceModalChange(): void {
+  queueMicrotask(() => document.dispatchEvent(new Event(MODAL_CHANGE_EVENT)));
+}

@@ -18,7 +18,6 @@ import { sameOrigin } from "./machine-security.ts";
 const CODE_TTL_MS = 10 * 60_000;
 const CODE_ATTEMPTS = 5;
 const LAST_SEEN_WRITE_MS = 60_000;
-const UNCONFIRMED_FIRST_PAIR_LIMIT = 8;
 const LABEL_MAX = 48;
 
 interface StoredDevice {
@@ -28,11 +27,6 @@ interface StoredDevice {
   token_hash: string;
   created_at: string;
   last_seen_at: string | null;
-}
-
-interface UnconfirmedFirstPair {
-  device: StoredDevice;
-  expires: number;
 }
 
 export interface PairingCode {
@@ -76,8 +70,6 @@ export class DeviceStore {
   /** when the first device was paired: from then on, only this PC, the owner's login, a device or the token get in */
   private gateClosedAt: string | null = null;
   private pending: { code: string; expires: number; attempts: number } | null = null;
-  /** First-pair cookies are not devices, and do not close the gate, until one returns. */
-  private unconfirmedFirstPairs: UnconfirmedFirstPair[] = [];
   private readonly path: string;
   private readonly revocations = new Map<string, Set<() => void>>();
   readonly error: string | null = null;
@@ -136,7 +128,6 @@ export class DeviceStore {
   /** A fresh six-digit code, replacing any code still pending. */
   startPairing(now = Date.now()): PairingCode {
     this.assertWritable();
-    this.pruneUnconfirmedFirstPairs(now);
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     this.pending = { code, expires: now + CODE_TTL_MS, attempts: 0 };
     return { code, expires_at: new Date(this.pending.expires).toISOString() };
@@ -145,7 +136,6 @@ export class DeviceStore {
   /** `{ token }` when the code is right; null when it is wrong, spent or expired. */
   pair(code: string, label: string, role: DeviceRole, now = Date.now()): { token: string; device: DeviceMatch } | null {
     this.assertWritable();
-    this.pruneUnconfirmedFirstPairs(now);
     const pending = this.pending;
     if (pending === null || now > pending.expires) { this.pending = null; return null; }
     if (!same(code.replace(/\D/g, ""), pending.code)) {
@@ -155,12 +145,6 @@ export class DeviceStore {
     }
     const token = randomBytes(32).toString("hex");
     const device: StoredDevice = { id: randomBytes(8).toString("hex"), label, role, token_hash: hash(token), created_at: new Date(now).toISOString(), last_seen_at: null };
-    if (!this.gated) {
-      this.pending = null;
-      this.unconfirmedFirstPairs.push({ device, expires: now + CODE_TTL_MS });
-      if (this.unconfirmedFirstPairs.length > UNCONFIRMED_FIRST_PAIR_LIMIT) this.unconfirmedFirstPairs.shift();
-      return { token, device: { id: device.id, label: device.label, role: device.role } };
-    }
     const next = [...this.devices, device];
     const gate = this.gateClosedAt ?? device.created_at;
     this.save(next, gate);
@@ -172,25 +156,8 @@ export class DeviceStore {
 
   /** The device a cookie token belongs to, noting when it was last seen (at most once a minute on disk). */
   match(token: string | undefined, now = Date.now()): DeviceMatch | null {
-    this.pruneUnconfirmedFirstPairs(now);
     if (!token) return null;
     const digest = hash(token);
-    const candidateIndex = this.unconfirmedFirstPairs.findIndex(({ device }) => same(digest, device.token_hash));
-    if (candidateIndex !== -1) {
-      const candidate = this.unconfirmedFirstPairs[candidateIndex]!.device;
-      const confirmed = { ...candidate, last_seen_at: new Date(now).toISOString() };
-      const next = [...this.devices, confirmed];
-      const gate = this.gateClosedAt ?? confirmed.created_at;
-      // This is an authorization write, not last-seen telemetry: do not match the cookie
-      // unless the device and closed gate reached disk together.
-      this.save(next, gate);
-      this.devices = next;
-      this.gateClosedAt = gate;
-      // Once one first-pair cookie closes the gate, every sibling candidate is stale:
-      // subsequent devices must be issued through the gated pairing flow.
-      this.unconfirmedFirstPairs = [];
-      return { id: confirmed.id, label: confirmed.label, role: confirmed.role };
-    }
     for (const device of this.devices) {
       if (!same(digest, device.token_hash)) continue;
       const seen = device.last_seen_at === null ? 0 : Date.parse(device.last_seen_at);
@@ -221,12 +188,8 @@ export class DeviceStore {
     this.assertWritable();
     const next = this.devices.filter((d) => d.id !== id);
     if (next.length === this.devices.length) return false;
-    // A valid older/manual registry can have devices without a gate timestamp. Removing its
-    // last device must still leave durable evidence that this store was once gated.
-    const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? null;
-    this.save(next, gate);
+    this.save(next);
     this.devices = next;
-    this.gateClosedAt = gate;
     const listeners = this.revocations.get(id);
     this.revocations.delete(id);
     for (const close of listeners ?? []) close();
@@ -234,10 +197,6 @@ export class DeviceStore {
   }
 
   has(id: string): boolean { return this.devices.some((device) => device.id === id); }
-
-  private pruneUnconfirmedFirstPairs(now: number): void {
-    this.unconfirmedFirstPairs = this.unconfirmedFirstPairs.filter(({ expires }) => now <= expires);
-  }
 
   private save(devices = this.devices, gateClosedAt = this.gateClosedAt): void {
     writeJsonPrivate(this.path, { gate_closed_at: gateClosedAt, devices });

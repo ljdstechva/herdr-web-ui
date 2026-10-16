@@ -91,3 +91,159 @@
   color: var(--status-blocked);
   overflow-wrap: anywhere;
 }
+
+/* merge and close: what the checkout holds, as label and number */
+.worktree-facts {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 var(--space-4);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.worktree-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.worktree-facts > div + div {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.worktree-facts dt {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.worktree-facts dd {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* a choice with what it means under it */
+.worktree-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.worktree-option > p,
+.worktree-option .worktree-message {
+  margin: 0;
+}
+
+.worktree-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.worktree-check input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.worktree-check span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.worktree-where {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.worktree-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.worktree-files li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-files-more {
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+}
+
+/* what stands in a merge's way, or what a delete loses */
+.worktree-alert {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--danger-tint);
+  border: var(--hairline) solid var(--status-blocked);
+  border-radius: var(--radius-md);
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+
+.worktree-alert p {
+  margin: 0;
+}
+
+.worktree-alert .worktree-files {
+  color: inherit;
+}
+
+.worktree-merged {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-strong);
+}
+
+.worktree-merged svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--status-done);
+}
+
+@media (pointer: coarse) {
+  .worktree-check {
+    min-height: var(--touch-target);
+  }
+
+  .worktree-check input {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* where a merge lands: the main checkout's folder, under the sentence that names its branch */
+.worktree-target {
+  margin: calc(var(--space-2) * -1) 0 var(--space-4);
+}

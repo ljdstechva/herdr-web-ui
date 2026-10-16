@@ -4,9 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
-import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
-import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
-import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
@@ -29,11 +27,17 @@ it("keeps the screen wake lock off until this device explicitly enables it", () 
   expect(sanitizeSettings({ terminalWheelSpeed: "3" }).terminalWheelSpeed).toBe(1);
 });
 
-it("keeps the suggestion chip off until this device turns it on, whatever an older version stored", () => {
-  expect(sanitizeSettings({}).suggestionChip).toBe(false);
-  expect(sanitizeSettings({ showSuggestionChip: true }).suggestionChip).toBe(false);
-  expect(sanitizeSettings({ suggestionChip: true }).suggestionChip).toBe(true);
-  expect(sanitizeSettings({ suggestionChip: "true" }).suggestionChip).toBe(false);
+it("keeps the terminal cursor at a block that blinks unless a saved shape or blink says otherwise", () => {
+  expect(DEFAULT_SETTINGS.terminalCursorStyle).toBe("block");
+  expect(DEFAULT_SETTINGS.terminalCursorBlink).toBe(true);
+  expect(sanitizeSettings({}).terminalCursorStyle).toBe("block");
+  expect(sanitizeSettings({}).terminalCursorBlink).toBe(true);
+  expect(sanitizeSettings({ terminalCursorStyle: "bar" }).terminalCursorStyle).toBe("bar");
+  expect(sanitizeSettings({ terminalCursorStyle: "underline" }).terminalCursorStyle).toBe("underline");
+  // a value no shape answers for falls back, never breaking the UI on a stale or hand-edited record
+  expect(sanitizeSettings({ terminalCursorStyle: "pipe" }).terminalCursorStyle).toBe("block");
+  expect(sanitizeSettings({ terminalCursorBlink: false }).terminalCursorBlink).toBe(false);
+  expect(sanitizeSettings({ terminalCursorBlink: "false" }).terminalCursorBlink).toBe(true);
 });
 
 it("keeps sidebar rows on two lines unless one line was chosen", () => {
@@ -42,165 +46,6 @@ it("keeps sidebar rows on two lines unless one line was chosen", () => {
   for (const sidebarRows of [null, true, "three", 2]) {
     expect(sanitizeSettings({ sidebarRows }).sidebarRows).toBe("two");
   }
-});
-
-it("draws agent logos in their brand colors unless Mono was chosen", () => {
-  expect(DEFAULT_SETTINGS.agentMarks).toBe("color");
-  expect(sanitizeSettings({}).agentMarks).toBe("color");
-  expect(sanitizeSettings({ agentMarks: "mono" }).agentMarks).toBe("mono");
-  for (const agentMarks of [null, "Mono", "off", 1]) {
-    expect(sanitizeSettings({ agentMarks }).agentMarks).toBe("color");
-  }
-});
-
-describe("telemetry settings snapshot", () => {
-  it("reports current enum, boolean and bounded scalar values", () => {
-    const settings = sanitizeSettings({
-      terminalInputMode: "direct",
-      theme: "light",
-      density: "compact",
-      sidebarRows: "one",
-      agentOrder: "activity",
-      agentMarks: "mono",
-      statusIndicators: "symbols",
-      palette: "catppuccin",
-      terminalFontSize: 22,
-      terminalWheelSpeed: 10,
-      chatFontSize: 11,
-      chatWidth: "wide",
-      autoSendQueued: false,
-      language: "ko",
-      alertDone: "always",
-      usageCount: "left",
-      usageGlance: "session",
-      defaultView: "chat",
-      voiceInput: "on",
-      voiceLanguage: "ko-KR",
-      wrapCode: true,
-      markdownWidth: "full",
-      paletteLight: "charcoal",
-      paletteDark: "amber",
-      uiFontSize: 18,
-      diffStyle: "split",
-    });
-    const snapshot = telemetrySettingsSnapshot(settings);
-
-    expect(NOTICE_VERSION).toBe(3);
-    expect(snapshot).toMatchObject({
-      terminalInputMode: "direct",
-      theme: "light",
-      density: "compact",
-      sidebarRows: "one",
-      agentOrder: "activity",
-      agentMarks: "mono",
-      statusIndicators: "symbols",
-      palette: "catppuccin",
-      terminalFontSize: 22,
-      terminalWheelSpeed: 10,
-      chatFontSize: 11,
-      chatWidth: "wide",
-      autoSendQueued: false,
-      language: "ko",
-      alertDone: "always",
-      usageCount: "left",
-      usageGlance: "session",
-      defaultView: "chat",
-      voiceInput: "on",
-      voiceLanguage: "ko-KR",
-      wrapCode: true,
-      markdownWidth: "full",
-      paletteLight: "charcoal",
-      paletteDark: "amber",
-      uiFontSize: 18,
-      diffStyle: "split",
-    });
-    expect(telemetrySettings(snapshot)).toEqual(snapshot);
-    expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toMatchObject({
-      statusIndicators: "classic",
-      terminalFontCustom: false,
-      chatFontCustom: false,
-      shortcutsCustom: false,
-      keyBarCustom: false,
-      quickRepliesCustom: false,
-      quickReplyCount: DEFAULT_SETTINGS.quickReplies.length,
-      usageHiddenCount: 0,
-      usageOrderCustom: false,
-    });
-  });
-
-  it("summarizes custom text and account-key settings without sending their contents", () => {
-    const settings = sanitizeSettings({
-      terminalFontFamily: "private-terminal-font",
-      chatFontFamily: "private-chat-font",
-      shortcutOverrides: { palette: "x" },
-      keyBarItems: [{ type: "key", key: "x" }],
-      keyBarExtras: ["alt", "shift-tab"],
-      quickReplies: ["private quick reply"],
-      usageOrder: ["private-order-account-id"],
-      usageHidden: ["private-hidden-account-id"],
-    });
-    const snapshot = telemetrySettingsSnapshot(settings);
-    const serialized = JSON.stringify(snapshot);
-
-    expect(snapshot).toMatchObject({
-      terminalFontCustom: true,
-      chatFontCustom: true,
-      shortcutsCustom: true,
-      keyBarCustom: true,
-      quickRepliesCustom: true,
-      quickReplyCount: 1,
-      usageHiddenCount: 1,
-      usageOrderCustom: true,
-    });
-    for (const key of ["keyBarExtras", "keyBarItems", "shortcutOverrides", "terminalFontFamily", "chatFontFamily", "quickReplies", "usageOrder", "usageHidden"]) {
-      expect(snapshot).not.toHaveProperty(key);
-    }
-    for (const raw of ["private-terminal-font", "private-chat-font", "private quick reply", "private-order-account-id", "private-hidden-account-id"]) {
-      expect(serialized).not.toContain(raw);
-    }
-  });
-
-  it("reports every status indicator choice in a valid snapshot", () => {
-    for (const statusIndicators of ["classic", "dots", "symbols"] as const) {
-      const settings = sanitizeSettings({ statusIndicators });
-      const snapshot = telemetrySettingsSnapshot(settings);
-
-      expect(snapshot.statusIndicators).toBe(statusIndicators);
-      expect(telemetrySettings(snapshot)).toEqual(snapshot);
-    }
-  });
-
-  // The Worker refuses a whole snapshot over one key it does not know, and an older deployed
-  // Worker refuses a key added since: a new setting is sent only once the Worker takes it.
-  it("sends exactly the keys the Worker accepts", () => {
-    const sent = Object.keys(telemetrySettingsSnapshot(DEFAULT_SETTINGS));
-    expect([
-      ...sent.filter((key) => !(TELEMETRY_SETTINGS_KEYS as string[]).includes(key)).map((key) =>
-        `${key}: the app sends it and the Worker refuses the whole snapshot. Add it to TelemetrySettings and TELEMETRY_SETTINGS_VALIDATORS in shared/telemetry.ts and to the full snapshot in telemetry/worker.test.ts, then deploy the Worker before releasing (telemetry/README.md).`),
-      ...TELEMETRY_SETTINGS_KEYS.filter((key) => !sent.includes(key)).map((key) =>
-        `${key}: the Worker requires it and telemetrySettingsSnapshot in src/lib/settings.ts does not send it. Send it, or remove it from shared/telemetry.ts and deploy the Worker before releasing.`),
-    ]).toEqual([]);
-  });
-
-  it("requires a complete, valid schema and reconstructs a clean own-key snapshot", () => {
-    const snapshot = telemetrySettingsSnapshot(DEFAULT_SETTINGS);
-    const clean = telemetrySettings(snapshot);
-
-    expect(clean).toEqual(snapshot);
-    expect(clean).not.toBe(snapshot);
-    expect(Object.getPrototypeOf(clean!)).toBe(Object.prototype);
-    expect(Object.keys(clean!)).toEqual(Object.keys(snapshot));
-    expect(telemetrySettings(Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== "theme")))).toBeNull();
-    expect(telemetrySettings({ ...snapshot, unknownSetting: true })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, theme: "neon" })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, theme: null })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, terminalFontSize: 9 })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, terminalWheelSpeed: 2.5 })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, chatFontSize: 10 })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, quickReplyCount: 13 })).toBeNull();
-    expect(telemetrySettings({ ...snapshot, usageHiddenCount: 65 })).toBeNull();
-    expect(telemetrySettings(Object.assign(Object.create({ inherited: true }), snapshot))).toBeNull();
-  });
 });
 
 describe("clipboard from a pane", () => {
@@ -270,19 +115,14 @@ describe("chat width", () => {
     expect(step("narrow")).toBe("var(--content-w)");
     expect(step("wide")).toBe("72rem");
     expect(step("full")).toBe("100%");
-    // the default step has no rule here: PaneTerminal writes its pane's lane on .terminal-stack, and a
-    // file viewer, outside every pane, the lane of the pane that opened it on itself (lib/chatLane.ts)
+    // the default step has no rule here: PaneTerminal writes its pane's lane on .terminal-stack
     expect(step("default")).toBeUndefined();
     // a percentage in the token would resolve against each column's own box; Full is the one
     // step that means exactly that
     expect([...tokens.matchAll(/--chat-w: ([^;]+);/g)].map((match) => match[1]).filter((value) => value?.includes("%"))).toEqual(["100%"]);
-    // one rule for both, so a change to it cannot miss the viewer
-    expect(css("lib/chatLane.ts")).toContain(`setProperty("--chat-w", chatLaneLength(`);
-    expect(css("components/PaneTerminal.tsx")).toContain("usePaneLane(stackRef)");
-    expect(css("components/FileViewer.tsx")).toContain("useOpeningPaneLane(");
-    for (const name of ["components/PaneTerminal.tsx", "components/FileViewer.tsx"]) expect(css(name)).not.toContain("chatLaneLength(");
+    expect(css("components/PaneTerminal.tsx")).toContain(`setProperty("--chat-w", chatLaneLength(`);
     // the root font size is not read in JS: the ceiling is 60rem in the length itself
-    expect(css("lib/chatLane.ts")).not.toContain("chatLaneWidth(");
+    expect(css("components/PaneTerminal.tsx")).not.toContain("chatLaneWidth(");
     // Settings and New workspace stay on --content-w. That the chat columns share the lane is
     // measured in the browser (scripts/ui-regression.ts), not read from the stylesheets
     for (const file of ["components/SettingsDialog.css", "components/NewSessionDialog.css"]) {
@@ -513,6 +353,15 @@ describe("microphone button", () => {
   });
 });
 
+describe("suggestion chip", () => {
+  it("stays on until turned off in settings", () => {
+    expect(DEFAULT_SETTINGS.showSuggestionChip).toBe(true);
+    expect(sanitizeSettings({}).showSuggestionChip).toBe(true);
+    expect(sanitizeSettings({ showSuggestionChip: false }).showSuggestionChip).toBe(false);
+    expect(sanitizeSettings({ showSuggestionChip: "no" }).showSuggestionChip).toBe(true);
+  });
+});
+
 describe("quick replies row", () => {
   it("stays hidden until chosen in settings", () => {
     expect(DEFAULT_SETTINGS.showQuickReplies).toBe(false);
@@ -533,32 +382,24 @@ describe("quick replies row", () => {
   });
 });
 
-describe("language", () => {
-  it("keeps a listed language and loads a removed one (Turkish) as System", () => {
-    expect(sanitizeSettings({ language: "ko" }).language).toBe("ko");
-    expect(sanitizeSettings({ language: "tr" }).language).toBe("system");
-  });
-});
-
 describe("palette", () => {
   it("defaults to amber, the look before this setting, and keeps only a known palette", () => {
     expect(DEFAULT_SETTINGS.palette).toBe("amber");
     // settings stored before palettes existed carry no palette key
     expect(sanitizeSettings({ theme: "light" }).palette).toBe("amber");
+    expect(sanitizeSettings({ palette: "report" }).palette).toBe("report");
     expect(sanitizeSettings({ palette: "charcoal" }).palette).toBe("charcoal");
     expect(sanitizeSettings({ palette: "catppuccin" }).palette).toBe("catppuccin");
+    expect(sanitizeSettings({ palette: "lilac" }).palette).toBe("lilac");
+    expect(sanitizeSettings({ palette: "forest" }).palette).toBe("forest");
     expect(sanitizeSettings({ palette: "pink" }).palette).toBe("amber");
   });
 
-  it("loads a removed palette (report, lilac, forest) as amber", () => {
-    for (const removed of ["report", "lilac", "forest"]) expect(sanitizeSettings({ palette: removed }).palette).toBe("amber");
-  });
-
-  it("preserves Catppuccin through a saved settings round-trip and unrelated edits", () => {
-    const saved = sanitizeSettings({ palette: "catppuccin", theme: "dark" });
+  it("preserves Forest through a saved settings round-trip and unrelated edits", () => {
+    const saved = sanitizeSettings({ palette: "forest", theme: "dark" });
     const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
-    expect(reloaded.palette).toBe("catppuccin");
-    expect(sanitizeSettings({ ...reloaded, theme: "light" }).palette).toBe("catppuccin");
+    expect(reloaded.palette).toBe("forest");
+    expect(sanitizeSettings({ ...reloaded, theme: "light" }).palette).toBe("forest");
   });
 
   const css = readFileSync(join(import.meta.dir, "..", "styles.css"), "utf8");
@@ -567,14 +408,21 @@ describe("palette", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     return css.slice(start, css.indexOf("}", start));
   };
+  const paper = '[data-theme="light"]:is([data-palette="report"], [data-palette="charcoal"])';
   // each case lists its blocks from the most specific to the base; the first one naming a token wins
   const cases = [
     { theme: "dark", palette: "amber", layers: [":root"] },
     { theme: "light", palette: "amber", layers: ['[data-theme="light"]', ":root"] },
+    { theme: "dark", palette: "report", layers: ['[data-theme="dark"][data-palette="report"]', ":root"] },
+    { theme: "light", palette: "report", layers: [paper, '[data-theme="light"]', ":root"] },
     { theme: "dark", palette: "charcoal", layers: ['[data-theme="dark"][data-palette="charcoal"]', ":root"] },
-    { theme: "light", palette: "charcoal", layers: ['[data-theme="light"][data-palette="charcoal"]', '[data-theme="light"]', ":root"] },
+    { theme: "light", palette: "charcoal", layers: ['[data-theme="light"][data-palette="charcoal"]', paper, '[data-theme="light"]', ":root"] },
     { theme: "dark", palette: "catppuccin", layers: ['[data-theme="dark"][data-palette="catppuccin"]', ":root"] },
     { theme: "light", palette: "catppuccin", layers: ['[data-theme="light"][data-palette="catppuccin"]', '[data-theme="light"]', ":root"] },
+    { theme: "dark", palette: "lilac", layers: ['[data-theme="dark"][data-palette="lilac"]', ":root"] },
+    { theme: "light", palette: "lilac", layers: ['[data-theme="light"][data-palette="lilac"]', '[data-theme="light"]', ":root"] },
+    { theme: "dark", palette: "forest", layers: ['[data-theme="dark"][data-palette="forest"]', ":root"] },
+    { theme: "light", palette: "forest", layers: ['[data-theme="light"][data-palette="forest"]', '[data-theme="light"]', ":root"] },
   ] as const;
   const tokens = (layers: readonly string[]) => (name: string): string =>
     layers.map((selector) => block(selector).match(new RegExp(`--${name}: ([^;]+);`))?.[1]).find((value) => value !== undefined)!;
@@ -685,23 +533,9 @@ describe("default lens", () => {
   });
 });
 
-it("keeps the file viewer's wrap setting only when it is a boolean", () => {
-  expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
-  expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
-  expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
+it("highlights code unless turned off, and keeps a stored choice only when it is a boolean", () => {
+  expect(DEFAULT_SETTINGS.highlightCode).toBe(true);
+  expect(sanitizeSettings({ highlightCode: false }).highlightCode).toBe(false);
+  expect(sanitizeSettings({ highlightCode: "no" }).highlightCode).toBe(true);
+  expect(sanitizeSettings({}).highlightCode).toBe(true);
 });
-
-it("keeps the Markdown preview's width to readable or full, readable by default", () => {
-  expect(DEFAULT_SETTINGS.markdownWidth).toBe("readable");
-  for (const width of MARKDOWN_WIDTHS) expect(sanitizeSettings({ markdownWidth: width }).markdownWidth).toBe(width);
-  for (const bad of ["narrow", "medium", "wide", "", null, 80]) expect(sanitizeSettings({ markdownWidth: bad }).markdownWidth).toBe("readable");
-});
-
-describe("shared settings", () => {
-  it("shares exactly the settings SETTING_SCOPE marks shared", () => {
-    const shared = Object.entries(SETTING_SCOPE).filter(([, scope]) => scope === "shared").map(([key]) => key).sort();
-    expect([...SHARED_SETTING_KEYS].sort() as string[]).toEqual(shared);
-    expect(Object.keys(SETTING_SCOPE).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
-  });
-});
-

@@ -7,8 +7,10 @@
  * Files land in `<pane cwd>/.herdr-web-ui/`, not /tmp, on purpose: agents ask before
  * reading outside their project directory, and a path inside the project keeps the
  * attachment visible (and git-ignorable) next to the conversation. A pane without a
- * known cwd falls back to the OS temp dir - the path still works, it just may cost
- * the agent a read-permission prompt. `HERDR_WEB_PASTE_DIR` sends every attachment to
+ * known cwd falls back to the OS temp dir. A project the server cannot write uses
+ * a private folder in the server's state directory instead; the path still works,
+ * but the agent may ask for permission to read outside the project.
+ * `HERDR_WEB_PASTE_DIR` sends every attachment to
  * one directory instead, for those who would rather keep them out of the working tree.
  */
 
@@ -20,47 +22,6 @@ import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
 
 /** Decode ceiling: the limit the browser checks a file against before it uploads. */
 export const MAX_IMAGE_BYTES = MAX_ATTACHMENT_BYTES;
-
-/** The base64 text of a file at the ceiling, with the one padding group a decoder may add. */
-const MAX_ENCODED_BYTES = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4;
-
-/** What the JSON around the data may add: pane_id, content_type and a file name. */
-const ENVELOPE_ALLOWANCE = 1024 * 1024;
-
-/** The largest request body the image route reads; Bun.serve's `maxRequestBodySize` sits well above it. */
-export const MAX_IMAGE_BODY_BYTES = MAX_ENCODED_BYTES + ENVELOPE_ALLOWANCE;
-
-function tooLarge(): PasteImageError {
-  return new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
-}
-
-/**
- * The request body as text, refused past `MAX_IMAGE_BODY_BYTES`: by its announced length before any
- * of it is read, and by a running byte count for a body that announces none (chunked). Bun's own
- * limit answers an empty 413 the browser cannot explain, so this one answers first with the reason.
- */
-export async function readImageBody(request: Request): Promise<string> {
-  const announced = Number(request.headers.get("content-length"));
-  if (Number.isFinite(announced) && announced > MAX_IMAGE_BODY_BYTES) {
-    void request.body?.cancel().catch(() => undefined);
-    throw tooLarge();
-  }
-  if (request.body === null) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_IMAGE_BODY_BYTES) {
-      void reader.cancel().catch(() => undefined);
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
 
 /**
  * A file that is not one of the image types keeps its own name (sanitised), so the agent
@@ -116,6 +77,8 @@ export async function savePaneImage(options: {
   paneId: string;
   contentType: string;
   dataBase64: string;
+  /** Private server-owned storage when the default project directory is read-only. */
+  fallbackDirectory: string;
   /** the file's own name: any type is accepted, and one that is not a pasted image keeps it */
   name?: string;
 }): Promise<string> {
@@ -123,21 +86,35 @@ export async function savePaneImage(options: {
   const named = imageExtension === undefined ? storedName(options.name) : null;
   // cheap pre-check: reject the ENCODED length before allocating the decode buffer,
   // so an oversized body never costs a second copy of itself in memory
-  if (options.dataBase64.length > MAX_ENCODED_BYTES) throw tooLarge();
+  if (options.dataBase64.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) {
+    throw new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
+  }
   const data = Buffer.from(options.dataBase64, "base64");
   if (data.byteLength === 0) {
     throw new PasteImageError("empty_image", "file is empty", 400);
   }
-  if (data.byteLength > MAX_IMAGE_BYTES) throw tooLarge();
+  if (data.byteLength > MAX_IMAGE_BYTES) {
+    throw new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
+  }
 
   const pane = await paneGet(options.paneId);
 
-  const directory = pasteDirectory(pane.cwd);
-  mkdirSync(directory, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const unique = `${stamp}-${crypto.randomUUID().slice(0, 8)}`;
   const name = named === null ? `paste-${unique}.${imageExtension}` : `${named.base}-${unique}.${named.extension}`;
-  const path = join(directory, name);
-  writeFileSync(path, data, { mode: 0o600 });
-  return path;
+  const store = (directory: string): string => {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const path = join(directory, name);
+    writeFileSync(path, data, { mode: 0o600 });
+    return path;
+  };
+  try {
+    return store(pasteDirectory(pane.cwd));
+  } catch (error) {
+    // An explicit destination is authoritative. Only permission failures in the
+    // default location can fall back; full disks and other I/O errors stay errors.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (process.env["HERDR_WEB_PASTE_DIR"]?.trim() || !["EACCES", "EPERM", "EROFS"].includes(code ?? "")) throw error;
+    return store(resolve(options.fallbackDirectory));
+  }
 }

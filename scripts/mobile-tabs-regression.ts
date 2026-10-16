@@ -4,8 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
-import { herdrRpc, paneSplit, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
-import { chromePath } from "./chrome-path.ts";
+import { herdrRpc, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 
 type Box = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type KeyboardQA = Window & { keyboardQA: (height: number | null) => void };
@@ -26,7 +25,7 @@ async function box(page: Page, selector: string): Promise<Box> {
 /** The header keeps the pane's title and the strip sits right under it, whatever the lens. */
 async function assertShell(page: Page, label: string, titleRoom = 60): Promise<void> {
   assert.equal(await page.locator(".app-header").getByRole("button", { name: "New tab" }).count(), 0, `${label}: the header has no New tab button of its own`);
-  assert.equal(await page.locator(".app-header .header-more-button").isVisible(), true, `${label}: the header keeps its More menu`);
+  assert.equal(await page.locator(".app-header .header-more-button").isVisible(), true, `${label}: New tab is an item of the header's More menu`);
   const title = await box(page, ".context-title-text");
   assert.ok(title.width >= titleRoom, `${label}: the pane's title keeps its room in the header (${title.width}px)`);
   const header = await box(page, ".app-header");
@@ -55,16 +54,12 @@ async function activeTabInView(page: Page, label: string): Promise<void> {
 export async function checkMobileTabs(browser: Browser, origin: string): Promise<void> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-mobile-tabs-")));
   let workspaceId: string | null = null;
-  let otherWorkspaceId: string | null = null;
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-mobile-tabs" });
     workspaceId = created.workspace.workspace_id;
     const first = created.root_pane.pane_id;
-    // herdr keeps the first pane in front: the split one is seen only where the browser opens it
-    const second = (await paneSplit(first, "right", false)).pane_id;
-    const other = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-mobile-tabs-other" });
-    otherWorkspaceId = other.workspace.workspace_id;
+    await herdrRpc("pane.split", { target_pane_id: first, direction: "right", focus: false });
     const panes: string[] = [];
     for (const label of TAB_LABELS) panes.push((await tabCreate({ workspaceId, cwd: root, label })).root_pane.pane_id);
     const last = panes.at(-1)!;
@@ -109,8 +104,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
 
     await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
     await firstFrame.locator(".key-bar").waitFor();
-    assert.equal(await page.locator(".pane-frame:visible").count(), 1, "a phone shows the split tab's open pane alone");
-    assert.equal(await page.locator(".pane-frame").count(), 2, "and keeps its sibling mounted");
+    assert.equal(await page.locator(".pane-frame:visible").count(), 2, "the terminal lens retains both panes on a phone");
     await assertShell(page, "terminal");
 
     assert.equal(await page.locator(".tab-strip-close, .tab-strip-panes").count(), 0, "tabs have no close buttons or chevrons");
@@ -137,36 +131,9 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await page.getByRole("button", { name: "Actions for Tab 1", exact: true }).tap();
     const tabSheet = page.getByRole("dialog", { name: "Tab 1", exact: true });
     await tabSheet.waitFor();
-    const tabItems = await tabSheet.locator(".row-sheet-item").allTextContents();
-    assert.equal(tabItems.indexOf("Rename pane"), 2, "a split tab's menu lists its two panes first on a phone");
-    assert.ok(tabItems.includes("Rename pane") && tabItems.includes("Close pane"), "the open pane's actions are in the tab's menu on a phone");
-    assert.deepEqual(tabItems.slice(-3), ["Move tab right", "Rename tab", "Close tab"], "the first tab offers only its available adjacent move, and no New tab beside the strip's +");
+    assert.deepEqual(await tabSheet.locator(".row-sheet-item").allTextContents(), ["Move tab right", "New tab", "Rename tab", "Close tab"], "the first tab offers only its available adjacent move, with the same actions as right-click");
     await tabSheet.getByRole("button", { name: "Cancel", exact: true }).tap();
     await tabSheet.waitFor({ state: "detached" });
-
-    // The pane a tab and a workspace row were last seen on outlives a reload (a phone drops a page
-    // left in the background): both open the split pane last seen, not the one herdr has in front.
-    const shown = (pane: string) => page.locator(`[data-layout-pane=${JSON.stringify(pane)}]`).waitFor({ state: "visible" });
-    await page.goto(`${origin}/?pane=${encodeURIComponent(second)}`);
-    await page.locator(".conn-live").waitFor();
-    await shown(second);
-    await page.getByRole("tab", { name: "docs", exact: true }).tap();
-    await shown(last);
-    await page.reload();
-    await page.locator(".conn-live").waitFor();
-    await shown(last);
-    await page.locator(".tab-strip").evaluate((node) => { node.scrollLeft = 0; });
-    await page.getByRole("tab", { name: "Tab 1", exact: true }).tap();
-    await shown(second);
-    assert.equal(await page.locator(`[data-layout-pane=${JSON.stringify(first)}]`).isVisible(), false, "a tab opened again after a reload shows the pane it was left on");
-    await page.goto(`${origin}/?pane=${encodeURIComponent(other.root_pane.pane_id)}`);
-    await page.locator(".conn-live").waitFor();
-    await page.reload();
-    await page.locator(".conn-live").waitFor();
-    await page.getByRole("button", { name: "Open workspace list", exact: true }).tap();
-    await page.locator(`.workspace-group[data-workspace=${JSON.stringify(workspaceId)}] > .workspace-header .workspace-select`).tap();
-    await shown(second);
-    assert.equal(await page.locator(`[data-layout-pane=${JSON.stringify(first)}]`).isVisible(), false, "a workspace row picked after a reload opens the pane it was left on");
 
     await page.setViewportSize({ width: 320, height: 640 });
     await activeTabInView(page, "a 320px phone");
@@ -221,11 +188,10 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
         assert.deepEqual(lateErrors, []);
       } finally { await slow.close(); }
     }
-    console.log("PASS a phone keeps the pane's title in the header and the open tab and the + in the strip, in both lenses and with the keyboard up, and reopens a tab and a workspace on the pane last seen after a reload");
+    console.log("PASS a phone keeps the pane's title in the header and the open tab and the + in the strip, in both lenses and with the keyboard up");
   } finally {
     await context.close();
     if (workspaceId) await workspaceClose(workspaceId).catch(() => undefined);
-    if (otherWorkspaceId) await workspaceClose(otherWorkspaceId).catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
   }
 }
@@ -237,7 +203,7 @@ if (import.meta.main) {
   const { UsageService } = await import("../server/usage.ts");
   const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-mobile-tabs-state-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
-  const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   try {
     await checkMobileTabs(browser, `http://127.0.0.1:${server.port}`);
   } finally {

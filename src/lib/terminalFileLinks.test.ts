@@ -214,22 +214,8 @@ describe("terminal file links", () => {
   it("recognizes files with line and column suffixes", async () => {
     const term = new Terminal({ cols: 100, allowProposedApi: true });
     await new Promise<void>((resolve) => term.write("see src/app.ts:42:3 and README.md", resolve));
-    const opened: string[] = [];
-    const links = terminalFileLinks(term.buffer.active, 1, (path) => opened.push(path));
+    const links = terminalFileLinks(term.buffer.active, 1, () => {});
     expect(links.map((link) => link.text)).toEqual(["src/app.ts:42:3"]);
-    links[0]?.activate(click);
-    expect(opened).toEqual(["src/app.ts:42:3"]);
-    term.dispose();
-  });
-
-  it("opens the first-line anchor and range intact across wrapped rows", async () => {
-    const term = new Terminal({ cols: 20, allowProposedApi: true });
-    await written(term, "see src/app.ts#L42-L48");
-    const opened: string[] = [];
-    const links = terminalFileLinks(term.buffer.active, 2, (path) => opened.push(path));
-    expect(links.map((link) => link.text)).toEqual(["src/app.ts#L42-L48"]);
-    links[0]?.activate(click);
-    expect(opened).toEqual(["src/app.ts#L42-L48"]);
     term.dispose();
   });
 

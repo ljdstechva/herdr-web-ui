@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { drawerSettles, EDGE_PX, FLING_SPEED, SWIPE_PX, swipeVerdict, watchDrawerSwipe } from "./edgeSwipe.ts";
+import { EDGE_PX, RIGHT_DRAWER_QUERY, SWIPE_PX, swipeVerdict, watchDrawerSwipe } from "./edgeSwipe.ts";
 
 describe("swipeVerdict", () => {
   test("a swipe in from the left edge opens the closed drawer", () => {
@@ -24,17 +24,17 @@ describe("swipeVerdict", () => {
     expect(swipeVerdict(true, 200, -SWIPE_PX, 3)).toBe("close");
     expect(swipeVerdict(true, 200, SWIPE_PX, 3)).toBe("ignore");
   });
-});
 
-describe("drawerSettles", () => {
-  test("let go slowly, the drawer stays open when more than half of it shows", () => {
-    expect(drawerSettles(170, 300, 0)).toBe(true);
-    expect(drawerSettles(130, 300, 0)).toBe(false);
-  });
-
-  test("a flick settles it the way it went, wherever it is let go", () => {
-    expect(drawerSettles(40, 300, FLING_SPEED)).toBe(true);
-    expect(drawerSettles(260, 300, -FLING_SPEED)).toBe(false);
+  test("on a phone the drawer comes in from the right edge and goes back to it", () => {
+    const width = 390;
+    expect(swipeVerdict(false, width - 4, -20, 2, "right", width)).toBe("claim");
+    expect(swipeVerdict(false, width - 4, -SWIPE_PX, 5, "right", width)).toBe("open");
+    // the left edge, or a stroke toward the right edge, opens nothing there
+    expect(swipeVerdict(false, 4, SWIPE_PX, 0, "right", width)).toBe("ignore");
+    expect(swipeVerdict(false, width - 4, SWIPE_PX, 0, "right", width)).toBe("ignore");
+    expect(swipeVerdict(false, width - EDGE_PX - 1, -SWIPE_PX * 2, 0, "right", width)).toBe("ignore");
+    expect(swipeVerdict(true, 200, SWIPE_PX, 3, "right", width)).toBe("close");
+    expect(swipeVerdict(true, 200, -SWIPE_PX, 3, "right", width)).toBe("ignore");
   });
 });
 
@@ -47,16 +47,19 @@ describe("watchDrawerSwipe", () => {
   let listeners: Map<string, Handler>;
   let saved: { window: unknown; document: unknown };
   let narrow: { matches: boolean };
+  let phone: { matches: boolean };
   let modal: unknown;
   let selection: { isCollapsed: boolean };
 
   beforeEach(() => {
     listeners = new Map();
     narrow = { matches: true };
+    // a tablet-width drawer unless a test says phone: the drawer on the left
+    phone = { matches: false };
     modal = null;
     selection = { isCollapsed: true };
     saved = { window: (globalThis as Record<string, unknown>)["window"], document: (globalThis as Record<string, unknown>)["document"] };
-    (globalThis as Record<string, unknown>)["window"] = { matchMedia: () => narrow };
+    (globalThis as Record<string, unknown>)["window"] = { matchMedia: (query: string) => query === RIGHT_DRAWER_QUERY ? phone : narrow, innerWidth: 390 };
     (globalThis as Record<string, unknown>)["document"] = {
       addEventListener: (type: string, handler: Handler) => listeners.set(type, handler),
       removeEventListener: (type: string) => listeners.delete(type),
@@ -145,65 +148,18 @@ describe("watchDrawerSwipe", () => {
     expect(stroke([[4, 400], [24, 400], [40, 400], [90, 400]], false, null, () => { selection = { isCollapsed: false }; })).toEqual({ reached: 2, calls: [] });
   });
 
-  test("the drawer is under the finger while it moves, and settles where it is let go", () => {
-    const style: Record<string, string> = {};
-    const drawer = { style, getBoundingClientRect: () => ({ width: 300 }) };
-    const doc = (globalThis as Record<string, unknown>)["document"] as Record<string, unknown>;
-    doc["getElementById"] = (id: string) => (id === "workspace-drawer" ? drawer : null);
-    const seen: string[] = [];
-    const watch = new Proxy(style, { set: (target, key: string, value: string) => { target[key] = value; if (key === "transform") seen.push(value); return true; } });
-    drawer.style = watch;
-    // past the swipe it opens, the finger comes back to a third of the drawer, and is let go slowly: it closes
-    const timed = stroke([[4, 400], [24, 400], [100, 400], [100, 400], [100, 400]]);
-    expect(seen).toContain("translateX(-204px)");
-    expect(timed.calls).toEqual([true, false]);
-    expect(style["transform"]).toBe("");
-    expect(style["visibility"]).toBe("");
-    delete doc["getElementById"];
+  test("on a phone a swipe in from the right edge opens the drawer, a swipe right closes it", () => {
+    phone.matches = true;
+    expect(stroke([[386, 400], [366, 400], [310, 400]])).toEqual({ reached: 0, calls: [true] });
+    expect(stroke([[100, 400], [130, 400], [200, 400]], true)).toEqual({ reached: 0, calls: [false] });
+    // the left edge is the page's there
+    expect(stroke([[4, 400], [24, 400], [90, 400]])).toEqual({ reached: 2, calls: [] });
   });
 
-  test("a stroke whose end never came lets the drawer go at the next touch", () => {
-    const drawer = { style: {} as Record<string, string>, getBoundingClientRect: () => ({ width: 300 }) };
-    const scrim = { style: {} as Record<string, string> };
-    const doc = (globalThis as Record<string, unknown>)["document"] as Record<string, unknown>;
-    doc["getElementById"] = (id: string) => (id === "workspace-drawer" ? drawer : null);
-    doc["querySelector"] = (selector: string) => (selector === ".scrim" ? scrim : null);
-    const calls: boolean[] = [];
-    const stop = watchDrawerSwipe(() => true, (next) => calls.push(next));
-    const event = (x: number, timeStamp: number) => ({ touches: [{ clientX: x, clientY: 400 }], target: null, timeStamp, preventDefault: () => {}, stopPropagation: () => {} });
-    // a swipe from the scrim closes the drawer, and its touchend never reaches the document
-    listeners.get("touchstart")!(event(360, 0));
-    listeners.get("touchmove")!(event(330, 16));
-    listeners.get("touchmove")!(event(290, 32));
-    expect(calls).toEqual([false]);
-    expect(drawer.style["transform"]).toBe("translateX(-70px)");
-    expect(scrim.style["transition"]).toBe("none");
-    // the next touch finds it held, and lets it go where it was: most of it showed, so it stays open
-    listeners.get("touchstart")!(event(100, 5000));
-    expect(calls).toEqual([false, true]);
-    expect(drawer.style["transform"]).toBe("");
-    expect(drawer.style["transition"]).toBe("");
-    expect(drawer.style["visibility"]).toBe("");
-    expect(scrim.style["transition"]).toBe("");
-    expect(scrim.style["opacity"]).toBe("");
-    stop();
-    delete doc["getElementById"];
-  });
-
-  test("a flick that lifts after one move settles by its speed from the touch down", () => {
-    const drawer = { style: {} as Record<string, string>, getBoundingClientRect: () => ({ width: 300 }) };
-    const doc = (globalThis as Record<string, unknown>)["document"] as Record<string, unknown>;
-    doc["getElementById"] = (id: string) => (id === "workspace-drawer" ? drawer : null);
-    const calls: boolean[] = [];
-    const stop = watchDrawerSwipe(() => false, (next) => calls.push(next));
-    const event = (x: number, timeStamp: number) => ({ touches: [{ clientX: x, clientY: 400 }], target: null, timeStamp, preventDefault: () => {}, stopPropagation: () => {} });
-    // 36 px of 300 in 20 ms: far short of half, but fast enough to open
-    listeners.get("touchstart")!(event(4, 0));
-    listeners.get("touchmove")!(event(40, 20));
-    listeners.get("touchend")!({ touches: [], timeStamp: 30 });
-    expect(calls).toEqual([true]);
-    stop();
-    delete doc["getElementById"];
+  test("on a phone a swipe on a code block with more to its right scrolls it instead", () => {
+    phone.matches = true;
+    const code = { scrollLeft: 0, scrollWidth: 900, clientWidth: 350, parentElement: null };
+    expect(stroke([[386, 400], [366, 400], [310, 400]], false, code)).toEqual({ reached: 2, calls: [] });
   });
 
   test("a selection after the drawer moved leaves the stroke with it", () => {

@@ -1,16 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage } from "./compose.ts";
+import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage } from "./compose.ts";
 
 describe("composerMessage and submitNote", () => {
   it("keeps the message as written for agent.prompt: inner newlines stay, the composer's own trailing ones go", () => {
     expect(composerMessage("line one\r\nline two\n\n")).toBe("line one\nline two");
-  });
-
-  it("keeps pasted Markdown, blank lines and code indentation in one submitted message", () => {
-    const message = "# Reply\n\n- first\n- second\n\n```ts\n  run();\n```";
-    expect(composerMessage(message.replaceAll("\n", "\r\n"))).toBe(message);
-    expect(composerPayload(message, true)).toBe("\u001b[200~" + message.replaceAll("\n", "\r") + "\u001b[201~");
   });
 
   it("says why a message did not go, and never claims a lost one was sent", () => {
@@ -28,9 +22,6 @@ describe("composerMessage and submitNote", () => {
     expect(["pane_not_found", "retired_submit_id"].map(submitNotTyped)).toEqual([true, true]);
     // refused before the paste because Claude's input box held a draft (#609)
     expect(submitNotTyped("input_draft")).toBe(true);
-    // refused by the view while the terminal holds input, before anything reached the socket
-    expect(submitNotTyped("held_input")).toBe(true);
-    expect(submitNote("held_input", "x")).toBe("Not sent: send or discard the held input first.");
     expect(submitNote("pending_input_unsupported", "x")).toBe("Update this PC to send messages in the next turn. Your draft stayed here.");
     expect(submitNotTyped("submit_changed")).toBe(false);
     expect(submitNotTyped("pending_uncertain")).toBe(false);
@@ -42,15 +33,6 @@ describe("composerMessage and submitNote", () => {
     // bash mode, a clipped box or an older bridge name none: the note alone
     expect(submitRefusal("input_draft", "x")).toBe(submitNote("input_draft", "x"));
     expect(submitRefusal("agent_blocked", "x", "ㅔ")).toBe(submitNote("agent_blocked", "x"));
-  });
-
-  it("offers to send anyway only when the server showed the box and named no draft", () => {
-    expect(submitRefusal("input_draft", "x", undefined, "! ls")).toEqual({ note: "Not sent: Claude Code's input box in the terminal may not be empty. It shows “! ls”.", anyway: true });
-    // a box the server could not read whole is shown nothing to send over: the plain note
-    expect(submitRefusal("input_draft", "x", undefined, "")).toBe(submitNote("input_draft", "x"));
-    // a named draft is cleared, not sent over
-    expect(submitRefusal("input_draft", "x", "ㅔ", "❯ ㅔ")).toEqual({ note: "Not sent: Claude Code's input box in the terminal already holds “ㅔ”.", draft: "ㅔ" });
-    expect(submitRefusal("agent_blocked", "x", undefined, "! ls")).toBe(submitNote("agent_blocked", "x"));
   });
 });
 
@@ -107,35 +89,30 @@ describe("imageMention", () => {
   });
 });
 
-describe("insertLeadingMention", () => {
-  const first = imageMention("/tmp/1.png");
-  const second = imageMention("/tmp/2.png");
+describe("insertMention", () => {
+  const mention = imageMention("/tmp/p.png");
 
-  it("puts an attachment's mention at the start, whatever is being typed further on", () => {
-    expect(insertLeadingMention("", first, [])).toEqual({ text: "@/tmp/1.png ", at: 0, length: 12 });
-    expect(insertLeadingMention("look at this", first, [])).toEqual({ text: "@/tmp/1.png look at this", at: 0, length: 12 });
+  it("separates a mention from the word before the caret (#120)", () => {
+    expect(insertMention("test.", 5, 5, mention)).toEqual({ text: "test. @/tmp/p.png ", caret: 18 });
   });
 
-  it("keeps a leading slash command first", () => {
-    expect(insertLeadingMention("/review the menu", first, [])).toEqual({ text: "/review @/tmp/1.png the menu", at: 8, length: 12 });
-    expect(insertLeadingMention("/review", first, [])).toEqual({ text: "/review @/tmp/1.png ", at: 7, length: 13 });
+  it("adds no space in an empty composer or after whitespace", () => {
+    expect(insertMention("", 0, 0, mention)).toEqual({ text: "@/tmp/p.png ", caret: 12 });
+    expect(insertMention("test. ", 6, 6, mention).text).toBe("test. @/tmp/p.png ");
+    expect(insertMention("test.\n", 6, 6, mention).text).toBe("test.\n@/tmp/p.png ");
   });
 
-  it("goes after the mentions of files picked before it, so a batch reads in pick order however its uploads finish", () => {
-    expect(insertLeadingMention(`${first}notes`, second, [first])).toEqual({ text: `${first}${second}notes`, at: 12, length: 12 });
-    expect(insertLeadingMention(`${second}notes`, first, [])).toEqual({ text: `${first}${second}notes`, at: 0, length: 12 });
-    // an earlier mention the user deleted no longer anchors anything
-    expect(insertLeadingMention("notes", second, [first])).toEqual({ text: `${second}notes`, at: 0, length: 12 });
+  it("looks at the text before the selection, and replaces the selection", () => {
+    expect(insertMention("see this here", 4, 8, mention)).toEqual({ text: "see @/tmp/p.png  here", caret: 16 });
+    expect(insertMention("ab", 1, 1, mention)).toEqual({ text: "a @/tmp/p.png b", caret: 14 });
   });
 
-  it("goes in whole or not at all: a cut path would name a file that does not exist", () => {
-    const full = "x".repeat(MAX_COMPOSER_CHARS - 2);
-    expect(insertLeadingMention(full, first, [])).toEqual({ text: full, at: 0, length: 0, missing: 10 });
-    const room = "x".repeat(MAX_COMPOSER_CHARS - first.length);
-    expect(insertLeadingMention(room, first, [])).toEqual({ text: `${first}${room}`, at: 0, length: first.length });
-    // the separating space counts: after a command with no room for it, nothing goes in
-    const command = `/review${"x".repeat(MAX_COMPOSER_CHARS - 7 - first.length)}`;
-    expect(insertLeadingMention(command, first, [])).toEqual({ text: command, at: command.length, length: 0, missing: 1 });
+  it("cuts the insertion to what still fits", () => {
+    const full = "x".repeat(MAX_COMPOSER_CHARS - 3);
+    expect(insertMention(full, full.length, full.length, mention)).toEqual({
+      text: `${full} @/`,
+      caret: MAX_COMPOSER_CHARS,
+    });
   });
 });
 
@@ -194,20 +171,11 @@ describe("composer presentation helpers", () => {
     expect(composerStatusHint({ uploading: true, connected: false, text: "draft" })).toBe("offline");
   });
 
-  it("counts the characters left only near the limit, and puts a path with no room first", () => {
-    const near = "x".repeat(MAX_COMPOSER_CHARS - 200);
-    expect(composerStatusHint({ uploading: false, connected: true, text: "x".repeat(MAX_COMPOSER_CHARS - 201) })).toBe(null);
-    expect(composerStatusHint({ uploading: false, connected: true, text: near })).toBe("near-limit");
-    expect(composerStatusHint({ uploading: true, connected: true, text: near })).toBe("uploading");
-    expect(composerStatusHint({ uploading: true, connected: true, text: near, noRoom: true })).toBe("no-room");
-    expect(composerStatusHint({ uploading: false, connected: false, text: near, noRoom: true })).toBe("offline");
-  });
-
-  it("removes the effort word before shortening the model", () => {
+  it("moves a label that does not fit to a row of its own, where the model and the level are both drawn", () => {
     expect(composerModelDraw({ modelClipped: false, effortClipped: false })).toBe("full");
-    expect(composerModelDraw({ modelClipped: false, effortClipped: true })).toBe("no-effort");
-    expect(composerModelDraw({ modelClipped: true, effortClipped: true })).toBe("no-effort");
-    expect(composerModelDraw({ modelClipped: true, effortClipped: false })).toBe("no-effort");
+    expect(composerModelDraw({ modelClipped: false, effortClipped: true })).toBe("row");
+    expect(composerModelDraw({ modelClipped: true, effortClipped: true })).toBe("row");
+    expect(composerModelDraw({ modelClipped: true, effortClipped: false })).toBe("row");
   });
 
   it("turns machine agent ids into labels", () => {
@@ -276,18 +244,6 @@ describe("composer presentation helpers", () => {
   it("matches subsequences containing letters outside the basic multilingual plane", () => {
     const command = { name: "prefix:𐐨ab", description: "", source: "plugin" as const };
     expect(rankSlashCommands([command], "𐐀b", {})).toEqual([command]);
-  });
-
-  it("limits inline matching to name prefixes and segments after hyphens or colons", () => {
-    const commands = ["deploy", "tools:deploy", "safe-deploy", "redeploy", "tools_deploy", "tools.deploy"]
-      .map((name) => ({ name, description: "deployment", source: "skill" as const }));
-    expect(rankSlashCommands(commands, "DEP", {}, true).map(({ name }) => name)).toEqual(["deploy", "safe-deploy", "tools:deploy"]);
-    expect(rankSlashCommands(commands, "dply", {}, true)).toEqual([]);
-    expect(rankSlashCommands(commands, "deployment", {}, true)).toEqual([]);
-    expect(rankSlashCommands(commands, "", {}, true)).toHaveLength(6);
-    const template = { name: "template-creator", description: "Create a reusable template", source: "skill" as const };
-    expect(rankSlashCommands([template], "tmp", {})).toEqual([template]);
-    expect(rankSlashCommands([template], "creator", {}, true)).toEqual([template]);
   });
 });
 

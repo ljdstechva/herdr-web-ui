@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { fetchPaneConversation, conversationAnswerBytes, peekPaneConversation } from "./api.ts";
+import { fetchPaneConversation, fetchPaneTranscript, conversationAnswerBytes } from "./api.ts";
 import { ConversationRefresh } from "./conversationRefresh.ts";
 import type { ConversationResponse } from "../../shared/protocol.ts";
 
@@ -16,6 +16,48 @@ afterEach(() => {
 });
 
 describe("conversation polling", () => {
+  for (const kind of ["conversation", "terminal"] as const) {
+    for (const stalled of ["headers", "body"] as const) {
+      it(`bounds a ${kind} read whose ${stalled} never arrive, then allows recovery`, async () => {
+        const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+        const deadlines: number[] = [];
+        const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+          deadlines.push(ms);
+          return nativeTimeout(30);
+        });
+        let release: (() => void) | undefined;
+        let recovered = false;
+        const body = kind === "conversation" ? { source: "scrollback", turns: [] } : { read: { text: "recovered" } };
+        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() {
+          if (recovered) return Response.json(body);
+          if (stalled === "headers") return new Promise<Response>((resolve) => { release = () => resolve(Response.json(body)); });
+          return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("{")); } }), { headers: { "content-type": "application/json" } });
+        } });
+        globalThis.fetch = ((url, init) => realFetch(new URL(String(url), `http://127.0.0.1:${server.port}`), init)) as typeof fetch;
+        const read = () => kind === "conversation" ? fetchPaneConversation(`stalled-${stalled}`) : fetchPaneTranscript(`stalled-${stalled}`, 400);
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const failure = await Promise.race([
+            read().catch((error: unknown) => error),
+            new Promise<string>((resolve) => { watchdog = setTimeout(() => resolve("still waiting"), 500); }),
+          ]);
+          expect(failure).toBeInstanceOf(Error);
+          expect(["TimeoutError", "AbortError"]).toContain((failure as Error).name);
+          expect(deadlines).toEqual([15_000]);
+          recovered = true;
+          release?.();
+          const recoveredBody: unknown = await read();
+          expect(recoveredBody).toEqual(kind === "conversation" ? body : { text: "recovered" });
+        } finally {
+          clearTimeout(watchdog);
+          release?.();
+          server.stop(true);
+          timeout.mockRestore();
+        }
+      });
+    }
+  }
+
   it("asks with the last ETag and reuses the very same answer on a 304", async () => {
     const sent: (string | null)[] = [];
     let version = "\"v1\"";
@@ -75,50 +117,6 @@ describe("conversation polling", () => {
     await fetchPaneConversation("big:p0");
     expect([...asked.values()]).toEqual([null]);
   });
-});
-
-describe("conversation peek", () => {
-  it("hands back the newest page last answered, without asking the server", async () => {
-    let asked = 0;
-    globalThis.fetch = (async (_url: string) => {
-      asked += 1;
-      return new Response(JSON.stringify({ source: "claude-transcript", turns: [], cursor: null }), { status: 200, headers: { etag: "\"p\"" } });
-    }) as typeof fetch;
-    const answer = await fetchPaneConversation("peek:p1");
-    expect(peekPaneConversation("peek:p1")).toBe(answer);
-    expect(peekPaneConversation("peek:p1", "local")).toBe(answer);
-    expect(asked).toBe(1);
-  });
-
-  it("has nothing for a pane never read, or read on another PC", async () => {
-    globalThis.fetch = (async (_url: string) => new Response(JSON.stringify({ source: "claude-transcript", turns: [], cursor: null }), { status: 200, headers: { etag: "\"q\"" } })) as typeof fetch;
-    expect(peekPaneConversation("peek:never")).toBeUndefined();
-    await fetchPaneConversation("peek:p2", "pc-a");
-    expect(peekPaneConversation("peek:p2", "pc-a")).toBeDefined();
-    expect(peekPaneConversation("peek:p2")).toBeUndefined();
-  });
-
-  it("never hands back an older page", async () => {
-    globalThis.fetch = (async (_url: string) => new Response(JSON.stringify({ source: "claude-transcript", turns: [], cursor: "c:1" }), { status: 200, headers: { etag: "\"r\"" } })) as typeof fetch;
-    await fetchPaneConversation("peek:p3", "local", { before: "c:5" });
-    expect(peekPaneConversation("peek:p3")).toBeUndefined();
-  });
-});
-
-it("reports a newest read in flight, so a fresh attach's connected edge can leave it to that read", async () => {
-  refreshClock();
-  const refresh = new ConversationRefresh();
-  const { promise, resolve } = Promise.withResolvers<void>();
-  let reads = 0;
-  refresh.setRead(async () => { reads += 1; await promise; });
-  expect(refresh.reading).toBe(false);
-  refresh.refresh();
-  expect(refresh.reading).toBe(true);
-  resolve();
-  await settleRefresh();
-  expect(refresh.reading).toBe(false);
-  expect(reads).toBe(1);
-  refresh.stop();
 });
 
 it("counts a compressed answer by its parsed body, not the bytes on the wire", () => {
@@ -536,29 +534,4 @@ describe("conversation invalidation refresh", () => {
     refresh.stop();
     expect(clock.pending()).toBe(0);
   });
-});
-
-it("a timed-out JSON body cannot replace the last conversation ETag, even when it answers late", async () => {
-  const originalTimer = globalThis.setTimeout;
-  const clock = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => originalTimer(callback, delay === 15_000 ? 10 : delay)) as typeof setTimeout);
-  try {
-    const pane = "deadline-cache:p1";
-    globalThis.fetch = (async (_url: string) => Response.json({ source: "codex-transcript", turns: [], cursor: null }, { headers: { etag: '"current"' } })) as typeof fetch;
-    const current = await fetchPaneConversation(pane);
-    let resolve!: (body: ConversationResponse) => void;
-    const late = new Promise<ConversationResponse>((done) => { resolve = done; });
-    const lateResponse = Response.json({}, { headers: { etag: '"obsolete"' } });
-    lateResponse.json = () => late;
-    globalThis.fetch = (async (_url: string) => lateResponse) as typeof fetch;
-    await expect(fetchPaneConversation(pane)).rejects.toThrow("timed out");
-    resolve({ source: "codex-transcript", turns: [], cursor: null });
-    await Promise.resolve();
-    const asked: (string | null)[] = [];
-    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-      asked.push(new Headers(init?.headers).get("if-none-match"));
-      return new Response(null, { status: 304 });
-    }) as typeof fetch;
-    expect(await fetchPaneConversation(pane)).toBe(current);
-    expect(asked).toEqual(['"current"']);
-  } finally { clock.mockRestore(); }
 });

@@ -1,18 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
-import { fileFromLink, isNavigation, linkSearch, linksSomewhere, readLink, resolveLink, slugOf, workspacePane } from "./deepLink.ts";
+import { isNavigation, linkSearch, linksSomewhere, readLink, resolveLink, slugOf, workspacePane } from "./deepLink.ts";
 
 describe("deep links", () => {
-  it("keeps an absolute file on its PC without requiring a live pane", () => {
-    for (const file of ["/tmp/한글 #1 & notes.MD", "C:\\docs\\notes.markdown"]) {
-      const link = { machine: "remote-box", workspace: null, pane: null, view: null, file, settings: null };
-      expect(readLink(linkSearch(link))).toMatchObject(link);
-      expect(fileFromLink(link)).toBe(file);
-    }
-    expect(linkSearch({ machine: "local", workspace: null, pane: null, view: null, file: "relative.md", settings: null })).toBe("");
-    expect(fileFromLink({ pane: null, file: "relative.md" })).toBeNull();
-    expect(fileFromLink({ pane: "w1:p1", file: "relative.md" })).toBe("relative.md");
-  });
   it("reads every place an address can name, with the local PC by default", () => {
     expect(readLink("?ws=w2&pane=w2%3Ap1&view=chat&settings=appearance")).toEqual({ machine: "local", workspace: "w2", workspaceSlug: null, pane: "w2:p1", view: "chat", file: null, settings: "appearance", section: null, create: null, sidebar: null });
     expect(readLink("?machine=box&pane=w1:p3")).toMatchObject({ machine: "box", pane: "w1:p3", workspace: null, view: null });

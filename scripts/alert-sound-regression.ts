@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { errors as browserErrors, type Browser, type Page } from "playwright-core";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
-import { chromePath } from "./chrome-path.ts";
 
 /**
  * The alert sound: real herdr status changes make the open tab chime, once a tap let the page
@@ -282,7 +281,7 @@ if (import.meta.main) {
   const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-sound-server-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir, usage: new UsageService(undefined, []) });
   const browser = await chromium.launch({
-    executablePath: chromePath(),
+    executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome",
     headless: true, args: ["--no-sandbox", "--accept-lang=en-US"],
   });
   try {

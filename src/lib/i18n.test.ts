@@ -144,7 +144,5 @@ describe("translate", () => {
     expect(resolveLanguage("system", ["fr-FR", "en-US", "ja-JP"])).toBe("en");
     expect(resolveLanguage("system", ["fr-FR", "ja-JP", "en-US"])).toBe("ja");
     expect(resolveLanguage("system", ["fr-FR", "de-DE"])).toBe("en");
-    expect(resolveLanguage("system", ["tr-TR", "en-US"])).toBe("en");
-    expect(resolveLanguage("system", ["tr-TR"])).toBe("en");
   });
 });

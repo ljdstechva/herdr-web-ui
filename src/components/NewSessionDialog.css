@@ -6,6 +6,17 @@
   padding-bottom: var(--space-2);
 }
 
+@media (max-width: 640px), (pointer: coarse) {
+  /* Keep the folder action above Start; short screens show fewer full-size rows. */
+  .new-session-modal .dir-browser-list {
+    max-height: clamp(var(--touch-target), calc(var(--app-height, 100dvh) - var(--touch-target) * 14), calc(var(--touch-target) * 3));
+  }
+
+  .new-session-modal .dir-browser-search {
+    margin-bottom: 0;
+  }
+}
+
 .new-session-note,
 .new-session-error {
   margin: 0 0 var(--space-3);
@@ -34,73 +45,6 @@
 
 .new-session-cwd .btn {
   flex: none;
-}
-
-/* one row of three: a short name is shown whole, and only a long one gives way to an ellipsis */
-.new-session-folder-chips-frame {
-  position: relative;
-  min-width: 0;
-}
-
-/* only the chips that fit are drawn (RecentFolderChips), so the row clips nothing: a focused chip's ring shows whole */
-.new-session-folder-chips {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--space-2);
-}
-
-.new-session-folder-chips > .new-session-folder-chip { flex: none; }
-/* the first chip gives way when even it and "+N" do not fit */
-.new-session-folder-chips > .new-session-folder-chip:first-child { flex: 0 1 auto; }
-
-.new-session-folder-more {
-  font-variant-numeric: tabular-nums;
-}
-
-/* the chips' own widths, measured where nothing sees them (RecentFolderChips): the measuring row
-   is as wide as every chip, so it sits in a clipped box the size of the frame and adds no overflow */
-.new-session-folder-measure-clip {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.new-session-folder-measure {
-  display: flex;
-  gap: var(--space-2);
-  width: max-content;
-}
-
-.new-session-folder-chip {
-  min-width: 0;
-  max-width: 16rem;
-  border-radius: var(--radius-pill);
-}
-
-/* a phone keeps them on one row and swipes it sideways */
-@media (max-width: 640px), (pointer: coarse) {
-  .new-session-folder-chips {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    scrollbar-width: none;
-  }
-  .new-session-folder-chips::-webkit-scrollbar { display: none; }
-  .new-session-folder-chips > .new-session-folder-chip,
-  .new-session-folder-chips > .new-session-folder-chip:first-child { flex: none; max-width: 12rem; scroll-snap-align: start; }
-}
-
-.new-session-folder-chip svg {
-  flex: none;
-}
-
-.new-session-folder-chip > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* New tab: the folder is the workspace's, shown as a fact in a dashed box, not asked for */
@@ -210,5 +154,80 @@
   .new-session-modal .agent-picker-trigger,
   .agent-picker-menu .menu-item {
     height: var(--touch-target);
+  }
+}
+
+/* New tab in a repository: the worktree switch, its name on the left */
+.new-session-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+}
+
+.new-session-switch-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.new-session-switch-copy svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+}
+
+/* the worktrees a closed tab left on disk: one press fills the branch */
+.new-session-checkouts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.new-session-checkout {
+  max-width: 100%;
+  min-height: var(--chip-h);
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  background: transparent;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.new-session-checkout:hover:not(:disabled),
+.new-session-checkout:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.new-session-checkout[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.new-session-checkout:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .new-session-checkout {
+    min-height: var(--control-h);
+    padding: 0 var(--space-3);
   }
 }

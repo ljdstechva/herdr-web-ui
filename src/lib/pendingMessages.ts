@@ -1,6 +1,6 @@
 import type { PendingMessage } from "../../shared/protocol.ts";
 
-export interface PendingMessageView extends PendingMessage { serverOwned: boolean; resendInFlight?: true; resendGeneration?: number }
+export interface PendingMessageView extends PendingMessage { serverOwned: boolean }
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type Removal = { id: string; outcome: "sent" | "discarded" };
 const PREFIX = "herdr-web-ui:pending:";
@@ -33,15 +33,13 @@ export class PendingMessageStore {
       const ids = new Set<string>();
       return data.messages.flatMap((item: unknown) => {
         if (!item || typeof item !== "object") return [];
-        const message = item as PendingMessage & { resendInFlight?: unknown; resendGeneration?: unknown };
+        const message = item as PendingMessage;
         if (typeof message.id !== "string" || !message.id || ids.has(message.id) || typeof message.text !== "string" || typeof message.created_at !== "string"
           || !Number.isSafeInteger(message.request_id) || !["queued", "sending", "held", "uncertain"].includes(message.state)) return [];
         ids.add(message.id);
         const error = message.error && typeof message.error.code === "string" && typeof message.error.message === "string" ? message.error : undefined;
         return [{ id: message.id, request_id: message.request_id, text: message.text, created_at: message.created_at,
-          state: message.state === "held" && message.resendInFlight !== true ? "held" as const : "uncertain" as const,
-          ...(typeof message.resendGeneration === "number" && Number.isSafeInteger(message.resendGeneration) && message.resendGeneration >= 0 ? { resendGeneration: message.resendGeneration } : {}),
-          ...(message.resendInFlight === true ? { resendInFlight: true as const } : {}), ...(error ? { error } : {}), serverOwned: false }];
+          state: message.state === "held" ? "held" as const : "uncertain" as const, ...(error ? { error } : {}), serverOwned: false }];
       });
     } catch { return []; }
   }
@@ -56,21 +54,15 @@ export class PendingMessageStore {
     return messages;
   }
   refresh(owner: string): void {
+    if (this.unsaved.has(owner)) return;
     try {
       const raw = this.storage().getItem(PREFIX + owner);
       if (this.saved.get(owner) === raw) return;
       const next = this.restored(raw);
       // Another tab cannot alter or discard a live connection's authoritative rows.
-      for (const own of this.read(owner).filter((message) => this.unsaved.has(owner) || message.serverOwned || this.isBusy(owner, message.id))) {
+      for (const own of this.read(owner).filter((message) => message.serverOwned || this.isBusy(owner, message.id))) {
         const at = next.findIndex((message) => message.id === own.id);
-        if (at < 0) next.push(own);
-        else if ((next[at]!.resendGeneration ?? 0) > (own.resendGeneration ?? 0)) {
-          const { resendInFlight: _, ...previous } = own;
-          next[at] = { ...previous, resendGeneration: next[at]!.resendGeneration, state: next[at]!.state,
-            ...(next[at]!.resendInFlight ? { resendInFlight: true } : {}) };
-        } else next[at] = next[at]?.resendInFlight
-          ? { ...own, resendGeneration: next[at]!.resendGeneration ?? own.resendGeneration, resendInFlight: true,
-            state: this.unconfirmed.has(`${owner}\0${own.id}`) ? own.state : "uncertain" } : own;
+        if (at < 0) next.push(own); else next[at] = own;
       }
       this.saved.set(owner, raw);
       this.rows.set(owner, next);
@@ -81,8 +73,7 @@ export class PendingMessageStore {
     this.rows.set(owner, messages);
     try {
       const raw = messages.length ? JSON.stringify({ version: 1, messages: messages.map(({ serverOwned: _, ...message }) =>
-        this.unconfirmed.has(`${owner}\0${message.id}`) || message.resendInFlight
-          ? { ...message, state: "uncertain", resendInFlight: true } : message) }) : null;
+        this.unconfirmed.has(`${owner}\0${message.id}`) ? { ...message, state: "uncertain" } : message) }) : null;
       if (raw === null) this.storage().removeItem(PREFIX + owner); else this.storage().setItem(PREFIX + owner, raw);
       this.saved.set(owner, raw);
       this.unsaved.delete(owner);
@@ -96,13 +87,9 @@ export class PendingMessageStore {
     const proofs = this.scopes.get(owner) ?? new Map<string, string>();
     this.scopes.set(owner, proofs);
     if (scope === null) proofs.delete(message.id); else proofs.set(message.id, scope);
-    const previous = this.read(owner);
-    const resendInFlight = previous.find((item) => item.id === message.id)?.resendInFlight;
-    const resendGeneration = previous.find((item) => item.id === message.id)?.resendGeneration;
     const view: PendingMessageView = { ...message, serverOwned: scope !== null,
-      ...(resendInFlight ? { resendInFlight } : {}),
-      ...(resendGeneration !== undefined ? { resendGeneration } : {}),
-      state: resendInFlight || scope === null && (message.state === "queued" || message.state === "sending") ? "uncertain" : message.state };
+      state: scope === null && (message.state === "queued" || message.state === "sending") ? "uncertain" : message.state };
+    const previous = this.read(owner);
     const at = previous.findIndex((item) => item.id === message.id);
     const next = [...previous];
     if (at < 0) next.push(view); else next[at] = view;
@@ -145,7 +132,7 @@ export class PendingMessageStore {
       if (proofs?.get(message.id) !== scope) return message;
       proofs.delete(message.id);
       changed = true;
-      return { ...message, serverOwned: false, state: message.state === "held" && !message.resendInFlight ? "held" as const : "uncertain" as const };
+      return { ...message, serverOwned: false, state: message.state === "held" ? "held" as const : "uncertain" as const };
     });
     if (proofs?.size === 0) this.scopes.delete(owner);
     if (changed) this.write(owner, next);
@@ -160,14 +147,10 @@ export class PendingMessageStore {
   }
   /**
    * Saves a row as not confirmed while what is shown stays as it is. A held copy sent again is
-   * a stable-ID resend: a reload before its answer must not offer it once more.
+   * a new submission with no receipt of its own: a reload before its answer must not offer it once more.
    * false: the mark could not be saved over a copy still saved as held, so the send must not start.
    */
   unconfirm(owner: string, id: string): boolean {
-    try {
-      const saved = this.restored(this.storage().getItem(PREFIX + owner)).find((message) => message.id === id);
-      if (saved?.resendInFlight && !this.unconfirmed.has(`${owner}\0${id}`)) return false;
-    } catch { this.unsaved.add(owner); this.notify(); return false; }
     // another tab may have saved a message since this one last read the list
     this.refresh(owner);
     // every write until the answer keeps the mark, also one made for another row
@@ -175,7 +158,7 @@ export class PendingMessageStore {
     this.write(owner, this.read(owner));
     if (!this.unsaved.has(owner)) return true;
     // with nothing saved (storage that never worked) there is no copy a reload could offer again
-    try { return !this.restored(this.storage().getItem(PREFIX + owner)).some((message) => message.id === id && message.state === "held"); } catch { return false; }
+    try { return !this.restored(this.storage().getItem(PREFIX + owner)).some((message) => message.id === id && message.state === "held"); } catch { return true; }
   }
   end(owner: string, id: string): void {
     this.unconfirmed.delete(`${owner}\0${id}`);
@@ -183,19 +166,12 @@ export class PendingMessageStore {
     this.rows.set(owner, [...this.read(owner)]);
     this.notify();
   }
-  fail(owner: string, id: string, error: { code: string; message: string }, uncertain: boolean, attemptedGeneration?: number): void {
+  fail(owner: string, id: string, error: { code: string; message: string }, uncertain: boolean): void {
     this.unconfirmed.delete(`${owner}\0${id}`);
     // another tab's rows and marks as they are saved now: this write is the whole list
     this.refresh(owner);
-    this.write(owner, this.read(owner).map((message) => {
-      if (message.id !== id) return message;
-      if (attemptedGeneration !== undefined && (message.resendGeneration ?? 0) > attemptedGeneration) return message;
-      const { resendInFlight: _, ...settled } = message;
-      return { ...settled, error,
-        ...(uncertain ? { resendInFlight: true as const } : {}),
-        ...(attemptedGeneration !== undefined ? { resendGeneration: uncertain ? attemptedGeneration : attemptedGeneration + 1 } : {}),
-        state: uncertain ? "uncertain" : attemptedGeneration !== undefined ? "held" : message.serverOwned ? message.state : "held" };
-    }));
+    this.write(owner, this.read(owner).map((message) => message.id === id ? { ...message, error,
+      state: uncertain ? "uncertain" : message.serverOwned ? message.state : "held" } : message));
   }
   removeCopy(owner: string, id: string): void {
     if (this.read(owner).some((message) => message.id === id && message.serverOwned)) return;

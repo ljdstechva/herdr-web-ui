@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
-import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-chat-browser-"));
 const codexHome = join(root, "codex");
@@ -62,7 +61,7 @@ try {
   // tailscaleOwner null: the plain-HTTP page below reaches the server under a name that is not
   // loopback, which a PC running Tailscale would otherwise send to pairing
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome, tailscaleOwner: null });
-  browser = await chromium.launch({ executablePath: chromePath(), headless: process.env["HEADED"] !== "1", args: ["--no-sandbox", "--host-resolver-rules=MAP clipboard.test 127.0.0.1", "--no-proxy-server"] });
+  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: process.env["HEADED"] !== "1", args: ["--no-sandbox", "--host-resolver-rules=MAP clipboard.test 127.0.0.1", "--no-proxy-server"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   const page = await context.newPage();
   // a pane opens its terminal the first time; this QA is about the chat lens
@@ -283,10 +282,14 @@ try {
   rmSync(rollout);
   const fallback = log.locator(".chat-terminal-fallback");
   await fallback.waitFor();
-  await modelInfo.waitFor({ state: "hidden" });
-  assert.equal(await fallback.getAttribute("open"), null, "unmatched Codex output stays folded");
+  // The model picker remains usable without native metadata; only the stale model/effort clear.
+  await modelInfo.getByText("codex-updated-model", { exact: true }).waitFor({ state: "hidden" });
+  await modelInfo.getByText("Model", { exact: true }).waitFor();
+  assert.equal(await modelInfo.getByText("low", { exact: true }).count(), 0);
+  assert.equal(await fallback.locator("pre").isVisible(), true, "unmatched Codex output is visible without another tap");
+  assert.ok((await fallback.locator("pre").innerText()).trim().length > 0, "the fallback contains the owned pane's terminal output");
   assert.deepEqual(errors, []);
-  console.log("PASS mobile layout, explicit collapsed fallback, no browser errors");
+  console.log("PASS mobile layout, visible terminal fallback, no browser errors");
 } finally {
   release?.();
   await browser?.close();

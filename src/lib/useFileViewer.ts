@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { outsideSettings } from "./settingsHistory.ts";
 
 interface FilePreview {
   path: string;
@@ -34,8 +33,7 @@ export function useFileViewer() {
 
   const openFile = useCallback((preview: FilePreview) => {
     if (closing.current) return;
-    // a preview opened over Settings is no entry of Settings: a reload on it closes Settings and keeps the file
-    const state = { ...outsideSettings(window.history.state), [HISTORY_KEY]: preview };
+    const state = { ...window.history.state, [HISTORY_KEY]: preview };
     // Choosing a different file inside an open preview must not add another Back step.
     if (previewFromState(window.history.state)) window.history.replaceState(state, "");
     else window.history.pushState(state, "");

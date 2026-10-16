@@ -1,20 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { MAX_TURNS, parseOmpTranscript } from "./transcript-records.ts";
 import { toolVerb } from "../src/lib/toolVerbs.ts";
 import type { ConversationTurn } from "../shared/protocol.ts";
-import { parseAgyTranscript } from "./agy.ts";
-import { agyStoreFromLocks } from "./agy-store.ts";
-import * as agyStore from "./agy-store.ts";
 import * as herdr from "./herdr/client.ts";
 import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
-import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 
 let mockedPanes: HerdrPane[] = [];
 let mockedProcesses: { argv?: unknown }[] = [];
@@ -22,7 +19,7 @@ let mockedProcesses: { argv?: unknown }[] = [];
 describe("Devin pane identity", () => {
   const restores: Array<() => void> = [];
   beforeEach(() => {
-    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => {
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method) => {
       if (method !== "pane.process_info") throw new Error(`unexpected conversation fixture RPC: ${method}`);
       return { process_info: { foreground_processes: mockedProcesses } } as never;
     });
@@ -207,8 +204,7 @@ describe("parseClaudeTranscript", () => {
       { role: "user", ts: "2026-09-19T08:00:00.000Z", parts: [{ kind: "text", text: "리팩터링 시작해줘" }] },
       { role: "assistant", ts: "2026-09-19T08:00:02.000Z", end_ts: "2026-09-19T08:00:05.000Z", parts: [
         { kind: "text", text: "먼저 상태를 확인하겠습니다." },
-        // the row says what the agent said the command is for; the command stays in the input
-        { kind: "tool", name: "Bash", summary: "check tree", input: expect.stringContaining("git status"), output: "M src/app.ts" },
+        { kind: "tool", name: "Bash", summary: "git status --short", input: expect.stringContaining("git status"), output: "M src/app.ts" },
         { kind: "thinking", text: "internal reasoning stays private" },
         { kind: "text", text: "변경된 파일이 하나입니다." },
       ] },
@@ -428,22 +424,6 @@ describe("parseClaudeTranscript", () => {
   it("keeps thinking blocks in transcript order", () => {
     const assistant = parseClaudeTranscript(lines)[1];
     expect(assistant?.parts.map((part) => part.kind)).toEqual(["text", "tool", "thinking", "text"]);
-  });
-
-  it("reads thinking that Claude Code displays as updates as narration in the work", () => {
-    // the shape a recent Claude Code writes: one entry per block, the visible update as thinking
-    const entry = (thinkingDisplay: string | undefined, block: object) => JSON.stringify({ type: "assistant", timestamp: "2026-10-14T07:00:00.000Z", ...(thinkingDisplay ? { thinkingDisplay } : {}), message: { role: "assistant", stop_reason: null, content: [block] } });
-    const turns = parseClaudeTranscript([
-      JSON.stringify({ type: "user", message: { role: "user", content: "measure the padding" } }),
-      entry("updates", { type: "thinking", thinking: "", signature: "s" }),
-      entry("updates", { type: "thinking", thinking: "The padding stays; measuring it next.", signature: "s" }),
-      entry("updates", { type: "tool_use", id: "t", name: "Bash", input: { command: "true" } }),
-      entry(undefined, { type: "thinking", thinking: "private reasoning", signature: "s" }),
-    ].join("\n"));
-    expect(turns[1]?.parts.filter((part) => part.kind !== "tool")).toEqual([
-      { kind: "text", text: "The padding stays; measuring it next.", phase: "commentary" },
-      { kind: "thinking", text: "private reasoning" },
-    ]);
   });
 
   it("survives a torn tail line while Claude is mid-append", () => {
@@ -1061,77 +1041,6 @@ describe("transcript pages", () => {
   const texts = (turns: { parts: { kind: string; text?: string; output?: string }[] }[]) =>
     turns.map((turn) => turn.parts.map((part) => part.kind === "tool" ? `[${part.output}]` : part.text).join(" "));
 
-  it("shows another session's message as its own notice turn, so the work it starts is not appended to the answer before it", () => {
-    const path = join(temp(), "peer.jsonl");
-    const envelope = (body: string) => `<cross-session-message from="uds:x" from-name="FUSION" from-mode="bypass">\n${body}\n</cross-session-message>`;
-    let delivered = 0;
-    const origin = (body: string) => ({ kind: "peer", from: "uds:x", msg_id: `m${++delivered}`, name: "FUSION", body });
-    const say = (text: string) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } });
-    writeFileSync(path, `${[
-      { type: "user", timestamp: "2026-10-08T03:04:00.000Z", message: { role: "user", content: "deck status?" } },
-      say("the deck is done"),
-      // arrives between turns: a meta user entry
-      { type: "user", isMeta: true, timestamp: "2026-10-08T03:05:01.000Z", origin: origin("R18 is ready"), message: { role: "user", content: `Another Claude session sent a message:\n${envelope("R18 is ready")}` } },
-      say("recorded both decisions"),
-      // arrives mid-turn: a queued attachment, its own turn in the order it was taken in
-      { type: "attachment", timestamp: "2026-10-08T03:06:00.000Z", attachment: { type: "queued_command", commandMode: "prompt", prompt: envelope("coordinates sent"), origin: origin("coordinates sent") } },
-      say("rebuilt slide 4"),
-      // a meta entry that is not another session's message stays hidden
-      { type: "user", isMeta: true, message: { role: "user", content: "<local-command-caveat>x</local-command-caveat>" } },
-    ].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
-    const page = transcriptPage("claude-transcript", path);
-    expect(page.turns.map((turn) => [turn.role, turn.parts.map((part) => part.kind === "notice" ? `${part.source}|${part.text}` : part.kind === "text" ? part.text : part.kind).join(" ")])).toEqual([
-      ["user", "deck status?"],
-      ["assistant", "the deck is done"],
-      ["user", "peer:FUSION|R18 is ready"],
-      ["assistant", "recorded both decisions"],
-      ["user", "peer:FUSION|coordinates sent"],
-      ["assistant", "rebuilt slide 4"],
-    ]);
-  });
-
-  it("shows one notice for a delivery Claude recorded twice, and says 'another session' for an unnamed sender", () => {
-    const path = join(temp(), "peer-echo.jsonl");
-    const origin = { kind: "peer", from: "uds:x", msg_id: "m7", name: "FUSION", body: "R18 is ready" };
-    writeFileSync(path, `${[
-      { type: "user", timestamp: "2026-10-08T03:04:00.000Z", message: { role: "user", content: "deck status?" } },
-      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "working on it" }] } },
-      // queued mid-turn, then echoed as a meta entry once the turn ended: one message
-      { type: "attachment", timestamp: "2026-10-08T03:05:00.000Z", attachment: { type: "queued_command", commandMode: "prompt", prompt: "<cross-session-message from-name=\"FUSION\">\nR18 is ready\n</cross-session-message>", origin } },
-      { type: "user", isMeta: true, timestamp: "2026-10-08T03:05:01.000Z", origin, message: { role: "user", content: "Another Claude session sent a message:\n<cross-session-message from-name=\"FUSION\">\nR18 is ready\n</cross-session-message>" } },
-      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "noted" }] } },
-      // a sender without a name
-      { type: "user", isMeta: true, timestamp: "2026-10-08T03:06:00.000Z", origin: { kind: "peer", from: "uds:y", msg_id: "m8", body: "ping" }, message: { role: "user", content: "Another Claude session sent a message:\n<cross-session-message>\nping\n</cross-session-message>" } },
-    ].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
-    const page = transcriptPage("claude-transcript", path);
-    expect(page.turns.map((turn) => turn.parts.map((part) => part.kind === "notice" ? `${part.source}|${part.text}` : part.kind === "text" ? part.text : part.kind).join(" "))).toEqual([
-      "deck status?", "working on it", "peer:FUSION|R18 is ready", "noted", "peer:|ping",
-    ]);
-  });
-
-  it("pages back across other sessions' messages without gaps or overlaps", () => {
-    const path = join(temp(), "peer-pages.jsonl");
-    const envelope = (n: number) => `<cross-session-message from-name="FUSION">\nreply ${n}\n</cross-session-message>`;
-    const origin = (n: number) => ({ kind: "peer", from: "uds:x", msg_id: `m${n}`, name: "FUSION", body: `reply ${n}` });
-    // in both forms Claude records them: the meta entry between turns, the queued attachment mid-turn
-    const peer = (n: number) => JSON.stringify(n % 2 === 0
-      ? { type: "user", isMeta: true, timestamp: "2026-10-08T00:00:00.000Z", origin: origin(n), message: { role: "user", content: `Another Claude session sent a message:\n${envelope(n)}` } }
-      : { type: "attachment", timestamp: "2026-10-08T00:00:00.000Z", attachment: { type: "queued_command", commandMode: "prompt", prompt: envelope(n), origin: origin(n) } })
-      + "\n" + JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `handled ${n}` }] } });
-    writeFileSync(path, `${Array.from({ length: 120 }, (_, n) => n % 3 === 0 ? peer(n) : claudeTurn(n)).join("\n")}\n`);
-    const seen: string[] = [];
-    let page = transcriptPage("claude-transcript", path);
-    for (let pages = 0; ; pages++) {
-      expect(pages).toBeLessThan(20);
-      seen.unshift(...texts(page.turns));
-      if (!page.cursor) break;
-      page = transcriptPage("claude-transcript", path, { before: page.cursor });
-    }
-    expect(new Set(seen).size).toBe(seen.length);
-    expect(seen.filter((text) => text.startsWith("reply ")).length).toBe(40);
-    expect(seen.filter((text) => text.startsWith("prompt ")).length).toBe(80);
-  });
-
   it("titles a background task that ends a prompt after the one that started it, live and cold alike", () => {
     const root = temp();
     const path = join(root, "omo.jsonl");
@@ -1557,226 +1466,4 @@ it("expands inherited Codex tool output without exposing output discarded by a b
     mkdirSync(parent);
     expect(transcriptToolOutput("codex-transcript", leaf, "current", home)).toBe("current output");
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
-
-describe("Agy native ledger through shared paging", () => {
-  let root: string, path: string, db: Database;
-  const row = (step_index: number, type: string, content = "", extra = {}) => JSON.stringify({ step_index, type, status: "DONE", created_at: "2026-01-01T00:00:00Z", content, ...extra }) + "\n";
-  const add = (index: number, type: string, content = "", extra = {}) => {
-    db.query("INSERT OR REPLACE INTO steps VALUES (?)").run(index);
-    appendFileSync(path, row(index, type, content, extra));
-  };
-  const page = () => transcriptPage("agy-transcript", path);
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "herdr-agy-unit-"));
-    const session = "00000000-0000-4000-8000-000000000001";
-    path = join(root, "brain", session, ".system_generated", "logs", "transcript_full.jsonl");
-    mkdirSync(join(path, ".."), { recursive: true });
-    mkdirSync(join(root, "conversations"));
-    db = new Database(join(root, "conversations", `${session}.db`));
-    db.exec("CREATE TABLE steps(idx INTEGER PRIMARY KEY)");
-    writeFileSync(path, "");
-    forgetTranscriptState();
-  });
-  afterEach(() => { db.close(); forgetTranscriptState(); rmSync(root, { recursive: true, force: true }); });
-  it("tracks native turn boundaries without treating each DONE tool step as completion", () => {
-    expect(page().activity).toBe("idle");
-    // Agy 1.3.3's captured native sequence: user, context, planner call, result,
-    // context, another call/result, then the tool-free final planner answer.
-    add(0, "USER_INPUT", "fictional request");
-    add(1, "EPHEMERAL_MESSAGE", "hidden context");
-    expect(page().activity).toBe("working");
-    add(2, "PLANNER_RESPONSE", "", { thinking: "saved reasoning", tool_calls: [{ name: "run_command", args: { CommandLine: "echo fiction" } }] });
-    add(3, "GENERIC", "fictional output");
-    add(4, "EPHEMERAL_MESSAGE", "hidden context");
-    expect(page().activity).toBe("working");
-    expect(JSON.stringify(page().turns)).not.toContain("saved reasoning");
-    add(5, "PLANNER_RESPONSE", "More work", { tool_calls: [{ name: "view_file", args: { AbsolutePath: "/fiction.txt" } }] });
-    add(6, "GENERIC", "another output");
-    expect(page().activity).toBe("working");
-    add(7, "PLANNER_RESPONSE", "Finished", { tool_calls: [] });
-    expect(page().activity).toBe("idle");
-    add(8, "GENERIC", "late result");
-    add(9, "EPHEMERAL_MESSAGE", "late context");
-    expect(page().activity).toBe("idle");
-    add(10, "USER_INPUT", "next turn");
-    expect(page().activity).toBe("working");
-    // Rewind the new prompt; completion of the retained turn still clears activity.
-    db.exec("DELETE FROM steps WHERE idx >= 10");
-    expect(page().activity).toBe("idle");
-    forgetTranscriptState();
-    expect(page().activity).toBe("idle");
-  });
-  it("does not complete activity from a partial, unadmitted or unfinished planner answer", () => {
-    add(0, "USER_INPUT", "one");
-    add(1, "PLANNER_RESPONSE", "", { thinking: "saved reasoning" });
-    expect(page().activity).toBe("working");
-    add(2, "PLANNER_RESPONSE", "unfinished", { status: "RUNNING" });
-    expect(page().activity).toBe("working");
-    db.exec("INSERT INTO steps VALUES (3)");
-    const final = row(3, "PLANNER_RESPONSE", "complete");
-    appendFileSync(path, final.slice(0, -2));
-    expect(page().activity).toBe("working");
-    appendFileSync(path, final.slice(-2));
-    expect(page().activity).toBe("idle");
-    appendFileSync(path, row(4, "USER_INPUT", "export ahead of DB"));
-    expect(page().activity).toBe("idle");
-    db.exec("INSERT INTO steps VALUES (4)");
-    expect(page().activity).toBe("working");
-    forgetTranscriptState();
-    expect(page().activity).toBe("working");
-  });
-  it("renders native messages, multiple planner calls and independent results without guessed pairing", () => {
-    add(0, "USER_INPUT", "<USER_REQUEST>Keep <USER_REQUEST>literal</USER_REQUEST> tags</USER_REQUEST>\n<ADDITIONAL_METADATA>hidden</ADDITIONAL_METADATA>");
-    add(1, "EPHEMERAL_MESSAGE", "hidden context");
-    add(2, "PLANNER_RESPONSE", "Checking", { tool_calls: [{ name: "run_command", args: { CommandLine: "echo fiction" } }, { name: "view_file", args: { AbsolutePath: "/fiction.txt" } }] });
-    add(3, "GENERIC", "independent output");
-    add(4, "CHECKPOINT", "not a result");
-    add(5, "USER_INPUT", "next");
-    const turns = page().turns;
-    expect(turns[0]!.parts).toEqual([{ kind: "text", text: "Keep <USER_REQUEST>literal</USER_REQUEST> tags" }]);
-    expect(turns[1]!.parts.map((p) => p.kind === "tool" ? [p.name, p.summary, p.output] : p.kind === "text" ? p.text : p.kind)).toEqual([
-      "Checking", ["run_command", "echo fiction", ""], ["view_file", "/fiction.txt", ""], ["Tool output", "Step 3", "independent output"],
-    ]);
-    expect(turns[2]!.role).toBe("user");
-  });
-  it("keeps paging and refs stable on append, then rejects them on a DB-only idle rewind", () => {
-    for (let i = 0; i < 80; i++) { add(i * 2, "USER_INPUT", `prompt ${i}`); add(i * 2 + 1, "GENERIC", "x".repeat(5000)); }
-    const first = page();
-    expect(first.cursor).not.toBeNull();
-    const older = transcriptPage("agy-transcript", path, { before: first.cursor! });
-    const tool = first.turns.flatMap((t) => t.parts).find((p) => p.kind === "tool")!;
-    if (tool.kind !== "tool") throw new Error("missing result");
-    expect(transcriptToolOutput("agy-transcript", path, tool.output_ref!)).toBe("x".repeat(5000));
-    add(160, "USER_INPUT", "append");
-    expect(page().history_id).toBe(first.history_id);
-    expect(transcriptPage("agy-transcript", path, { before: first.cursor! })).toEqual(older);
-    db.exec("DELETE FROM steps WHERE idx >= 4");
-    const rewound = page();
-    expect(rewound.turns).toHaveLength(4);
-    expect(rewound.history_id).not.toBe(first.history_id);
-    expect(() => transcriptPage("agy-transcript", path, { before: first.cursor! })).toThrow(HistoryChanged);
-    expect(transcriptToolOutput("agy-transcript", path, tool.output_ref!)).toBeNull();
-    forgetTranscriptState();
-    expect(page().turns).toEqual(rewound.turns.map((turn) => ({ ...turn, parts: turn.parts.map((part) => part.kind === "tool" ? { ...part, output_ref: expect.any(String) } : part) })));
-  });
-  it("replays repeated/backward indices and allows database-only rows", () => {
-    add(0, "USER_INPUT", "one"); add(1, "PLANNER_RESPONSE", "old");
-    db.query("INSERT INTO steps VALUES (?)").run(2);
-    add(3, "USER_INPUT", "two"); add(4, "PLANNER_RESPONSE", "discard");
-    const before = page();
-    add(3, "USER_INPUT", "replacement");
-    expect(page().turns.map((t) => t.parts[0])).toEqual([{ kind: "text", text: "one" }, { kind: "text", text: "old" }, { kind: "text", text: "replacement" }]);
-    const revision = page().history_id;
-    expect(revision).not.toBe(before.history_id);
-    add(4, "PLANNER_RESPONSE", "new");
-    expect(page().history_id).toBe(revision);
-    add(3, "USER_INPUT", "equal repeat");
-    expect(page().history_id).not.toBe(revision);
-    const warm = page().turns;
-    forgetTranscriptState();
-    expect(page().turns).toEqual(warm);
-  });
-  it("ignores an incomplete tail and does not settle a running row", () => {
-    add(0, "USER_INPUT", "one");
-    db.query("INSERT INTO steps VALUES (1)").run();
-    const text = row(1, "PLANNER_RESPONSE", "complete");
-    appendFileSync(path, text.slice(0, -3));
-    expect(page().turns).toHaveLength(1);
-    appendFileSync(path, text.slice(-3));
-    expect(page().turns).toHaveLength(2);
-    add(2, "PLANNER_RESPONSE", "unfinished", { status: "RUNNING" });
-    expect(JSON.stringify(page().turns)).not.toContain("unfinished");
-    add(2, "PLANNER_RESPONSE", "finished");
-    expect(JSON.stringify(page().turns)).toContain("finished");
-  });
-  it("admits a ledger tail when the DB catches up without changing older cursors", () => {
-    add(0, "USER_INPUT", "first");
-    const initial = page();
-    appendFileSync(path, row(1, "PLANNER_RESPONSE", "lagged"));
-    expect(page().turns).toHaveLength(1);
-    db.exec("INSERT INTO steps VALUES (1)");
-    const caughtUp = page();
-    expect(caughtUp.history_id).toBe(initial.history_id);
-    expect(caughtUp.turns).toHaveLength(2);
-    add(2, "PLANNER_RESPONSE", "partial", { status: "RUNNING" });
-    const running = page();
-    add(2, "PLANNER_RESPONSE", "complete");
-    expect(page().history_id).toBe(running.history_id);
-    expect(transcriptPage("agy-transcript", path, { from: `${initial.history_id}:0` }).turns).toHaveLength(2);
-  });
-  it("never resurrects an observed rewind when replacement DB indices precede their ledger rows", () => {
-    add(0, "USER_INPUT", "kept"); add(1, "GENERIC", "removed".repeat(1000));
-    const before = page();
-    db.exec("DELETE FROM steps WHERE idx=1");
-    const cut = page();
-    db.exec("INSERT INTO steps VALUES (1)");
-    expect(page().turns).toEqual(cut.turns);
-    expect(page().history_id).toBe(cut.history_id);
-    add(1, "GENERIC", "replacement");
-    expect(JSON.stringify(page().turns)).toContain("replacement");
-    expect(JSON.stringify(page().turns)).not.toContain("removed");
-    const part = before.turns[1]!.parts[0]!;
-    if (part.kind !== "tool") throw new Error("missing tool");
-    expect(transcriptToolOutput("agy-transcript", path, part.output_ref!)).toBeNull();
-  });
-  it("does not hide later turns behind an unfinished or unknown-status historical row", () => {
-    add(0, "USER_INPUT", "first");
-    add(1, "GENERIC", "unfinished", { status: "UNKNOWN" });
-    expect(page().turns).toHaveLength(1);
-    add(2, "USER_INPUT", "later"); add(3, "PLANNER_RESPONSE", "answer");
-    expect(page().turns.map(t => t.parts[0])).toEqual([
-      { kind: "text", text: "first" }, { kind: "text", text: "later" }, { kind: "text", text: "answer" },
-    ]);
-  });
-  it("uses the same assistant boundaries in full and paged replay around a skipped user row", () => {
-    add(0, "USER_INPUT", "first"); add(1, "PLANNER_RESPONSE", "before");
-    add(2, "USER_INPUT", "hidden", { status: "UNKNOWN" });
-    add(3, "PLANNER_RESPONSE", "after");
-    const full = parseAgyTranscript(row(0, "USER_INPUT", "first") + row(1, "PLANNER_RESPONSE", "before")
-      + row(2, "USER_INPUT", "hidden", { status: "UNKNOWN" }) + row(3, "PLANNER_RESPONSE", "after"));
-    expect(page().turns).toEqual(full);
-    expect(full).toHaveLength(2);
-  });
-  it("continues a bounded cold scan on the next poll", () => {
-    add(0, "USER_INPUT", "start");
-    for (let i=1; i<=34; i++) add(i, "EPHEMERAL_MESSAGE", "x".repeat(1024 * 1024));
-    add(35, "USER_INPUT", "end");
-    expect(page).toThrow(ConversationUnavailable);
-    expect(page().turns.at(-1)!.parts[0]).toEqual({ kind: "text", text: "end" });
-  });
-  it("preserves standalone literal user wrapper text", () => {
-    add(0, "USER_INPUT", "<USER_REQUEST>literal</USER_REQUEST>");
-    expect(page().turns[0]!.parts[0]).toEqual({ kind: "text", text: "<USER_REQUEST>literal</USER_REQUEST>" });
-  });
-  it.skipIf(process.platform === "win32")("canonicalizes held locks and never chooses among sessions or unheld files", () => {
-    const presence = join(root, "presence"); mkdirSync(presence);
-    const one = join(presence, "00000000-0000-4000-8000-000000000001.lock");
-    const two = join(presence, "00000000-0000-4000-8000-000000000002.lock");
-    writeFileSync(one, ""); writeFileSync(two, "");
-    expect(agyStoreFromLocks([])).toBeNull();
-    expect(agyStoreFromLocks([one, two])).toBeNull();
-    expect(agyStoreFromLocks([one])?.path).toBe(path);
-    const alias = join(root, "alias"); symlinkSync(presence, alias);
-    // Alias a parent of presence, preserving the native held-path shape.
-    const link = join(root, "linked-root"); symlinkSync(root, link);
-    expect(agyStoreFromLocks([join(link, "presence", one.split("/").at(-1)!)])?.path).toBe(path);
-  });
-  it("distinguishes unreadable database from verified empty history", () => {
-    add(0, "USER_INPUT", "one");
-    page();
-    db.exec("DROP TABLE steps");
-    expect(page).toThrow(ConversationUnavailable);
-  });
-  it("falls back when the transcript path cannot be inspected", async () => {
-    const loop = join(root, "loop"); symlinkSync(loop, loop);
-    const pane = { pane_id: "agy-pane", cwd: root, agent: "agy" } as HerdrPane;
-    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session: "test", path: loop, pid: 2, started: "test" });
-    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } } as never);
-    try {
-      await expect(paneTranscript(pane.pane_id, undefined, { panes: [pane] } as SessionSnapshot)).rejects.toMatchObject({
-        name: "ConversationUnavailable", message: "transcript_missing",
-      });
-    } finally { store.mockRestore(); rpc.mockRestore(); }
-  });
 });

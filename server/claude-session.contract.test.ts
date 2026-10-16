@@ -7,7 +7,7 @@ import { forgetTranscriptState } from "./conversation.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 import { startFakePushService } from "./push.fake.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
-import type { ConversationResponse, HerdrPane, OmoActivity, PanePlan, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
+import type { ConversationResponse, HerdrPane, OmoActivity, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 
 // Real foreground processes and native PID records, without hooks or a model request.
 const root = mkdtempSync(join(tmpdir(), "herdr-claude-session-"));
@@ -159,12 +159,6 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Polls `check` for up to 10 s, then asserts it: the server answers what it knows now, and knows more later. */
-async function until(check: () => Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100 && !(await check()); attempt++) await Bun.sleep(100);
-  expect(await check()).toBe(true);
-}
-
 async function read(paneId: string): Promise<ConversationResponse> {
   const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`);
   expect(response.status).toBe(200);
@@ -191,6 +185,7 @@ it.skipIf(!NATIVE)("lists a Claude pane's subagents, counts the running ones and
     return snapshot.panes.find((entry) => entry.pane_id === paneId)?.background_tasks;
   };
   const frames = await Frames.connect(server.port);
+  const countedFrame = frames.wait((frame) => frame.type === "pane-status" && frame.pane_id === second.pane && frame.background_tasks === 1);
   const folder = join(project, SECOND, "subagents");
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, "agent-a1.meta.json"), JSON.stringify({ agentType: "reviewer", description: "Review the parser", toolUseId: "toolu_a1", requestShape: "background" }));
@@ -201,13 +196,9 @@ it.skipIf(!NATIVE)("lists a Claude pane's subagents, counts the running ones and
   try {
     const subscribed = await fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: device.subscription, alerts: { input: true, done: "always" } }) });
     expect(subscribed.status).toBe(204);
-    // asked: the server finds the pane's transcript itself. Its background lookup may already have come up empty
-    // (herdr busy or late under load), which it does not repeat for a few seconds: the list follows once it looks again,
-    // as the client's own retries see it
-    await until(async () => (await tasks(second.pane)).tasks.some((task) => task.id === "a1" && task.status === "running"));
+    // asked first, before the server has had a snapshot to look for the pane's transcript with: it finds it itself
     expect((await tasks(second.pane)).tasks).toMatchObject([{ id: "a1", status: "running" }]);
-    // from the first frame: the count may have been pushed while the list was polled
-    await frames.wait((frame) => frame.type === "pane-status" && frame.pane_id === second.pane && frame.background_tasks === 1, 0);
+    await countedFrame;
     expect(await counted(second.pane)).toBe(1);
     expect(await tasks(second.pane)).toMatchObject({ tasks: [{ id: "a1", title: "Review the parser", category: "reviewer", status: "running" }], runs: [] });
     // a pane with no subagents has no count and no list
@@ -238,7 +229,7 @@ it.skipIf(!NATIVE)("lists a Claude pane's subagents, counts the running ones and
     await herdrRpc("pane.report_agent", { pane_id: first.pane, source: "manual", agent: "claude", state: "idle" });
     device.stop();
   }
-}, 25_000);
+}, 15_000);
 
 /** Each hold owns its pane, transcript and bridge, so running one test never needs an earlier one. */
 async function backgroundTurn(taskId: string) {
@@ -342,37 +333,6 @@ it.skipIf(!NATIVE)("lets go of a turn whose work ended when no turn follows, wit
     expect((await turn.shown())?.background_wait).toBeUndefined();
   } finally { await turn.close(); }
 }, 15_000);
-it.skipIf(!NATIVE)("reads a Claude pane's task list as its plan, and pushes its progress without a status", async () => {
-  const base = `http://127.0.0.1:${server.port}`;
-  const plan = async (paneId: string): Promise<PanePlan> => await (await fetch(`${base}/api/pane/plan?pane_id=${encodeURIComponent(paneId)}`)).json();
-  const summary = async (paneId: string): Promise<unknown> => {
-    const { snapshot } = await (await fetch(`${base}/api/session`)).json() as { snapshot: { panes: { pane_id: string; plan?: unknown }[] } };
-    return snapshot.panes.find((entry) => entry.pane_id === paneId)?.plan;
-  };
-  const path = join(project, `${FIRST}.jsonl`);
-  const call = (id: string, name: string, input: unknown, answer: unknown, content: string): string => [
-    { type: "assistant", timestamp: new Date().toISOString(), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } },
-    { type: "user", timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] }, toolUseResult: answer },
-  ].map((entry) => JSON.stringify(entry)).join("\n");
-  const frames: ServerMessage[] = [];
-  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
-  socket.onmessage = (event) => { frames.push(JSON.parse(String(event.data))); };
-  await new Promise<void>((resolve, reject) => { socket.onopen = () => resolve(); socket.onerror = () => reject(new Error("no socket")); });
-  try {
-    // a session that made no task has no plan
-    expect((await plan(first.pane)).plan).toBeNull();
-    appendFileSync(path, `\n${call("toolu_p1", "TaskCreate", { subject: "Read", activeForm: "Reading" }, { task: { id: "1", subject: "Read" } }, "Task #1 created successfully: Read")}\n${call("toolu_p2", "TaskCreate", { subject: "Write" }, { task: { id: "2", subject: "Write" } }, "Task #2 created successfully: Write")}\n${call("toolu_p3", "TaskUpdate", { taskId: "2", addBlockedBy: ["1"] }, { success: true, taskId: "2", updatedFields: ["blockedBy"] }, "Updated task #2 blockedBy")}\n`);
-    await until(async () => JSON.stringify(await summary(first.pane)) === JSON.stringify({ done: 0, total: 2, current: null }));
-    expect((await plan(first.pane)).plan?.steps.map((step) => `${step.id}:${step.status}:${step.blocked_by.join(",")}`)).toEqual(["1:pending:", "2:pending:1"]);
-    appendFileSync(path, `${call("toolu_p4", "TaskUpdate", { taskId: "1", status: "in_progress" }, { success: true, taskId: "1", updatedFields: ["status"] }, "Updated task #1 status")}\n`);
-    await until(async () => frames.some((frame) => frame.type === "pane-status" && frame.pane_id === first.pane && frame.plan?.current === "Reading"));
-    // pushed as progress alone: the pane's status is the one it had
-    expect([...frames].reverse().find((frame) => frame.type === "pane-status" && frame.pane_id === first.pane && frame.plan !== undefined)).toMatchObject({ plan: { done: 0, total: 2, current: "Reading" }, agent_status: expect.stringMatching(/^(idle|done)$/) });
-  } finally {
-    socket.close();
-  }
-});
-
 it.skipIf(!NATIVE)("follows the current PID record without retaining a previous session", async () => {
   const path = join(root, ".claude", "sessions", `${first.pid}.json`);
   const previous = readFileSync(path, "utf8");
@@ -416,6 +376,24 @@ it.skipIf(!NATIVE)("keeps the existing Herdr hook path when no native PID record
   const response = await read(hooked.pane);
   expect(response.source).toBe("claude-transcript");
   expect(response.turns.at(-1)?.parts[0]).toMatchObject({ text: `Answer ${FIRST}` });
+});
+
+it.skipIf(!NATIVE)("uses terminal output while Claude's hooked foreground session is parked, then recovers after unpark", async () => {
+  const parked = await pane(FIRST);
+  await herdrRpc("pane.report_agent_session", {
+    pane_id: parked.pane, source: "herdr:claude", agent: "claude", seq: 1, agent_session_id: FIRST,
+  });
+  expect((await read(parked.pane)).source).toBe("claude-transcript");
+  const path = join(root, ".claude", "sessions", `${parked.pid}.json`);
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...record, parkedJobId: "afa630de" }));
+  // The parked job is not necessarily the one the terminal is now showing. Never use
+  // it (or another session in this cwd) to guess the background transcript.
+  expect(await read(parked.pane)).toEqual({ source: "scrollback", turns: [] });
+  writeFileSync(path, JSON.stringify({ ...record, procStart: "1", parkedJobId: "afa630de" }));
+  expect((await read(parked.pane)).source).toBe("claude-transcript");
+  writeFileSync(path, JSON.stringify(record));
+  expect((await read(parked.pane)).turns.at(-1)?.parts[0]).toMatchObject({ text: `Answer ${FIRST}` });
 });
 
 it.skipIf(!NATIVE)("uses each process's config dir before the server's store, with and without a hook", async () => {

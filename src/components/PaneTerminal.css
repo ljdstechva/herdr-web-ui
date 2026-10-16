@@ -54,6 +54,7 @@
    positioned against THIS, never against the stack — the composer and key bar
    below keep their rows no matter which lens is on */
 .terminal-surface {
+  --terminal-history-gutter: var(--space-3);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -88,15 +89,6 @@
    resized by this. */
 .terminal-stack.is-chat > .terminal-surface {
   overflow: hidden;
-}
-
-/* A phone's glass header lies over the stack's top (styles.css): the transcript reaches up under
-   it (ChatView.css), so the clip opens upward by that height and stays shut below and aside */
-@media (max-width: 768px) {
-  .terminal-stack.is-chat > .terminal-surface {
-    overflow: visible;
-    clip-path: inset(calc(-1 * var(--header-over, 0px)) 0 0 0);
-  }
 }
 
 /* no pane selected: the mount keeps its size (the fit needs it) but never paints, so its
@@ -158,13 +150,9 @@
    clicks pass through to the pty except where the review banner re-enables them */
 .terminal-banners {
   position: absolute;
-  /* below a phone's glass header when it lies over the chat (styles.css) */
-  top: calc(var(--space-2) + var(--header-over, 0px));
+  top: var(--space-2);
   right: var(--space-3);
-  /* one above the input line and the masked input, which float at --z-banner from a slot later
-     in the stack (TerminalInput.css): in a short pane a grown line reaches the grid's top, and the
-     banners and their buttons (Send/Discard, Dismiss) must stay over it */
-  z-index: calc(var(--z-banner) + 1);
+  z-index: var(--z-banner);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -198,37 +186,6 @@
 }
 
 /* not a fault: a lens herdr does not offer on this PC yet */
-/* the selection's quote button: a banner that is a button */
-.terminal-quote {
-  font-family: inherit;
-  color: var(--text);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out);
-}
-
-.terminal-quote svg {
-  width: var(--icon-size);
-  height: var(--icon-size);
-  flex: none;
-}
-
-.terminal-quote:hover {
-  border-color: var(--accent);
-}
-
-.terminal-quote:focus-visible {
-  outline: var(--ring);
-  outline-offset: var(--ring-offset);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .terminal-quote {
-    transition: none;
-  }
-}
-
 .terminal-banner-soon {
   border-color: var(--accent);
   color: var(--text);
@@ -362,3 +319,6 @@
 .terminal-stack.is-chat .pane-terminal {
   content-visibility: hidden;
 }
+
+.pane-terminal.has-viewport-tools { width: calc(100% - var(--terminal-history-gutter)); }
+@media (pointer: coarse) { .terminal-surface { --terminal-history-gutter: var(--space-6); } }

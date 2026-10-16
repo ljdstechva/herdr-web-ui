@@ -11,9 +11,8 @@
   flex: none;
   align-items: center;
   gap: var(--space-1);
-  height: var(--keybar-h);
-  /* the keys stand off the pane's edges rather than against its border */
-  padding: 0 var(--space-2);
+  height: calc(var(--keybar-h) + env(safe-area-inset-bottom, 0px));
+  padding: 0 0 env(safe-area-inset-bottom, 0px);
   border-top: var(--hairline) solid var(--border);
   background: var(--bg-panel);
   overflow-x: auto;
@@ -24,14 +23,6 @@
 
 .key-bar::-webkit-scrollbar {
   display: none;
-}
-
-/* the bar at the bottom of the screen (KeyBar.tsx) keeps clear of the home indicator, though
-   less than the whole safe area: the bar's own padding around its keys is part of that room,
-   as the composer's is (Composer.css) */
-.key-bar.is-at-screen-bottom {
-  height: calc(var(--keybar-h) + max(0px, env(safe-area-inset-bottom, 0px) - var(--space-2)));
-  padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--space-2)));
 }
 
 .key {
@@ -79,11 +70,6 @@
   color: var(--text-strong);
 }
 
-/* a key shows its press in its own colours, not with the dim other buttons take (styles.css) */
-.key:active {
-  opacity: 1;
-}
-
 @media (pointer: coarse), (max-width: 768px) {
   .key-bar {
     display: flex;
@@ -93,5 +79,13 @@
 @media (prefers-reduced-motion: reduce) {
   .key {
     transition: none;
+  }
+}
+
+/* a phone's bar sits under the key bar (styles.css "phone") and takes the home-indicator inset */
+@media (max-width: 640px) {
+  .key-bar {
+    height: var(--keybar-h);
+    padding-bottom: 0;
   }
 }

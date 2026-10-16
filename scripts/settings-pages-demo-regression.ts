@@ -3,7 +3,6 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
-import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
@@ -26,14 +25,6 @@ const openSettings = async (page: Page): Promise<void> => {
 /** The Settings entry of the current history state, as the app wrote it. */
 const entryOf = (page: Page): Promise<{ page: string | null; keyBar: boolean; depth: number } | null> =>
   page.evaluate(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] as never ?? null);
-/** Waits for the history to hold what a step left; a wait that runs out says what it holds instead, and how it came to. */
-const historyHolds = async (page: Page, step: string, holds: () => boolean): Promise<void> => {
-  try { await page.waitForFunction(holds); }
-  catch (error) {
-    const seen = await page.evaluate(() => ({ state: history.state as unknown, address: location.search, dialogs: document.querySelectorAll(".settings-dialog").length, trace: (window as unknown as { historyTrace?: string[] }).historyTrace?.slice(-40) }));
-    throw new Error(`${step}: the history never held it. ${JSON.stringify(seen, null, 1)}`, { cause: error });
-  }
-};
 /** Controls and text that reach past their card, and cards past the page's box: a row wider than its card is cut there. */
 const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body:not([hidden]), .settings-key-bar-body").evaluate((body) => {
   const edge = body.getBoundingClientRect();
@@ -144,9 +135,9 @@ try {
               // an opt-in palette is written to the document and saved, and its block of styles.css
               // reaches the page: its --term-* tokens read back as the theme xterm is given
               const palette = page.getByLabel("Colors", { exact: true });
-              await palette.selectOption("catppuccin");
-              await page.waitForFunction(() => document.documentElement.dataset.palette === "catppuccin");
-              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).palette), "catppuccin");
+              await palette.selectOption("forest");
+              await page.waitForFunction(() => document.documentElement.dataset.palette === "forest");
+              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).palette), "forest");
               const colors = await page.evaluate(() => {
                 const root = getComputedStyle(document.documentElement);
                 return {
@@ -156,8 +147,8 @@ try {
                   selectionBackground: root.getPropertyValue("--term-selection").trim(),
                 };
               });
-              assert.deepEqual(colors, terminalTheme("dark", "catppuccin"), "Catppuccin's --term-* tokens reach the page as the theme xterm is given");
-              if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `catppuccin-palette-${width}.png`), fullPage: true });
+              assert.deepEqual(colors, terminalTheme("dark", "forest"), "Forest's --term-* tokens reach the page as the theme xterm is given");
+              if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `forest-palette-${width}.png`), fullPage: true });
               // the pages after this one are checked on the default palette
               await palette.selectOption("amber");
               await page.waitForFunction(() => document.documentElement.dataset.palette === "amber");
@@ -240,31 +231,6 @@ try {
       const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await phone.addInitScript((settings) => localStorage.setItem("herdr-web-ui:settings", settings), JSON.stringify(SETTINGS));
-        // every move of the history, for historyHolds to tell when a step never lands
-        await phone.addInitScript(() => {
-          const trace: string[] = [];
-          (window as unknown as { historyTrace: string[] }).historyTrace = trace;
-          const note = (what: string): void => { trace.push(`${Math.round(performance.now())}ms ${what} ${JSON.stringify(history.state)} ${location.search}`); };
-          for (const method of ["go", "back", "pushState", "replaceState"] as const) {
-            const call = (history[method] as (...args: unknown[]) => void).bind(history);
-            (history as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => { note(`before ${method}(${method === "go" ? String(args[0]) : ""})`); call(...args); note(`after ${method}`); };
-          }
-          addEventListener("popstate", () => note("popstate"), true);
-          note("loaded");
-        });
-        // a load that was asked to hold its steps back keeps them until the app has drawn itself, as a
-        // slow device does, and notes whether Settings was ever shown
-        await phone.addInitScript(() => {
-          if (sessionStorage.getItem("hold-steps-back") !== "1") return;
-          sessionStorage.removeItem("hold-steps-back");
-          const page = window as unknown as { releaseStepsBack: () => void; settingsShown: boolean };
-          const go = history.go.bind(history);
-          const held: Array<() => void> = [];
-          history.go = (delta?: number) => { held.push(() => go(delta)); };
-          page.releaseStepsBack = () => { history.go = go; for (const step of held.splice(0)) step(); };
-          page.settingsShown = false;
-          new MutationObserver(() => { if (document.querySelector(".settings-dialog") !== null) page.settingsShown = true; }).observe(document, { childList: true, subtree: true });
-        });
         const page = await phone.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -301,7 +267,7 @@ try {
         await openSettingsPage(page, "Chat");
         await dialog.getByRole("button", { name: "Back to settings", exact: true }).tap();
         await list.waitFor();
-        await historyHolds(page, "the Back control to the list", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 1);
+        await page.waitForFunction(() => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 1);
         await page.goBack();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
         console.log("PASS the Back control in the dialog and the system Back button share one history");
@@ -312,64 +278,19 @@ try {
         await dialog.getByRole("button", { name: "Edit key bar", exact: true }).tap();
         await page.getByRole("button", { name: "Close settings", exact: true }).tap();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
-        await historyHolds(page, "the X from the key bar editor", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
         // and a new opening starts on the list, with one entry
         await openSettings(page);
         await list.waitFor();
-        await historyHolds(page, "a new opening", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 1);
-        // a reload keeps the history but not the dialog: its entries are stepped out of. The step lands
-        // when the browser gets to it, which on a slow device is after the app has drawn itself from an
-        // address that still names Settings: held back until then here, it must not show the dialog
+        await page.waitForFunction(() => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 1);
+        // a reload keeps the history but not the dialog: its entries are stepped out of
         await openSettingsPage(page, "Alerts");
-        await page.waitForFunction(() => new URLSearchParams(window.location.search).get("settings") === "alerts");
-        await page.evaluate(() => sessionStorage.setItem("hold-steps-back", "1"));
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
-        await page.evaluate(() => (window as unknown as { releaseStepsBack: () => void }).releaseStepsBack());
-        await historyHolds(page, "the reload", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload does not reopen Settings");
-        assert.equal(await page.evaluate(() => (window as unknown as { settingsShown: boolean }).settingsShown), false, "a reload never shows Settings, however late its step back lands");
         assert.deepEqual(errors, []);
         console.log("PASS the X from the key bar editor and a reload leave no Settings entry in the history");
-
-        // a link to Settings opens it, and a reload there closes it as well: the entry the reload
-        // steps back to is the one the link opened, whose address names Settings still
-        await page.goto(`${url}?settings=about`);
-        await dialog.getByRole("tabpanel", { name: "About", exact: true }).waitFor();
-        await historyHolds(page, "a link to Settings", () => (history.state as Record<string, { page: string; depth: number }> | null)?.["herdr-web-ui:settings"]?.page === "about");
-        await page.reload();
-        await page.locator(".conn-live").waitFor({ state: "attached" });
-        await historyHolds(page, "the reload on a linked Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined && !new URLSearchParams(window.location.search).has("settings"));
-        assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload closes the Settings a link opened");
-        assert.deepEqual(errors, []);
-        console.log("PASS a link to Settings opens it, and a reload there closes it");
-
-        // another script's entries pushed while Settings is open bury its entries: Back out of them
-        // closes Settings, and the next Back steps over the buried entries instead of opening them again
-        await page.goto(url);
-        await page.locator(".conn-live").waitFor({ state: "attached" });
-        await openSettings(page);
-        await openSettingsPage(page, "Terminal");
-        await dialog.getByRole("button", { name: "Edit key bar", exact: true }).tap();
-        await page.getByRole("dialog", { name: "Key bar", exact: true }).waitFor();
-        await historyHolds(page, "the key bar editor", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 3);
-        await page.evaluate(() => { history.pushState({ route: "markerless" }, ""); history.pushState({ route: "after-markerless" }, ""); });
-        await page.goBack();
-        await page.locator(".settings-dialog").waitFor({ state: "detached" });
-        await page.evaluate(() => {
-          const seen = window as unknown as { settingsShown: boolean };
-          seen.settingsShown = false;
-          new MutationObserver(() => { if (document.querySelector(".settings-dialog") !== null) seen.settingsShown = true; }).observe(document, { childList: true, subtree: true });
-        });
-        await page.goBack();
-        await historyHolds(page, "Back over the buried entries", () => {
-          const state = history.state as Record<string, unknown> | null;
-          return state?.["herdr-web-ui:settings"] === undefined && state?.["route"] === undefined;
-        });
-        assert.equal(await page.locator(".settings-dialog").count(), 0, "Back under an unrelated entry does not reopen Settings");
-        assert.equal(await page.evaluate(() => (window as unknown as { settingsShown: boolean }).settingsShown), false, "the buried entries are stepped over without showing Settings");
-        assert.deepEqual(errors, []);
-        console.log("PASS Back past an unrelated entry steps over the Settings entries it buried");
       } finally {
         await phone.close();
       }
@@ -423,29 +344,6 @@ try {
         await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
         assert.deepEqual(errors, []);
         console.log("PASS a window that changes width with Settings open keeps Back to the steps it shows");
-
-        // a link to a file and Settings opens the preview over Settings; a reload there closes
-        // Settings and keeps the file, and Back then steps out of both
-        const infra = panes.infra;
-        await page.goto(`${url}?ws=${infra.split(":")[0]}&pane=${encodeURIComponent(infra)}&file=README.md&settings=about`);
-        await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
-        await page.locator(".modal.file-viewer").waitFor();
-        await historyHolds(page, "a link to a file and Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:file-preview"] !== undefined);
-        await page.reload();
-        await page.locator(".conn-live").waitFor({ state: "attached" });
-        await page.locator(".modal.file-viewer").waitFor();
-        await historyHolds(page, "the reload on a preview over Settings", () => {
-          const address = new URLSearchParams(window.location.search);
-          return address.get("file") === "README.md" && !address.has("settings") && (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined;
-        });
-        assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload on a preview over Settings closes Settings");
-        assert.equal(await page.locator(".modal.file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
-        await page.goBack();
-        await page.locator(".modal.file-viewer").waitFor({ state: "detached" });
-        await historyHolds(page, "Back from the reloaded preview", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
-        assert.equal(await page.locator(".settings-dialog").count(), 0, "Back from the reloaded preview does not reopen Settings");
-        assert.deepEqual(errors, []);
-        console.log("PASS a reload on a preview opened over Settings closes Settings and keeps the file");
       } finally {
         await desktop.close();
       }

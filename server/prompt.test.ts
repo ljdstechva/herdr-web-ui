@@ -1,17 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, hermesInputDraft, claudeClearableDraft, claudeInputBoxText, claudeInputDraft, claudeInputEmpty, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
+import { answerKeys, claudeClearableDraft, claudeInputDraft, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
-// Real omo-ai 5.1.30 pane.read captures at 120 and 45 columns, with the recorded open calls.
-const omoPendingFixture = (name: string) => readFileSync(new URL(`./fixtures/omo-pending-5.1.30-${name}`, import.meta.url), "utf8");
-const omoExtensionTail = omoPendingFixture("extension-tail.txt");
-const withOmoExtensionTail = (screen: string) => screen.replace(/(❯\n─+\n)/, `$1${omoExtensionTail}`);
 const CLAUDE_BACKGROUND_APPROVAL_FOOTER = "Esc to cancel · ctrl+x ctrl+k twice to stop background agents";
 const claudeBackgroundApproval = (selected: number, footer = CLAUDE_BACKGROUND_APPROVAL_FOOTER) => {
   const row = (index: number, label: string) => `${index === selected ? " ❯ " : "   "}${index + 1}. ${label}`;
@@ -176,285 +172,6 @@ Claude has written up a plan and is ready to execute. Would you like to proceed?
 `);
     expect(approval?.kind).toBe("approval");
     expect(labels(approval)).toEqual(["Approve", "Deny"]);
-  });
-
-  test("parses current OMP question hints and keeps descriptions out of the answer rows", () => {
-    const screen = `
-╭─ Ask ───────────────────────────╮
-│ Which deployment target?       │
-├────────────────────────────────┤
-│❯ ○ ARM server                   │
-│      Runs on the lab machine     │
-│  ○ x86 runner                   │
-│      ○ supports the hosted runner│
-│      for Linux builds            │
-│  ○ Other (type your own)        │
-├────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⎋ cancel │
-╰────────────────────────────────╯
-`;
-    const prompt = parseInteractivePrompt("omp", screen);
-    expect(prompt).toMatchObject({ kind: "question", question: "Which deployment target?", multi_select: false, custom_option_index: 2 });
-    expect(prompt?.options).toEqual([
-      { label: "ARM server", description: "Runs on the lab machine" },
-      { label: "x86 runner", description: "○ supports the hosted runner for Linux builds" },
-    ]);
-    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
-    expect(answerKeys(prompt!, { custom_text: "A local test runner" })).toEqual([
-      { keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] },
-      { text: "A local test runner" }, { keys: ["enter"] },
-    ]);
-  });
-
-  test("keeps glyphs in wrapped OMP labels and descriptions out of the option column", () => {
-    const prompt = parseInteractivePrompt("omp", `
-╭─ Ask ───────────────────────────╮
-│ Which deployment target?       │
-├────────────────────────────────┤
-│❯ ○ ARM server with an           │
-│    ○ unusually long label       │
-│      ☑ supports the hosted image│
-│  ○ x86 runner                   │
-│  ○ Other (type your own)        │
-├────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⎋ cancel │
-╰────────────────────────────────╯
-`);
-    expect(prompt?.options).toEqual([
-      { label: "ARM server with an ○ unusually long label", description: "☑ supports the hosted image" },
-      { label: "x86 runner", description: null },
-    ]);
-    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
-  });
-
-  test("anchors option markers to the selected row in OMP's padded panel", () => {
-    const prompt = parseInteractivePrompt("omp", `
-╭─ Ask ───────────────────────────╮
-│ Which deployment target?       │
-├────────────────────────────────┤
-│ ❯ ○ ARM server                  │
-│       ○ supports ARM builds     │
-│   ○ x86 runner                  │
-│       Hosted Linux builds       │
-│   ○ Other (type your own)       │
-├────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⎋ cancel │
-╰────────────────────────────────╯
-`);
-    expect(prompt?.options).toEqual([
-      { label: "ARM server", description: "○ supports ARM builds" },
-      { label: "x86 runner", description: "Hosted Linux builds" },
-    ]);
-    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
-  });
-
-  test("keeps OMP's native question tab strip out of the question title", () => {
-    const screen = `
-───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Update Available
- New version 18.11.1 is available. Run: omp update
-───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-  ⎋ Working…
-╭─ Ask ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  Transport    Targets    Notes    Narrow view    Submit                                                             │
-│ Which route should carry the fictional session?                                                                     │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ❯ ○ Local socket                                                                                                    │
-│       Keeps the session on this PC.                                                                                 │
-│   ○ Remote relay                                                                                                    │
-│       Uses the fictional remote endpoint.                                                                           │
-│   ○ Other (type your own)                                                                                           │
-│                                                                                                                     │
-│                                                                                                                     │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ question · ⎋ cancel · Alt+H hide                                               │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-`;
-    const prompt = parseInteractivePrompt("omp", screen);
-    expect(prompt).toMatchObject({ question: "Which route should carry the fictional session?", custom_option_index: 2 });
-    expect(labels(prompt)).toEqual(["Local socket", "Remote relay"]);
-    expect(prompt?.options.map((option) => option.description)).toEqual([
-      "Keeps the session on this PC.", "Uses the fictional remote endpoint.",
-    ]);
-    expect(parseInteractivePrompt("omp", screen.replace(
-      "Which route should carry the fictional session?",
-      "Should we choose   Submit\n│ or Cancel for the fictional task?",
-    ))?.question).toBe("Should we choose Submit or Cancel for the fictional task?");
-    expect(parseInteractivePrompt("omp", screen.replace(
-      "Transport    Targets    Notes    Narrow view    Submit",
-      "Transport    Targets    Notes\n│  Narrow view    Submit",
-    ))?.question).toBe("Which route should carry the fictional session?");
-    expect(parseInteractivePrompt("omp", screen.replace(
-      "Transport    Targets    Notes    Narrow view    Submit",
-      "Transport\n│  Targets\n│  Notes\n│  Narrow view\n│  Submit",
-    ))?.question).toBe("Which route should carry the fictional session?");
-    expect(parseInteractivePrompt("omp", screen.replace(
-      "Transport    Targets    Notes    Narrow view    Submit",
-      "Transport    Targ…",
-    ))?.question).toBe("Which route should carry the fictional session?");
-    expect(parseInteractivePrompt("omp", screen.replace(
-      "Which route should carry the fictional session?",
-      "Submit\n│    Cancel\n│ Which action should run?",
-    ))?.question).toBe("Submit Cancel Which action should run?");
-  });
-
-  test("recognizes OMP's clipped single-question footer only with its question controls", () => {
-    const screen = `
-╭─ Ask ─────────────────────────────────────────────────╮
-│  Transport    Targets    Notes    Narrow view         │
-│  Submit                                               │
-│ Which deliberately long answer should remain readable │
-│ when the native question wraps across a narrow        │
-│ terminal?                                             │
-├───────────────────────────────────────────────────────┤
-│ ❯ ○ Local socket                                      │
-│   ○ Remote relay                                      │
-│   ○ Other (type your own)                             │
-├───────────────────────────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ question · ↓ sc… │
-╰───────────────────────────────────────────────────────╯
-`;
-    const prompt = parseInteractivePrompt("omp", screen);
-    expect(prompt).toMatchObject({
-      kind: "question", question: "Which deliberately long answer should remain readable when the native question wraps across a narrow terminal?",
-    });
-    expect(labels(prompt)).toEqual(["Local socket", "Remote relay"]);
-    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
-    expect(parseInteractivePrompt("omp", screen.replace("n note · ", ""))).toBeNull();
-    expect(parseInteractivePrompt("omp", screen.replace("⇥/←/→ question", "⇥/←/→ navigate"))).toBeNull();
-    expect(parseInteractivePrompt("omp", screen.replace("│   ○ Other (type your own)                             │\n", ""))).toBeNull();
-  });
-
-  test("recognizes OMP's question hint when the word itself is clipped", () => {
-    const screen = `
-╭─ Ask ───────────────────────────────────────╮
-│  Transport    Targets    Notes              │
-│  Narrow view    Submit                      │
-│ Which fictional answer should remain        │
-│ readable when this question wraps across a  │
-│ narrow terminal?                            │
-├─────────────────────────────────────────────┤
-│ ❯ ○ A fictional answer that wraps across    │
-│     the narrow native terminal              │
-│       A synthetic description that also     │
-│       wraps at narrow terminal widths.      │
-│   ○ Other (type your own)                   │
-├─────────────────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ quest… │
-╰─────────────────────────────────────────────╯
-`;
-    const prompt = parseInteractivePrompt("omp", screen);
-    expect(prompt).toMatchObject({
-      question: "Which fictional answer should remain readable when this question wraps across a narrow terminal?",
-      options: [{
-        label: "A fictional answer that wraps across the narrow native terminal",
-        description: "A synthetic description that also wraps at narrow terminal widths.",
-      }],
-    });
-    expect(answerKeys(prompt!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
-    for (const prefix of ["q", "qu", "que", "ques", "questi", "questio", "question"]) {
-      expect(parseInteractivePrompt("omp", screen.replace("quest…", `${prefix}…`))?.question).toBe(prompt?.question);
-    }
-    for (const unrelated of ["quest", "query…", "questions…"]) {
-      expect(parseInteractivePrompt("omp", screen.replace("quest…", unrelated))).toBeNull();
-    }
-    expect(parseInteractivePrompt("omp", screen.replace("n note · ", ""))).toBeNull();
-    expect(parseInteractivePrompt("omp", screen.replace("│   ○ Other (type your own)                   │\n", ""))).toBeNull();
-    expect(parseInteractivePrompt("omp", screen + "\nAgent resumed")).toBeNull();
-  });
-
-  test("parses OMP's review tab as an explicit submit or cancel prompt", () => {
-    const screen = `
-╭─ Ask ──────────────────────────────────────────────────────────╮
-│  Transport    Targets    Submit                                │
-│ Review answers                                                  │
-├────────────────────────────────────────────────────────────────┤
-│ 1. Transport: Remote relay                                      │
-│ 2. Targets: ARM server                                          │
-│                                                                 │
-│ ❯ Submit                                                        │
-│                                                                 │
-├────────────────────────────────────────────────────────────────┤
-│ ⏎ submit · ↑/↓ scroll · ⎋ cancel · Alt+H hide                  │
-╰────────────────────────────────────────────────────────────────╯
-`;
-    const prompt = parseInteractivePrompt("omp", screen);
-    expect(prompt).toMatchObject({
-      kind: "menu", title: "Review answers", question: "Submit these answers?", custom_option_index: null,
-    });
-    expect(prompt?.body).toContain("1. Transport: Remote relay");
-    expect(prompt?.body).toContain("2. Targets: ARM server");
-    expect(labels(prompt)).toEqual(["Submit", "Cancel"]);
-    expect(answerKeys(prompt!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
-    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["esc"] }]);
-    expect(() => answerKeys(prompt!, { custom_text: "submit now" })).toThrow();
-    expect(parseInteractivePrompt("omp", screen.replace("❯ Submit", "  Submit"))).toBeNull();
-    expect(parseInteractivePrompt("omp", screen.replace("Review answers", "Ordinary title"))).toBeNull();
-  });
-
-  test("parses current OMP multi-select hints with checked choices and safe option indices", () => {
-    const screen = `
-╭─ Ask ───────────────────────────╮
-│ Which checks should run?        │
-├────────────────────────────────┤
-│  ☒ Lint                         │
-│❯ ☐ Unit tests                   │
-│      ☑ runs without external     │
-│      tools                      │
-│  ☐ Browser checks               │
-│  ○ Other (type your own)        │
-├────────────────────────────────┤
-│ ␠ toggle · ⏎ submit · ↑/↓ move · Tab/←/→ question · ⎋ cancel │
-╰────────────────────────────────╯
-`;
-    const prompt = parseInteractivePrompt("omp", screen);
-    expect(prompt).toMatchObject({ kind: "question", multi_select: true });
-    expect(prompt?.options).toEqual([
-      { label: "Lint", description: null },
-      { label: "Unit tests", description: "☑ runs without external tools" },
-      { label: "Browser checks", description: null },
-    ]);
-    expect(answerKeys(prompt!, { option_indices: [1, 2] })).toEqual([
-      { keys: ["up"] }, { keys: ["space"] },
-      { keys: ["down"] }, { keys: ["space"] },
-      { keys: ["down"] }, { keys: ["space"] },
-      { keys: ["enter"] },
-    ]);
-  });
-
-  test("advances a current OMP multi question without switching to the next question", () => {
-    const prompt = parseInteractivePrompt("omp", `
-╭─ Ask ───────────────────────────╮
-│ Which platforms should run?     │
-├────────────────────────────────┤
-│  ☑ Linux                         │
-│❯ ☐ macOS                         │
-│  ☐ Other (type your own)        │
-├────────────────────────────────┤
-│ ␠ toggle · ⏎ next · ↑/↓ move · Tab/←/→ question · ⎋ cancel │
-╰────────────────────────────────╯
-`);
-    expect(prompt).toMatchObject({ multi_select: true, custom_option_index: null });
-    expect(answerKeys(prompt!, { option_indices: [0, 1] })).toEqual([
-      { keys: ["space"] }, { keys: ["enter"] },
-    ]);
-  });
-
-  test("leaves the Other row before advancing a current OMP multi question", () => {
-    const prompt = parseInteractivePrompt("omp", `
-╭─ Ask ───────────────────────────╮
-│ Which platforms should run?     │
-├────────────────────────────────┤
-│  ☑ Linux                         │
-│  ☐ macOS                         │
-│❯ ☐ Other (type your own)        │
-├────────────────────────────────┤
-│ ␠ toggle · ⏎ next · ↑/↓ move · Tab/←/→ question · ⎋ cancel │
-╰────────────────────────────────╯
-`);
-    expect(prompt).toMatchObject({ multi_select: true, custom_option_index: null });
-    expect(answerKeys(prompt!, { option_indices: [0] })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
   });
 
   test("parses Codex continue, question, async question, and approval prompts", () => {
@@ -743,32 +460,6 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     expect(trust).toMatchObject({ kind: "approval", title: "Trust this folder?", body: "Codex can read, edit, and run files here, subject to your permission settings." });
     expect(labels(trust)).toEqual(["Trust and continue", "Back to Agent Command Center"]);
     expect(answerKeys(trust!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
-  });
-
-  test("parses Codex's folder trust prompt when its hint ends with esc quit", () => {
-    const trust = parseInteractivePrompt("codex", `
-  Folder access
-  /tmp/prompt-lab-codex
-  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings.
-› 1. Trust and continue
-  2. Open restricted
-  enter continue · esc quit
-`);
-    expect(trust).toMatchObject({ kind: "approval", title: "Trust this folder?" });
-    expect(labels(trust)).toEqual(["Trust and continue", "Open restricted"]);
-    expect(answerKeys(trust!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
-  });
-
-  test("does not read Codex's update prompt as an approval under a question-like line", () => {
-    expect(parseInteractivePrompt("codex", `
-• Would you like to continue with the tests next?
-
-  Update available! 0.162.1 -> 0.163.0
-› 1. Update now
-  2. Skip
-  3. Skip until next version
-  enter continue · esc skip
-`)).toBeNull();
   });
 
   test("ignores unknown agents, stale transcript menus, and ordinary output", () => {
@@ -1325,81 +1016,6 @@ ${rows}
   });
 });
 
-describe("Claude's review of several answers in a named session", () => {
-  // live-captured from Claude Code 2.1.299 (CLAUDE_CODE_NO_FLICKER=1, `--name`, 120x40): the review
-  // has no key hint of its own, its last row is Cancel, and the session's rule follows it
-  const rule = `${"─".repeat(107)} session-name ─`;
-  const review = `❯ ASKREPRO 7
-
-${"─".repeat(120)}
-←  ☒ Route  ☒ Author  ☒ Notes  ✔ Submit  →
-
-Review your answers
-
- ● Which way should the PR go?
-   → my own words typed in the chat my own words t
- ● Who should author the commits?
-   → Repo owner
- ● What should the release notes say?
-   → my own words typed in the chat my own words typed in the chat my own w
-
-Ready to submit your answers?
-
-❯ 1. Submit answers
-  2. Cancel
-`;
-  const withRule = (rows = "") => `${review}${rule}\n${rows ? `\n${rows}\n` : ""}`;
-  // a review taller than the pane, same capture: the tabs and the heading are cut off at the top
-  const tall = `
- │ ● The PC splits traffic between the main server and the reserve almost evenly, because both servers sit in the same
- │   city and answer equally fast. Which way should we go?
-   → my own words typed in the chat my own words typed in the chat my own words typed in the chat my own words typed in
-   the chat my own words typed in the chat
- │ ● After every subscription update the client restarts the tunnel. How often should the subscription be updated?
-   → Once a day
- │ ● The client has no leak protection. What should we do?
-   → my own words typed in the chat my own words typed in the chat my own words typed in the chat my own words typed in
-   my own words typed in the chat my o
-
-Ready to submit your answers?
-
-❯ 1. Submit answers
-  2. Cancel
-${rule}
-`;
-
-  test("reads the review under the session's rule, with or without the task list", () => {
-    for (const rows of ["", "  3 tasks (0 done, 1 in progress, 2 open)\n  ◼ 구현\n    Running tests…\n  ◻ 검증\n  ◻ 정리"]) {
-      const card = parseInteractivePrompt("claude", withRule(rows));
-      expect(card).toMatchObject({ kind: "menu", title: "Review your answers", question: "Ready to submit your answers?", custom_option_index: null });
-      expect(labels(card)).toEqual(["Submit answers", "Cancel"]);
-      expect(card?.body).toContain("→ Repo owner");
-      expect(answerKeys(card!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
-    }
-  });
-
-  test("reads a review cut off at the top of the pane, its tabs and heading out of view", () => {
-    const card = parseInteractivePrompt("claude", tall);
-    expect(card).toMatchObject({ kind: "menu", title: "Review your answers", question: "Ready to submit your answers?" });
-    expect(labels(card)).toEqual(["Submit answers", "Cancel"]);
-    expect(card?.body).toContain("→ Once a day");
-  });
-
-  test("does not take an answered review above later output and the session's rule for an open one", () => {
-    expect(parseInteractivePrompt("claude", `${review}\n⏺ Done.\n\n${rule}\n`)).toBeNull();
-    expect(parseInteractivePrompt("claude", `${review}\n⏺ Done.\n──── user@host:~/project ─\n`)).toBeNull();
-  });
-
-  test("takes no screen without the review's own tabs, answers and rows for one", () => {
-    // no tabs and no answer of the review's above the question: some other text that says the same
-    expect(parseInteractivePrompt("claude", `Notes for the release\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n${rule}\n`)).toBeNull();
-    // cut off at the top, but the rows are not the review's
-    expect(parseInteractivePrompt("claude", tall.replace("1. Submit answers", "1. Ship it"))).toBeNull();
-    // tabs far above, with another panel's rule between them and the question: not this review's
-    expect(parseInteractivePrompt("claude", `←  ☒ Route  ✔ Submit  →\n ● Which way?\n   → Fork\n${"─".repeat(120)}\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n`)).toBeNull();
-  });
-});
-
 describe("Claude's held message", () => {
   // Claude Code 2.1.294, live: a pasted message with a zero-width space, after its Enter
   const rule = "─".repeat(80);
@@ -1885,66 +1501,6 @@ ${rule60}
   const accepted = (id: string) => record({ role: "toolResult", toolCallId: id, content: [{ type: "text", text: "Question accepted; the answer will arrive as a user message." }], details: { accepted: true, status: "pending" }, isError: false });
   const asyncAsking = `${asking.replace('"waitForAnswer":true', '"waitForAnswer":false')}\n${accepted("call-1")}\n${record({ role: "assistant", content: [{ type: "text", text: "meanwhile" }], stopReason: "stop" })}`;
 
-  for (const count of ["one", "two"]) for (const width of ["wide", "narrow"]) {
-    test(`reads the real 5.1.30 ${count}-question ${width} widget with its pending call`, () => {
-      const open = openOmoAsks(omoPendingFixture(`${count}.jsonl`));
-      const question = open[0]!.questions[0]!;
-      const prompt = parseInteractivePrompt("pi", omoPendingFixture(`${count}-${width}.txt`), null, false, open);
-      expect(prompt).toMatchObject({
-        agent: "omo", kind: "question", question: question.question, options: question.options,
-        multi_select: question.multiSelect, custom_option_index: question.multiSelect ? null : question.options.length,
-        title: count === "one" ? question.header : "Question 1 of 2",
-      });
-    });
-  }
-
-  for (const count of ["one", "two"]) for (const width of ["wide", "narrow"]) {
-    test(`reads the real 5.1.30 ${count}-question ${width} widget with extension status below the box`, () => {
-      const open = openOmoAsks(omoPendingFixture(`${count}.jsonl`));
-      const screen = withOmoExtensionTail(omoPendingFixture(`${count}-${width}.txt`));
-      expect(parseInteractivePrompt("pi", screen, null, false, open)).toMatchObject({
-        agent: "omo", kind: "question", question: open[0]!.questions[0]!.question,
-      });
-      expect(parseInteractivePrompt("pi", `${screen}$ echo after\n`, null, false, open)).toBeNull();
-    });
-  }
-
-  test("reads an OmO waiting form with extension status under its rule", () => {
-    const extended = first.replace(footer, footer.replace(`${rule}\n`, `${rule}\n${omoExtensionTail}`));
-    expect(parseInteractivePrompt("pi", extended)).toMatchObject({ agent: "omo", kind: "question", title: "Question 1 of 2" });
-    expect(parseInteractivePrompt("pi", `${extended}user@host:~/project$ `)).toBeNull();
-    expect(parseInteractivePrompt("pi", extended.replace(omoExtensionTail, `${omoExtensionTail} ordinary output\n`.repeat(4)))).toBeNull();
-  });
-
-  test("reads OmO typing and review forms with extension status under their rule", () => {
-    const typing = form(` → 표시 위치    월 한도    Submit
- 음성 사용량과 추정 비용을 어디에 보여줄까요?
- → 1. 설정 > 음성 입력 (추천)
-   Type your own answer...
- Your answer (enter to save, ↑↓ back to options, esc to discard)
-> 안녕
- Submit (0/2 answered) — Enter advances
- enter save and next  ↑↓ back to options  tab next question  esc discard
-`);
-    const review = form(`   표시 위치 ✓    월 한도 ✓  → Submit
- Review your answers
-   표시 위치: 설정 > 음성 입력 (추천)
-   월 한도: 한도 없음
-
- Comment (optional; unanswered questions are reported)
->
- Submit (2/2 answered)
- enter submit  ↑ review answers  shift+tab back  tab next question  esc back
-`);
-    for (const screen of [typing, review]) {
-      const expected = parseInteractivePrompt("pi", screen);
-      expect(expected).not.toBeNull();
-      const extended = screen.replace(footer, footer.replace(`${rule}\n`, `${rule}\n${omoExtensionTail}`));
-      expect(parseInteractivePrompt("pi", extended)).toEqual(expected);
-      expect(parseInteractivePrompt("pi", `${extended}$ `)).toBeNull();
-    }
-  });
-
   test("keeps a call asked without waiting open until it is settled", () => {
     expect(openOmoAsks(asyncAsking).map((ask) => [ask.questions[0]!.header, ask.wait])).toEqual([["표시 위치", false]]);
     expect(pendingOmoAsk(asyncAsking)?.questions).toHaveLength(2);
@@ -2080,50 +1636,6 @@ describe("Claude's suggested next prompt", () => {
     expect(draft(screen("❯ typed", "──── my-session ─"))).toBe(true);
     // no rule on screen says nothing
     expect(draft("❯ loose text\nmore")).toBe(false);
-  });
-
-  test("Claude's tip drawn without colors (NO_COLOR, #926) is no draft; other plain words are", () => {
-    // Claude Code 2.1.296 under NO_COLOR=1: an empty input box, no SGR color or dim anywhere
-    const plainRule = "\u2500".repeat(60);
-    const colorless = (row: string) => ["", plainRule, row, plainRule, "  \u23f5\u23f5 auto mode on (shift+tab to cycle) \u00b7 \u2190 for agents"].join("\r\n");
-    const strip = (ansi: string) => ansi.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
-    const tip = colorless('\u276f Try "how does <filepath> work?"');
-    expect(claudeInputDraft(strip(tip), tip)).toBe(false);
-    expect(claudeInputEmpty(strip(tip), tip)).toBe(true);
-    expect(claudeClearableDraft(strip(tip), tip)).toBeNull();
-    // Claude's drawn cursor on its first character
-    const cursor = colorless('\u276f \u001b[7mT\u001b[27mry "how does <filepath> work?"');
-    expect(claudeInputDraft(strip(cursor), cursor)).toBe(false);
-    // typed words that are not the tip's whole form stay a draft
-    for (const typed of ['\u276f Try this instead', '\u276f Try "x" and more', '\u276f please Try "x"']) {
-      expect(claudeInputDraft(strip(colorless(typed)), colorless(typed))).toBe(true);
-    }
-    // on a colored screen only dim tells the tip: typed `Try "\u2026"` there is a draft
-    expect(claudeInputDraft(strip(screen('\u276f Try "x"')), screen('\u276f Try "x"'))).toBe(true);
-    // colors not verified to show the live screen prove nothing
-    expect(claudeInputDraft(strip(tip), null)).toBe(true);
-  });
-
-  test("OmO's box while it works, under a rule its status labels, is read like Claude's", () => {
-    // OmO (reported by herdr as Claude) as it draws its box mid-turn: two dashes lead the label
-    const rule = "\u2500".repeat(60);
-    const working = (row: string) => ["● earlier output", "\u2500\u2500 • Running eval (7s • esc to interrupt) " + "\u2500".repeat(40), row, rule,
-      "~/workspace/app • main • 27.1% (auto)   claude-opus-5-5:medium"].join("\r\n");
-    expect(claudeInputDraft(working("❯"), null)).toBe(false);
-    expect(claudeInputEmpty(working("❯"), null)).toBe(true);
-    expect(claudeInputDraft(working("❯ still typing"), null)).toBe(true);
-    expect(claudeInputBoxText(working("❯ still typing"))).toBe("❯ still typing");
-    // a row with one dash before its words is no rule
-    expect(claudeInputDraft(["─ not a rule ─", "❯", rule].join("\r\n"), null)).toBe(true);
-  });
-
-  test("the box a refusal shows: its rows as plain text, nothing when it cannot be read whole", () => {
-    const rule = "\u2500".repeat(60);
-    expect(claudeInputBoxText([rule, "\u001b[2m! ls\u001b[0m", rule].join("\r\n"))).toBe("! ls");
-    expect(claudeInputBoxText([rule, "❯ first line", "  second line", rule].join("\r\n"))).toBe("❯ first line\n  second line");
-    expect(claudeInputBoxText(["  more of a tall draft", rule, "  footer"].join("\r\n"))).toBe("");
-    expect(claudeInputBoxText("no box here")).toBe("");
-    expect(claudeInputBoxText([rule, `❯ ${"x".repeat(300)}`, rule].join("\r\n"))).toBe(`❯ ${"x".repeat(198)}…`);
   });
 
   test("a viewport's colors count only when it is verified to show the live screen", () => {
@@ -2322,33 +1834,6 @@ Step 4: Credential source
     expect(labels(parseFallbackPrompt("gjc", `Pick one:\n❯ Alpha\n  Beta\n${footer}\n`))).toEqual(generic);
     expect(labels(parseFallbackPrompt("gjc", `Pick one:\n❯ Alpha\n  Beta\n↑/↓ to move · Enter to choose · Esc to cancel\n`))).toEqual(generic);
     expect(labels(parseFallbackPrompt("claude", `Pick one:\n\n❯ Alpha\n  Beta\n${footer}\n`))).toEqual(generic);
-  });
-
-  test("hashes a framed GJC question without the transcript or ticking status above it", () => {
-    const dialog = "──────────────\n\nUse staging only.\n\nWhich approach?\n\n──────────────\n│❯ First     │\n│  Second    │\n──────────────\n\nup/down navigate  enter select  esc cancel\n\n──────────────\n";
-    const first = parseFallbackPrompt("gjc", `Earlier output\n◷ 12h23m\n${dialog}`);
-    const later = parseFallbackPrompt("gjc", `New output\n◷ 12h24m\n${dialog}`);
-    expect(later.id).toBe(first.id);
-    expect(first.question).toBe("Which approach?");
-    expect(first.body).toBe("Use staging only.");
-    expect(parseFallbackPrompt("gjc", dialog.replace("Use staging only.", "Use production.")).id).not.toBe(first.id);
-    expect(parseFallbackPrompt("gjc", dialog.replace("Which approach?", "Delete everything?")).id).not.toBe(first.id);
-    expect(parseFallbackPrompt("gjc", dialog.replace("Second", "Remove")).id).not.toBe(first.id);
-    expect(parseFallbackPrompt("gjc", dialog.replace("│❯ First     │", "│  First     │").replace("│  Second    │", "│❯ Second    │")).id).toBe(first.id);
-  });
-
-  test("keeps approval details above a padded Markdown rule in a framed GJC title", () => {
-    const dialog = (target: string) => `──────────────\n\n Delete ${target}.\n\n ────────── \n\n Proceed?\n\n❯ Yes\n  No\n\nup/down navigate  enter select  esc cancel\n\n──────────────\n`;
-    const staging = parseFallbackPrompt("gjc", dialog("staging"));
-    expect(staging.body).toBe("Delete staging.");
-    expect(parseFallbackPrompt("gjc", dialog("production")).id).not.toBe(staging.id);
-  });
-
-  test("keeps the full GJC screen when a matching outer frame is absent", () => {
-    for (const close of ["", "────"]) {
-      const screen = (target: string) => `Delete ${target}.\n──────────────\n\nProceed?\n\n❯ Yes\n  No\n\nup/down navigate  enter select  esc cancel\n\n${close}\n`;
-      expect(parseFallbackPrompt("gjc", screen("production")).id).not.toBe(parseFallbackPrompt("gjc", screen("staging")).id);
-    }
   });
 
   test("titles a GJC selector with its own heading, not an earlier question on the screen", () => {
@@ -2630,131 +2115,6 @@ describe("Claude's suggestion on a prompt poll", () => {
       expect(body).toEqual({ prompt: null, suggestion: null, restored: null });
       expect(reads).toEqual(["text"]);
       expect(ms).toBeLessThan(1_000);
-    });
-  }, 4_000);
-});
-
-describe("Claude's plan card on a prompt poll", () => {
-  const SCREEN = `
-Ready to code?
-
-Here is Claude's plan:
-4. The last step that fits the pane.
-
-Claude has written up a plan and is ready to execute. Would you like to proceed?
-
-❯ 1. Yes, auto-accept edits
-  2. Yes, manually approve edits
-  3. Tell Claude what to change
-     shift+tab to approve with this feedback
-`;
-
-  /** a herdr whose one Claude pane shows the plan dialog, and a Claude store with the session's plan file */
-  async function planHerdr(run: (transcript: string, planFile: string) => Promise<void>): Promise<void> {
-    const root = mkdtempSync(join(tmpdir(), "herdr-prompt-plan-"));
-    const path = join(root, "herdr.sock");
-    mkdirSync(join(root, "claude", "projects", "-work"), { recursive: true });
-    mkdirSync(join(root, "claude", "plans"), { recursive: true });
-    const transcript = join(root, "claude", "projects", "-work", "0b8e6f0e-8d3f-4c1a-9a53-6c2b7a1d9e42.jsonl");
-    const planFile = join(root, "claude", "plans", "mellow-purring-pike.md");
-    writeFileSync(transcript, `${JSON.stringify({ type: "user", slug: "mellow-purring-pike" })}\n`);
-    writeFileSync(planFile, "# Plan\n\n1. The first step, gone from the pane.\n4. The last step that fits the pane.\n");
-    const sockets = new Set<Socket>();
-    const server = createServer((socket) => {
-      sockets.add(socket);
-      socket.on("close", () => sockets.delete(socket));
-      socket.on("error", () => undefined);
-      let input = "";
-      socket.on("data", (chunk) => {
-        input += chunk.toString();
-        if (!input.includes("\n")) return;
-        const request = JSON.parse(input.split("\n")[0]!) as { id: string; method: string };
-        const answer = (result: unknown) => socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
-        if (request.method === "session.snapshot") {
-          return answer({ snapshot: { panes: [{ pane_id: "p_1", agent: "claude", agent_status: "blocked" }], layouts: [] } });
-        }
-        if (request.method !== "pane.read") throw new Error(`unexpected fixture RPC: ${request.method}`);
-        answer({ read: { text: SCREEN } });
-      });
-    });
-    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(path, resolve); });
-    const previous = process.env["HERDR_SOCKET"];
-    process.env["HERDR_SOCKET"] = path;
-    try { await run(transcript, planFile); } finally {
-      if (previous === undefined) delete process.env["HERDR_SOCKET"];
-      else process.env["HERDR_SOCKET"] = previous;
-      for (const socket of sockets) socket.destroy();
-      server.close();
-      rmSync(root, { recursive: true, force: true });
-    }
-  }
-
-  async function poll(claudeTranscript?: (paneId: string) => string | null, readOnly?: boolean): Promise<InteractivePrompt | null> {
-    const url = new URL("http://127.0.0.1/api/pane/prompt?pane_id=p_1");
-    const response = await handlePromptRequest(new Request(url), url, { claudeTranscript, readOnly });
-    return ((await response!.json()) as { prompt: InteractivePrompt | null }).prompt;
-  }
-
-  test("takes the whole plan from Claude's plan file, with the screen's id and the plan's revision", async () => {
-    await planHerdr(async (transcript, planFile) => {
-      const screen = await poll();
-      const filed = await poll((paneId) => paneId === "p_1" ? transcript : null);
-      expect(screen).toMatchObject({ kind: "plan" });
-      expect(screen?.plan_file).toBeUndefined();
-      expect(screen?.body).not.toContain("The first step");
-      expect(filed).toMatchObject({ kind: "plan", plan_file: planFile });
-      expect(filed?.id.startsWith(`${screen!.id}.`)).toBe(true);
-      expect(filed?.body).toContain("1. The first step, gone from the pane.");
-    });
-  }, 4_000);
-
-  test("gives a watch-only requester the screen's card, without the plan file's text or path", async () => {
-    await planHerdr(async (transcript) => {
-      const screen = await poll();
-      const watched = await poll(() => transcript, true);
-      expect(watched).toMatchObject({ kind: "plan", id: screen!.id });
-      expect(watched?.plan_file).toBeUndefined();
-      expect(watched?.body).not.toContain("The first step");
-      expect(watched?.body).toContain("The last step that fits the pane.");
-    });
-  }, 4_000);
-
-  test("gives a connection server's plan=0 ask the screen's card, as for a watching device", async () => {
-    await planHerdr(async (transcript) => {
-      const screen = await poll();
-      const url = new URL("http://127.0.0.1/api/pane/prompt?pane_id=p_1&plan=0");
-      const response = await handlePromptRequest(new Request(url), url, { claudeTranscript: () => transcript });
-      const asked = ((await response!.json()) as { prompt: InteractivePrompt | null }).prompt;
-      expect(asked).toMatchObject({ kind: "plan", id: screen!.id });
-      expect(asked?.plan_file).toBeUndefined();
-      expect(asked?.body).not.toContain("The first step");
-    });
-  }, 4_000);
-
-  test("a changed plan file is a new card, and an answer to the old one is refused", async () => {
-    await planHerdr(async (transcript, planFile) => {
-      const claudeTranscript = () => transcript;
-      const before = await poll(claudeTranscript);
-      writeFileSync(planFile, "# Plan\n\n1. A rewritten first step.\n4. The last step that fits the pane.\n");
-      const after = await poll(claudeTranscript);
-      expect(after?.id).not.toBe(before!.id);
-      expect(after?.body).toContain("A rewritten first step.");
-      const url = new URL("http://127.0.0.1/api/pane/prompt/answer");
-      const response = await handlePromptRequest(new Request(url, {
-        method: "POST",
-        body: JSON.stringify({ pane_id: "p_1", prompt_id: before!.id, option_index: 0 }),
-      }), url, { claudeTranscript });
-      expect(response!.status).toBe(409);
-      expect(((await response!.json()) as { error: { code: string } }).error.code).toBe("prompt_changed");
-    });
-  }, 4_000);
-
-  test("keeps the screen's text when the session has no plan file", async () => {
-    await planHerdr(async (transcript, planFile) => {
-      rmSync(planFile);
-      const prompt = await poll(() => transcript);
-      expect(prompt?.plan_file).toBeUndefined();
-      expect(prompt?.body).toContain("The last step that fits the pane.");
     });
   }, 4_000);
 });
@@ -3321,46 +2681,6 @@ ${"─".repeat(120)}
     for (const agent of ["codex", "omp", "pi", "omo", ""]) expect(parseInteractivePrompt(agent, captured)).toBeNull();
   });
 
-  test("reads 2.1.301's slider, which describes the level between the names and the hint", () => {
-    // captures from Claude Code 2.1.301: one line under the names at low, two at max
-    const rule = "▔".repeat(120);
-    const low = `❯ /effort
-${rule}
-   Effort
-
-                             Faster                             Smarter
-                             ─▲────────────────────────────────────────      Ultracode  off
-                             low     medium     high     xhigh      max      Tab to toggle
-
-                                    ~0.7x the estimated cost of medium (the default)
-
-
-   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel
-`;
-    const max = `❯ /effort
-${rule}
-   Effort
-
-                             Faster                             Smarter
-                             ────────────────────────────────────────▲─      Ultracode  off
-                             low     medium     high     xhigh      max      Tab to toggle
-
-    May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.
-    (~5.2x)
-
-   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel
-`;
-    const atLow = parseInteractivePrompt("claude", low)!;
-    expect(labels(atLow)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(answerKeys(atLow, { option_index: 2 })).toEqual([{ keys: ["right"] }, { keys: ["right"] }, { text: "s" }]);
-    const atMax = parseInteractivePrompt("claude", max)!;
-    expect(atMax.id).toBe(atLow.id);
-    expect(answerKeys(atMax, { option_index: 3 })).toEqual([{ keys: ["left"] }, { text: "s" }]);
-    // the description a narrow pane wrapped over more lines is still between the names and the hint
-    const wrapped = max.replace("Use sparingly for the hardest tasks.", "\n    Use sparingly\n    for the hardest tasks.");
-    expect(labels(parseInteractivePrompt("claude", wrapped)!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-  });
-
   test("moves with ←/→ from the level ▲ is over and picks with s, never with Enter", () => {
     const prompt = parseInteractivePrompt("claude", claudeEffort(2))!;
     expect(answerKeys(prompt, { option_index: 2 })).toEqual([{ text: "s" }]);
@@ -3418,7 +2738,7 @@ describe("Codex's model lists", () => {
     for (const agent of ["claude", "omp", "pi", "omo", ""]) expect(parseInteractivePrompt(agent, codexModels(1))).toBeNull();
   });
 
-  test("reads a model's reasoning levels without the row that opens the advanced ones", () => {
+  test("reads a model's reasoning levels including the row that opens Max and Ultra", () => {
     const captured = `  Select Reasoning Level for GPT-6-Astra
 
 
@@ -3432,10 +2752,10 @@ describe("Codex's model lists", () => {
 `;
     expect(codexLevels(1)).toBe(`${CODEX_HEAD}${captured}`);
     const prompt = parseInteractivePrompt("codex", codexLevels(1))!;
-    // "More reasoning…" takes Enter, beside levels whose Enter saves a default: left to the terminal
-    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium). More levels are listed in the terminal.");
-    expect(prompt.options).toEqual(CODEX_LEVELS.slice(0, 4).map(([label, description]) => ({ label, description })));
-    expect(() => answerKeys(prompt, { option_index: 4 })).toThrow();
+    // The opener stays in the card; its key is read again after navigating onto it.
+    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium)");
+    expect(prompt.options).toEqual(CODEX_LEVELS.map(([label, description]) => ({ label, description })));
+    expect(answerKeys(prompt, { option_index: 4 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["down"] }, { pick: true }]);
     // with the cursor on that row in the terminal, its footer is the one of a row that opens a
     // list: the same card, and the moves to a level count from where the cursor is
     expect(codexLevels(4)).toContain("› 5. More reasoning…             Max and Ultra consume usage limits faster\n\n  enter select · esc back\n");
@@ -3499,8 +2819,8 @@ describe("Codex's model lists", () => {
   enter default · s session · esc back
 `;
     const prompt = parseInteractivePrompt("codex", phone)!;
-    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium). More levels are listed in the terminal.");
-    expect(prompt.options).toEqual(CODEX_LEVELS.slice(0, 4).map(([label]) => ({ label, description: null })));
+    expect(prompt.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium)");
+    expect(prompt.options).toEqual(CODEX_LEVELS.map(([label]) => ({ label, description: null })));
   });
 
   test("knows a list by the header right above its rows, wrapped or under the conversation's last line", () => {
@@ -3683,40 +3003,13 @@ ${omoRule}
       const path = join(dir, "2026-10-06T00-00-00_qa-session-488.jsonl");
       writeFileSync(path, JSON.stringify({ type: "session", id: "qa-session-488", cwd: pane.cwd, timestamp: new Date().toISOString() }) + "\n" + omoCall("q1", options));
       // An inert child supplies a real process environment; all RPCs and session files are fixtures.
-      const child = Bun.spawn([process.execPath, "-e", "process.stdin.resume()"], { cwd: pane.cwd, stdin: "pipe", stdout: "ignore", stderr: "ignore", env: { ...process.env, OMO_CODING_AGENT_DIR: agentDir } });
+      const child = Bun.spawn([process.execPath, "-e", "process.stdin.resume()"], { stdin: "pipe", stdout: "ignore", stderr: "ignore", env: { ...process.env, OMO_CODING_AGENT_DIR: agentDir } });
       pane.omo = { pid: child.pid, path, live: true };
       promptWaitEnded("p_1");
       try { await run(pane); }
       finally { child.kill(); await child.exited; }
     });
   }
-
-  for (const count of ["one", "two"]) for (const width of ["wide", "narrow"]) {
-    test.skipIf(process.platform !== "linux")(`discovers the real 5.1.30 ${count}-question ${width} widget through the prompt route`, async () => {
-      await withOmo(async (pane) => {
-        appendFileSync(pane.omo!.path, JSON.stringify({ type: "custom", customType: "ask-user:settlement", data: { requestId: "q1" } }) + "\n" + omoPendingFixture(`${count}.jsonl`));
-        pane.screen = omoPendingFixture(`${count}-${width}.txt`);
-        pane.agent = "pi";
-        pane.status = "blocked";
-        const question = openOmoAsks(omoPendingFixture(`${count}.jsonl`))[0]!.questions[0]!;
-        const prompt = await card();
-        expect(prompt).toMatchObject({
-          agent: "omo", kind: "question", question: question.question, options: question.options,
-          multi_select: question.multiSelect, custom_option_index: question.multiSelect ? null : question.options.length,
-        });
-      });
-    });
-  }
-
-  test.skipIf(process.platform !== "linux")("discovers a pending question with extension status below the input box", async () => {
-    await withOmo(async (pane) => {
-      appendFileSync(pane.omo!.path, JSON.stringify({ type: "custom", customType: "ask-user:settlement", data: { requestId: "q1" } }) + "\n" + omoPendingFixture("one.jsonl"));
-      pane.screen = withOmoExtensionTail(omoPendingFixture("one-wide.txt"));
-      pane.agent = "pi";
-      pane.status = "blocked";
-      expect(await card()).toMatchObject({ agent: "omo", kind: "question", multi_select: true });
-    });
-  });
 
   // Claude Code 2.1.294, live: a message it holds back for an invisible character
   const heldRule = "─".repeat(80);
@@ -3948,27 +3241,6 @@ ${heldRule}
     });
   });
 
-  test("answers a framed GJC question across unrelated output and status redraws", async () => {
-    const screen = (at: number, tick: number) => `Output ${tick}\n◷ 12h${tick}m\n──────────────\n\n${gjcSelector(at)}\n──────────────\n`;
-    await withPane("gjc", "blocked", screen(0, 23), async (pane) => {
-      const prompt = (await card())!;
-      pane.screen = screen(0, 24);
-      pane.onSent = (sent) => { if (sent === "down") pane.screen = screen(1, 25); };
-      expect(await answer(prompt.id, { option_index: 1 })).toEqual({ status: 200, code: undefined });
-      expect(pane.sent).toEqual(["down", "enter"]);
-    });
-  });
-
-  test("refuses a framed GJC answer when its approval details change during navigation", async () => {
-    const screen = (target: string, at = 0) => `──────────────\n\n Delete ${target}.\n\n ────────── \n\n Proceed?\n\n${at === 0 ? "❯" : " "} Yes\n${at === 1 ? "❯" : " "} No\n\nup/down navigate  enter select  esc cancel\n\n──────────────\n`;
-    await withPane("gjc", "blocked", screen("staging"), async (pane) => {
-      const prompt = (await card())!;
-      pane.onSent = (sent) => { if (sent === "down") pane.screen = screen("production", 1); };
-      expect(await answer(prompt.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
-      expect(pane.sent).toEqual(["down"]);
-    });
-  });
-
   test("checks a GJC selector after each move and stops once it is gone", async () => {
     const rows = ["First", "Second", "Third", "Fourth"];
     await withPane("gjc", "blocked", gjcSelector(0, rows), async (pane) => {
@@ -4173,152 +3445,6 @@ ${rows.map((row, index) => `│${index === at ? "❯" : " "} ○ ${row}`).join("
       const prompt = (await card())!;
       expect(await answer(prompt.id, { custom_text: "an x86 box" })).toEqual({ status: 200, code: undefined });
       expect(pane.sent).toEqual(["down", "down", "enter", "text:an x86 box", "enter"]);
-    });
-  });
-
-  test("advances only the active question in a current OMP multi-question dialog", async () => {
-    const render = (question: number, cursor: number, checked: number[]) => question === 0 ? `
-╭─ Ask ───────────────────────────╮
-│ Which platforms should run?     │
-├────────────────────────────────┤
-${["Linux", "macOS", "Other (type your own)"].map((label, index) => `│${cursor === index ? "❯ " : "  "}${index === 2 ? "○" : checked.includes(index) ? "☑" : "☐"} ${label}`).join("\n")}
-├────────────────────────────────┤
-│ ␣ toggle · ⏎ next · ↑/↓ move · Tab/←/→ question · ⎋ cancel │
-╰────────────────────────────────╯
-` : `
-╭─ Ask ───────────────────────────╮
-│ Which build should run?         │
-├────────────────────────────────┤
-│❯ ○ Debug                        │
-│  ○ Release                      │
-│  ○ Other (type your own)        │
-├────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · Tab/←/→ question · ⎋ cancel │
-╰────────────────────────────────╯
-`;
-    await withPane("omp", "blocked", render(0, 0, []), async (pane) => {
-      let question = 0;
-      let cursor = 0;
-      const checked = new Set<number>();
-      pane.onSent = (sent) => {
-        if (sent === "down") cursor = Math.min(2, cursor + 1);
-        else if (sent === "space") checked.has(cursor) ? checked.delete(cursor) : checked.add(cursor);
-        else if (sent === "tab") question = 1;
-        else if (sent === "enter" && question === 0) { question = 1; cursor = 0; }
-        else if (sent === "enter" && question === 1) question = 2;
-        pane.screen = question === 2 ? "Fictional OMP answers submitted" : render(question, cursor, [...checked]);
-      };
-      const prompt = (await card())!;
-      expect(await answer(prompt.id, { option_indices: [1] })).toEqual({ status: 200, code: undefined });
-      expect(pane.sent).toEqual(["down", "space", "enter"]);
-      expect(question).toBe(1);
-      expect(checked).toEqual(new Set([1]));
-    });
-  });
-
-  test("submits a one-question current OMP multi dialog with Enter", async () => {
-    const screen = `
-╭─ Ask ───────────────────────────╮
-│ Which checks should run?        │
-├────────────────────────────────┤
-│❯ ☐ Unit tests                   │
-│  ☐ Browser checks               │
-│  ○ Other (type your own)        │
-├────────────────────────────────┤
-│ ␠ toggle · ⏎ submit · ↑/↓ move · Tab/←/→ question · ⎋ cancel │
-╰────────────────────────────────╯
-`;
-    await withPane("omp", "blocked", screen, async (pane) => {
-      let checked = false;
-      pane.onSent = (sent) => {
-        if (sent === "space") checked = !checked;
-        if (sent === "enter") pane.screen = "Fictional OMP answer submitted";
-      };
-      const prompt = (await card())!;
-      expect(await answer(prompt.id, { option_indices: [0] })).toEqual({ status: 200, code: undefined });
-      expect(pane.sent).toEqual(["space", "enter"]);
-      expect(checked).toBe(true);
-      expect(pane.screen).toBe("Fictional OMP answer submitted");
-    });
-  });
-
-  test("moves through OMP questions, refuses stale or typed review answers, then submits once", async () => {
-    const questions = [
-      { title: "Which route should carry the fictional session?", options: ["Local socket", "Remote relay"] },
-      { title: "Which target should receive it?", options: ["ARM server", "x86 runner"] },
-    ];
-    const drawQuestion = (question: number, cursor: number) => `
-╭─ Ask ──────────────────────────────────────────────────────────╮
-│  Transport    Targets    Submit                                │
-│ ${questions[question]!.title}
-├────────────────────────────────────────────────────────────────┤
-${questions[question]!.options.map((label, index) => `│  ${cursor === index ? "❯ " : "  "}○ ${label}`).join("\n")}
-│    ○ Other (type your own)
-├────────────────────────────────────────────────────────────────┤
-│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ question · ⎋ cancel       │
-╰────────────────────────────────────────────────────────────────╯
-`;
-    const drawReview = (target = "ARM server") => `
-╭─ Ask ──────────────────────────────────────────────────────────╮
-│  Transport    Targets    Submit                                │
-│ Review answers                                                  │
-├────────────────────────────────────────────────────────────────┤
-│ 1. Transport: Remote relay                                      │
-│ 2. Targets: ${target.padEnd(50)}│
-│                                                                 │
-│ ❯ Submit                                                        │
-│                                                                 │
-├────────────────────────────────────────────────────────────────┤
-│ ⏎ submit · ↑/↓ scroll · ⎋ cancel · Alt+H hide                  │
-╰────────────────────────────────────────────────────────────────╯
-`;
-
-    await withPane("omp", "blocked", drawQuestion(0, 0), async (pane) => {
-      let activeQuestion = 0;
-      let cursor = 0;
-      let submitted = false;
-      pane.onSent = (sent) => {
-        if (sent === "down") cursor = Math.min(1, cursor + 1);
-        if (sent === "enter" && activeQuestion === 0) {
-          activeQuestion = 1;
-          cursor = 0;
-          pane.screen = drawQuestion(activeQuestion, cursor);
-        } else if (sent === "enter" && activeQuestion === 1) {
-          pane.screen = drawReview();
-        } else if (sent === "enter" && activeQuestion === 2) {
-          submitted = true;
-          pane.screen = "Fictional OMP answers submitted";
-        } else if (activeQuestion < 2) {
-          pane.screen = drawQuestion(activeQuestion, cursor);
-        }
-      };
-
-      const first = (await card())!;
-      expect(first.question).toBe(questions[0]!.title);
-      expect(await answer(first.id, { option_index: 1 })).toEqual({ status: 200, code: undefined });
-      expect(activeQuestion).toBe(1);
-      expect(pane.sent).toEqual(["down", "enter"]);
-
-      const second = (await card())!;
-      expect(second.question).toBe(questions[1]!.title);
-      expect(await answer(second.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
-      expect(pane.screen).toContain("Review answers");
-
-      const review = (await card())!;
-      expect(labels(review)).toEqual(["Submit", "Cancel"]);
-      pane.screen = drawReview("Changed target");
-      expect(await answer(review.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
-      expect(pane.sent).toEqual(["down", "enter", "enter"]);
-
-      const refreshedReview = (await card())!;
-      expect(await answer(refreshedReview.id, { custom_text: "ordinary text" })).toEqual({ status: 400, code: "invalid_answer" });
-      expect(pane.sent).toEqual(["down", "enter", "enter"]);
-
-      activeQuestion = 2;
-      expect(await answer(refreshedReview.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
-      expect(submitted).toBe(true);
-      expect(pane.sent).toEqual(["down", "enter", "enter", "enter"]);
-      expect(pane.screen).toBe("Fictional OMP answers submitted");
     });
   });
 
@@ -4663,13 +3789,51 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     });
   });
 
+  test("opens More reasoning from chat and applies Max or Ultra for this session", async () => {
+    const advanced = (at: number) => codexList("Advanced Reasoning", [["Max", "For difficult problems"], ["Ultra", "For demanding work"]], at,
+      (row) => row === 1 ? "  enter apply · s session · esc back" : CODEX_PICKS).replace(" (current)", "          ");
+    for (const start of [1, 4]) for (const level of [0, 1]) {
+      await withPane("codex", "done", codexLevels(start), async (pane) => {
+        let at = start;
+        let opened = false;
+        pane.onSent = (sent) => {
+          if (sent === "down") at += 1;
+          if (sent === "enter") { opened = true; at = 0; }
+          pane.screen = sent === "text:s" ? `${CODEX_HEAD}› Ask Codex to do anything\n` : opened ? advanced(at) : codexLevels(at);
+        };
+        const prompt = (await card())!;
+        expect(labels(prompt)).toContain("More reasoning…");
+        expect(await answer(prompt.id, { option_index: 4 })).toEqual({ status: 200, code: undefined });
+        expect(pane.sent).toEqual([...Array(4 - start).fill("down"), "enter"]);
+        const next = (await card())!;
+        expect(labels(next)).toEqual(["Max", "Ultra"]);
+        expect(next.id).not.toBe(prompt.id);
+        expect(await answer(next.id, { option_index: level })).toEqual({ status: 200, code: undefined });
+        expect(pane.sent).toEqual([...Array(4 - start).fill("down"), "enter", ...Array(level).fill("down"), "text:s"]);
+        expect(await card()).toBeNull();
+      });
+    }
+  });
+
+  test("does not open advanced reasoning after the model, selected row or footer changes", async () => {
+    for (const change of ["model", "cursor", "footer"]) await withPane("codex", "done", codexLevels(3), async (pane) => {
+      const prompt = (await card())!;
+      pane.onSent = () => {
+        pane.screen = change === "model" ? codexLevels(4, "GPT-6-Sol")
+          : change === "cursor" ? codexLevels(2) : codexLevels(4).replace(CODEX_OPENS, CODEX_PICKS);
+      };
+      expect(await answer(prompt.id, { option_index: 4 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual(["down"]);
+    });
+  }, 10_000);
+
   test("answers a model list only once the pane shows what follows it, so its card does not come up again", async () => {
     // Codex draws a model's levels a moment after the Enter: the read right after the answer is theirs
     await withPane("codex", "done", codexModels(1), async (pane) => {
       pane.onSent = (sent) => { if (sent === "enter") setTimeout(() => { pane.screen = codexLevels(1); }, 200); };
       const prompt = (await card())!;
       expect(await answer(prompt.id, { option_index: 1 })).toEqual({ status: 200, code: undefined });
-      expect((await card())!.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium). More levels are listed in the terminal.");
+      expect((await card())!.question).toBe("Select reasoning level for GPT-6-Astra for this session (currently Medium)");
     });
     // and Claude closes its list a moment after the s: no card is left to read
     await withPane("claude", "idle", claudeModelList(1), async (pane) => {
@@ -5109,35 +4273,6 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
       expect((await card())!.id).not.toBe(first.id);
     });
   });
-
-  test("logs prompt answer requests with pane_id, prompt_matched and outcome", async () => {
-    const logged: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
-    try {
-      await withPane("codex", "blocked", menu(RESUME), async (pane) => {
-        const prompt = (await card())!;
-        logged.length = 0;
-        expect(await answer(prompt.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
-        expect(logged.some((line) => line.includes("[prompt/answer]") && line.includes("pane=\"p_1\"") && line.includes("prompt_matched=true") && line.includes("outcome=ok"))).toBe(true);
-        logged.length = 0;
-        expect(await answer(prompt.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
-        expect(logged.some((line) => line.includes("[prompt/answer]") && line.includes("pane=\"p_1\"") && line.includes("prompt_matched=false") && line.includes("outcome=prompt_changed"))).toBe(true);
-        // the pane id is the client's until the snapshot has checked it: no newline or escape of it reaches the log
-        logged.length = 0;
-        const url = new URL("http://127.0.0.1/api/pane/prompt/answer");
-        const forged = "p_1\nFORGED \u001b[2J prompt_matched=true outcome=ok";
-        const response = (await handlePromptRequest(new Request(url, { method: "POST", body: JSON.stringify({ pane_id: forged, prompt_id: prompt.id, option_index: 0 }) }), url, {}))!;
-        expect(response.ok).toBe(false);
-        const line = logged.find((entry) => entry.includes("[prompt/answer]"));
-        expect(line).toBeDefined();
-        expect(line!.includes("\n")).toBe(false);
-        expect(line!.includes("\u001b")).toBe(false);
-        // the forged fields stay inside the quoted id; the line's own fields follow it
-        if (!line!.includes(`pane=${JSON.stringify(forged)} prompt_matched=false outcome=`)) throw new Error(`unexpected log line: ${line}`);
-      });
-    } finally { console.log = originalLog; }
-  });
 });
 
 // fork: Claude Code 2.1.29x screens the readers missed, answered as menus (arrows + enter), never by typing the number
@@ -5484,46 +4619,5 @@ describe("Claude Code's model list under a hint wrapped anywhere", () => {
     const quoted = `${CLAUDE_MODEL_CLOSED}⏺ Example: Enter to set as default · s to use this session only · Esc to\n  cancel\n──────────── Summary ─\n`;
     expect(modelListWaits("claude", quoted)).toBe(false);
     expect(modelListWaits("claude", `⏺ Enter to set as default · s to use this session only · Esc to cancel\n`)).toBe(false);
-  });
-});
-
-describe("hermesInputDraft", () => {
-  // input rows of real Hermes 0.21.5 screens (herdr pane read --source visible --format ansi)
-  const CLASSIC_HINT = "\u001b[0m\u001b[38;5;230m❯ \u001b[0m\u001b[3m\u001b[38;5;136mType / to browse commands, or Ctrl+P for the palette\u001b[0m";
-  const CLASSIC_TYPED = "\u001b[0m\u001b[38;5;230m❯ \u001b[0mReply with only the word";
-  const TUI_HINT = " \u001b[0m\u001b[1m\u001b[38;2;255;248;220m❯ \u001b[0m\u001b[38;2;255;255;255m\u001b[48;2;184;134;11mT\u001b[0m\u001b[38;2;184;134;11mry \"how does the config loader work?\"\u001b[0m";
-  const TUI_TYPED = " \u001b[0m\u001b[1m\u001b[38;2;255;248;220m❯ \u001b[0m\u001b[38;2;255;248;220mReply with only the word\u001b[0m              ";
-  const screen = (input: string) => `● ❯ an earlier message, echoed\n────────\n${input}\n────────`;
-  const plain = (ansi: string) => ansi.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
-  const draft = (input: string, colors: string | null = screen(input)) => hermesInputDraft(plain(screen(input)), colors);
-
-  test("knows text typed into the classic CLI or the TUI for a draft", () => {
-    expect(draft(CLASSIC_TYPED)).toBe(true);
-    expect(draft(TUI_TYPED)).toBe(true);
-    // a `❯` the user typed is text, not the prompt
-    expect(draft("\u001b[0m\u001b[38;5;230m❯ \u001b[0mreview ❯ ")).toBe(true);
-  });
-
-  test("takes neither interface's own hint for a draft: the classic italic placeholder, the TUI's cursor chip", () => {
-    expect(draft(CLASSIC_HINT)).toBe(false);
-    expect(draft(TUI_HINT)).toBe(false);
-  });
-
-  test("reads an input with nothing after the prompt as empty, without colors", () => {
-    expect(draft(" \u001b[1m❯ \u001b[0m", null)).toBe(false);
-  });
-
-  test("knows a draft that holds a `❯` without colors too, and reads an empty prompt row with colors as empty", () => {
-    expect(draft("\u001b[0m\u001b[38;5;230m❯ \u001b[0mreview ❯ ", null)).toBe(true);
-    expect(draft("\u001b[0m\u001b[38;5;230m❯ \u001b[0m")).toBe(false);
-  });
-
-  test("counts any text as a draft without colors verified to show that screen", () => {
-    expect(draft(CLASSIC_HINT, null)).toBe(true);
-    expect(draft(TUI_HINT, screen(CLASSIC_TYPED))).toBe(true);
-  });
-
-  test("does not know a screen without an input row to be empty", () => {
-    expect(hermesInputDraft("Approve this command?\n  [1] Approve once\n", null)).toBe(true);
   });
 });

@@ -7,7 +7,6 @@ import { chromium, type Browser } from "playwright-core";
 import type { PaneFindResponse } from "../shared/protocol.ts";
 import { createServer } from "../server/index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
-import { chromePath } from "./chrome-path.ts";
 
 /** GUI searches stay in herdr's history, never in browser scrollback or terminal input. */
 export async function checkPaneFind(browser: Browser, origin: string): Promise<void> {
@@ -192,12 +191,7 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     await page.keyboard.press("Escape");
     await uploadClosedGeometry;
 
-    // Let the narrow viewport's own resize land first: a phone's More sheet rises (styles.css) for
-    // longer than the terminal waits for a size to settle (PaneTerminal.tsx), so phoneGeometry would
-    // otherwise answer to that resize, and the search below would race the find bar's.
-    const phoneViewport = resized();
     await page.setViewportSize({ width: 320, height: 844 });
-    await phoneViewport;
     await page.getByRole("button", { name: "More", exact: true }).click();
     const phoneGeometry = resized();
     await page.getByRole("button", { name: "Find in terminal", exact: true }).click();
@@ -236,7 +230,7 @@ if (import.meta.main) {
   const server = createServer({ port: 0, stateDir, registerBridge: false });
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ headless: true, executablePath: chromePath() });
+    browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH || "/opt/google/chrome/chrome" });
     await checkPaneFind(browser, `http://127.0.0.1:${server.port}`);
   } finally {
     await browser?.close();

@@ -16,8 +16,7 @@
     "types": [
       "bun",
       "react",
-      "react-dom",
-      "vite/client"
+      "react-dom"
     ],
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -26,7 +25,8 @@
       "@shared/*": [
         "./shared/*"
       ]
-    }
+    },
+    "baseUrl": "."
   },
   "include": [
     "src",
