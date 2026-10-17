@@ -8,6 +8,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Agent presets.** New workspace can offer agents of your own: one of herdr's kinds started with
+  arguments of its own, from `agent-presets.json` in the state directory, such as Claude Code
+  running on GPT through a gateway. The pane is that agent's in every other way, and the picker
+  shows that agent's mark.
 - **A worktree as a tab, and its merge back.** Several agents can now work on one project at
   once, each in a tab of its own. In a workspace whose folder is a git repository, New tab has a
   **New worktree** switch: the tab gets its own branch and checkout (under herdr's worktree

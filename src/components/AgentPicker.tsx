@@ -35,8 +35,8 @@ export interface AgentPickerProps {
   onChange: (kind: string) => void;
 }
 
-function OptionMark({ kind }: { kind: string }) {
-  return kind ? <AgentMark agent={kind} size={16} /> : <span className="agent-picker-shell"><Terminal aria-hidden="true" /></span>;
+function OptionMark({ kind, mark }: { kind: string; mark?: string | undefined }) {
+  return kind ? <AgentMark agent={mark ?? kind} size={16} /> : <span className="agent-picker-shell"><Terminal aria-hidden="true" /></span>;
 }
 
 /**
@@ -148,7 +148,7 @@ export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(funct
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={onKeyDown}
       >
-        <OptionMark kind={selected.kind} />
+        <OptionMark kind={selected.kind} mark={selected.mark} />
         <span className="agent-picker-label">{selected.label}</span>
         <ChevronDown className="agent-picker-chevron" aria-hidden="true" />
       </button>
@@ -166,7 +166,7 @@ export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(funct
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => choose(index)}
             >
-              <OptionMark kind={option.kind} />
+              <OptionMark kind={option.kind} mark={option.mark} />
               <span className="menu-item-main">{option.label}</span>
             </div>
           ))}

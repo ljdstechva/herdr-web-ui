@@ -177,6 +177,15 @@ model's window, which is the file pi reads its own providers from; a model it st
 for shows no ring rather than a guessed one, because pi answers those from a catalogue or a
 running llama.cpp server that this app cannot ask. The model and reasoning effort come from what the session recorded, never from answer text. A todo list shows where the agent recorded it, in the turn's work block: Claude Code's `TodoWrite`, Codex's `update_plan`, or omp, omo and gjc todo calls. Plain-text plans and Claude Code `TaskCreate` / `TaskUpdate` calls are not currently reconstructed. Details and verification are in the [chat-mode audit](chat-mode-audit.md).
 
+**Agent presets.** New workspace can also offer agents of your own, each one of the kinds above started with arguments of its own, from `agent-presets.json` under `HERDR_WEB_STATE_DIR`. For example, Claude Code running on another model through a gateway:
+
+```json
+[{ "kind": "claude-gpt", "label": "Claude Code (GPT)", "agent": "claude",
+   "args": ["--settings", "/home/me/.local/share/ccr-home/claude-gpt.settings.json"] }]
+```
+
+`kind` is the preset's own name (lowercase, not one of the kinds above), `agent` the kind it starts and `args` its arguments. The pane is that agent's in every other way (chat, cards, model label). An entry that does not check out is left out, and an edit takes effect at the next New workspace, without a restart.
+
 Background tasks have a button by the message box, with a count while some run: an OmO pane's `task` children, and a Claude Code pane's subagents (the `Agent` tool), read from the session's own files. A Claude Code pane's background commands (`run_in_background`, Ctrl+B, or one moved there by its timeout) are listed with them. It lists what runs and the newest ten that ended in the last day, and the sidebar badge shows the running count. A Claude Code turn that ends while work it started still runs reads **BG**, not DONE: that work's notice starts the next turn by itself, and the finish is alerted once, when that turn ends (a turn is held at most 30 minutes). A subagent that ends leaves a card in the chat with its answer, and a Claude Code subagent whose pane no longer runs that session reads as lost.
 
 ## Features

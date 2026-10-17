@@ -607,6 +607,8 @@ export interface FileInfo {
 export interface AgentKind {
   kind: string;
   label: string;
+  /** the agent whose mark the choice wears, when not its own kind: a preset's herdr agent (server/agent-presets.ts) */
+  mark?: string;
 }
 
 /**
