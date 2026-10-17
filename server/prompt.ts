@@ -108,6 +108,7 @@ type Responder =
   | "claude-approval"
   | "claude-plan"
   | "claude-confirm"
+  | "claude-switch-model"
   | "claude-held"
   | "claude-model"
   | "claude-effort"
@@ -1437,6 +1438,48 @@ function parseClaudeConfirm(screen: string): ParsedPrompt | null {
 }
 
 /**
+ * Claude Code's confirmation after a model is picked in a conversation it has cached, live in
+ * 2.1.302 (herdr reports the pane done meanwhile, and no hint line is drawn under the rows):
+ *
+ *   Switch model?
+ *   Your next response will be slower and use more tokens
+ *
+ *   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read on
+ *   your next message.
+ *
+ *   ❯ 1. Yes, switch to Haiku 5.5
+ *     2. No, go back
+ *
+ * Without a card the pick looked lost on the phone while Claude waited for this answer. The two
+ * rows must be the last lines on screen, under the title within a few lines; answered as Claude's
+ * other confirmations are (moves, a look before the Enter).
+ */
+const CLAUDE_SWITCH_TITLE_RE = /^\s*Switch model\?\s*$/;
+const CLAUDE_SWITCH_ROW_RE = /^\s*(❯)?\s*([12])\.\s+(\S.*?)\s*$/;
+
+function parseClaudeSwitchModel(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
+  let end = lines.length - 1;
+  while (end >= 0 && lines[end]!.trim() === "") end -= 1;
+  if (end < 1) return null;
+  const yes = CLAUDE_SWITCH_ROW_RE.exec(lines[end - 1]!);
+  const no = CLAUDE_SWITCH_ROW_RE.exec(lines[end]!);
+  if (yes === null || no === null) return null;
+  if (yes[2] !== "1" || no[2] !== "2" || !/^Yes, switch to /.test(yes[3]!) || !/^No\b/.test(no[3]!) || (yes[1] === undefined) === (no[1] === undefined)) return null;
+  const titleIndex = findLastIndex(lines, (line, index) => index < end - 1 && end - 1 - index <= 10 && CLAUDE_SWITCH_TITLE_RE.test(line));
+  if (titleIndex < 0) return null;
+  const body = lines.slice(titleIndex + 1, end - 1).map(cleanLine).filter(Boolean);
+  return finishPrompt("claude", {
+    kind: "menu", title: "Switch model?", question: "Switch model?",
+    body: body.join("\n") || null,
+    options: [{ label: yes[3]!, description: null }, { label: no[3]!, description: null }], multi_select: false, custom_option_index: null,
+  }, {
+    responder: "claude-switch-model", menuLabels: [yes[3]!, no[3]!], selectedIndex: yes[1] !== undefined ? 0 : 1,
+    checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+  });
+}
+
+/**
  * Claude Code's `/model` list, live in 2.1.290:
  *
  *   Select model
@@ -1472,6 +1515,8 @@ const CLAUDE_MODEL_ROW_RE = /^\s*([❯›>↑↓])?\s*(\d+)\.\s+(\S.*)$/;
 const CLAUDE_MODEL_MORE_RE = /^…\s*\+(\d+) models?$/;
 /** lines between the rows and the hint, at most: the effort line, wrapped by a narrow pane */
 const CLAUDE_MODEL_UNDER_LINES = 3;
+/** the first line of a notice Claude Code 2.1.302 adds under the effort line (Fast mode, or max effort's cost); it runs to the next blank line */
+const CLAUDE_MODEL_NOTICE_RE = /^\s*(?:Fast mode is|Use \/fast\b|Max effort\b)/i;
 
 interface ListRow {
   number: number; cursor: boolean;
@@ -1747,7 +1792,12 @@ function parseClaudeModel(screen: string): ParsedPrompt | null {
   const hintIndex = findLastIndex(lines, (_, index) => hintAt(lines, index, CLAUDE_MODEL_GUARD_RE));
   if (hintIndex < 0) return null;
   const { rows, below, last, unread } = listRows(lines, hintIndex, CLAUDE_MODEL_ROW_RE, CLAUDE_MODEL_MORE_RE);
-  const under = lines.slice(last + 1, hintIndex).filter((line) => line.trim() !== "").length;
+  let inNotice = false;
+  const under = lines.slice(last + 1, hintIndex).filter((line) => {
+    if (line.trim() === "") { inNotice = false; return false; }
+    if (CLAUDE_MODEL_NOTICE_RE.test(line)) inNotice = true;
+    return !inNotice;
+  }).length;
   const selectedIndex = rows.findIndex((row) => row.cursor);
   if (unread || under > CLAUDE_MODEL_UNDER_LINES || rows.length < 2 || rows.filter((row) => row.cursor).length !== 1) return null;
   const names = listNames(rows);
@@ -1900,6 +1950,8 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // chord. Anchor that suffix so arbitrary trailing text cannot keep an old approval live.
   if (prompt.responder === "claude-approval") return ends(/esc to cancel.*(?:tab|ctrl\+e)|ctrl\+e to explain|^esc to cancel(?:\s*·\s*ctrl\+x ctrl\+k twice to stop background agents)?$/i);
   if (prompt.responder === "claude-confirm") return ends(CLAUDE_CONFIRM_HINT_RE);
+  // no hint under it: its own last row, "2. No, go back", is the screen's last line
+  if (prompt.responder === "claude-switch-model") return /^(?:[›>❯]\s*)?2\.\s+No\b/.test(last);
   // its parser already found the hint over the input box with only the footer under it
   if (prompt.responder === "claude-held") return true;
   if (prompt.responder === "claude-model") return claudeModelListWaits(screen);
@@ -2318,7 +2370,7 @@ function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null
       // `pi` reads pi's own dialogs first: pi's hint is its own, so an omo form never matches
       // it and falls through to omo()'s parsers.
       : agent === "claude"
-        ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
+        ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeSwitchModel(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
         : agent === "pi"
           ? [parsePiModel(screen), parsePiDialog(screen), ...omo()]
         : agent === "hermes"
@@ -3372,7 +3424,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         // Claude's unnumbered rows and pi's models are read with no number to aim at: looked at
         // again before the Enter even when it needs no move. So is Claude's model list, picked
         // with a letter: typed after the list has gone, it would stand in the agent's own prompt
-        let moved = responder === "claude-confirm" || responder === "pi-model" || responder === "omo-question" || responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "fallback-gjc-menu";
+        let moved = responder === "claude-confirm" || responder === "claude-switch-model" || responder === "pi-model" || responder === "omo-question" || responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "fallback-gjc-menu";
         // Claude's and Codex's model lists: a window on a list, picked with a letter; Claude's effort
         // slider the same way, its levels side by side
         const list = responder === "claude-model" || responder === "claude-effort" || responder === "codex-model";

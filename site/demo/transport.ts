@@ -1335,6 +1335,9 @@ class DemoSocket extends EventTarget {
           this.conversationInterests.delete(message.pane_id);
         }
         break;
+      case "ping":
+        this.push({ type: "pong", id: message.id ?? 0 });
+        break;
       case "conversation-watch":
         if (typeof message.pane_id !== "string" || message.pane_id.trim() === "" || typeof message.enabled !== "boolean") {
           this.push({ type: "error", code: "invalid_conversation_watch", message: "pane_id must be a nonempty string and enabled must be a boolean" });

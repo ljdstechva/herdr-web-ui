@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseConversationMetadata } from "./conversation-metadata.ts";
+import { claudeModelId, parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetPiModels } from "./pi-models.ts";
 
 const jsonl = (...entries: unknown[]) => entries.map((entry) => JSON.stringify(entry)).join("\n");
@@ -172,5 +172,37 @@ describe("context use", () => {
       forgetPiModels();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Claude settings before the next answer", () => {
+  const stdout = (text: string) => ({ type: "user", message: { role: "user", content: `<local-command-stdout>${text}</local-command-stdout>` } });
+
+  it("follows /model, /effort and the model each prompt is sent to", () => {
+    const text = jsonl(
+      { type: "assistant", message: { model: "claude-opus-5-5", usage: {} }, effort: "high" },
+      stdout("Set model to `Sonnet 5.5` for this session only"),
+    );
+    expect(parseConversationMetadata(text, "claude-transcript")).toMatchObject({ model: "claude-sonnet-5-5", reasoning_effort: "high" });
+    const effort = jsonl({ type: "system", subtype: "local_command", content: "<local-command-stdout>Set effort level to xhigh (saved as your default for new sessions): Deeper</local-command-stdout>" });
+    expect(parseConversationMetadata(effort, "claude-transcript")).toMatchObject({ reasoning_effort: "xhigh" });
+    const attachment = jsonl({ type: "attachment", attachment: { type: "model", identity: { modelId: "claude-fable-5-1", marketingName: "Fable 5.1" } } });
+    expect(parseConversationMetadata(attachment, "claude-transcript").model).toBe("claude-fable-5-1");
+  });
+
+  it("leaves a subagent's model and a quoted command alone", () => {
+    const text = jsonl(
+      { type: "assistant", message: { model: "claude-opus-5-5", usage: {} } },
+      { type: "attachment", isSidechain: true, attachment: { type: "model", identity: { modelId: "claude-haiku-5-5" } } },
+      { type: "user", message: { role: "user", content: "what does Set model to `Haiku 5.5` for this session only mean?" } },
+    );
+    expect(parseConversationMetadata(text, "claude-transcript").model).toBe("claude-opus-5-5");
+  });
+
+  it("reads Claude Code's model names as ids", () => {
+    expect(claudeModelId("Opus 5.5")).toBe("claude-opus-5-5");
+    expect(claudeModelId("Opus 5.5 (1M context)")).toBe("claude-opus-5-5");
+    expect(claudeModelId("Sonnet 5")).toBe("claude-sonnet-5");
+    expect(claudeModelId("Default (recommended)")).toBe("Default (recommended)");
   });
 });

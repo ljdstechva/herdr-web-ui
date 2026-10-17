@@ -217,7 +217,7 @@ const RESTORED_CLEAR_GAP_MS = 200;
 const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "conversation-watch"];
+const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -1660,6 +1660,9 @@ export function createServer(
   const server = Bun.serve<SocketData>({
     port: options.port ?? (envPort ? Number(envPort) : DEFAULT_PORT),
     hostname,
+    // Bun's default 10 s cut a herdr RPC (itself 10 s) or a usage read (up to 15 s) off with a
+    // dropped connection instead of its JSON error; streams set their own timeout
+    idleTimeout: 30,
 
     async fetch(request, bunServer) {
       // the route's answer, gzipped for a browser that takes it (server/compress.ts)
@@ -2838,6 +2841,10 @@ export function createServer(
         }
         try {
           switch (message.type) {
+            case "ping": {
+              send(client, { type: "pong", id: Number(message.id) });
+              break;
+            }
             case "watch": {
               const geometry = validGeometry(message.cols, message.rows);
               if (!geometry) {

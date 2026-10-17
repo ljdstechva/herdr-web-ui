@@ -16,6 +16,17 @@ const SNAPSHOT_WAIT_MS = 2000;
  * message the client gave up on is never submitted later.
  */
 const SUBMIT_TIMEOUT_MS = 90_000;
+/**
+ * Liveness. After a phone sleeps or changes network a dead socket can stay OPEN for minutes, and
+ * everything sent into it is lost while the app still says "live". While the page is in use the
+ * client pings the server (feature "ping") every PING_EVERY_MS, and at once when the page comes
+ * back (visible, focus, pageshow, online); a socket that answers nothing within PONG_WAIT_MS is
+ * dropped and a new one opened straight away.
+ */
+const PING_EVERY_MS = 25_000;
+const PONG_WAIT_MS = 6_000;
+/** After an output-stall close (4008) a page in use connects again after this long, never sooner. */
+const STALL_RECONNECT_MS = 5_000;
 const DISCONNECTED: SubmitResult = { ok: false, code: "disconnected", message: "the connection dropped before the pane confirmed this message" };
 
 interface AttachState {
@@ -23,6 +34,11 @@ interface AttachState {
   rows: number;
   /** the chat lens covers the grid: attaches (a reconnect's too) leave the shared pty's size alone */
   keepSize: boolean;
+}
+
+/** The page is visible (always true where there is no document, as in tests). */
+function pageInUse(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
 }
 
 function defaultUrl(): string {
@@ -60,6 +76,12 @@ export class HerdrSocket {
   private readonly conversationWanted = new Set<string>();
   private retries = 0;
   private reconnectTimer: number | null = null;
+  private nextPing = 1;
+  /** set while a ping waits for any frame back */
+  private pongTimer: number | null = null;
+  private pingTimer: number | null = null;
+  private lifecycleBound = false;
+  private readonly wake = (): void => { if (pageInUse()) this.probe(); };
   private disposed = false;
   private mode: ClientRole = "interact";
   /** whether the page is in use (`presence`), as last told; null until the page says */
@@ -76,7 +98,7 @@ export class HerdrSocket {
   /** Receipts match the operation and captured target on this connection, never an ID alone. */
   private readonly requests = new Map<number, { type: "submit" | "pending-action" | "secret"; paneId: string; queued?: boolean; pendingId?: string }>();
 
-  constructor(url: string = defaultUrl()) {
+  constructor(url: string = defaultUrl(), private readonly timing = { pongWaitMs: PONG_WAIT_MS, stallReconnectMs: STALL_RECONNECT_MS }) {
     this.url = url;
   }
 
@@ -89,6 +111,7 @@ export class HerdrSocket {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
+    this.bindLifecycle();
     const socket = new WebSocket(this.url);
     this.socket = socket;
     this.features = new Set();
@@ -113,6 +136,8 @@ export class HerdrSocket {
 
     socket.addEventListener("message", (event) => {
       if (this.socket !== socket) return;
+      // any frame proves the socket alive, not only the pong
+      this.clearPong();
       let message: ServerMessage;
       try {
         message = JSON.parse(String(event.data)) as ServerMessage;
@@ -174,28 +199,92 @@ export class HerdrSocket {
       for (const paneId of unwatched) this.emit({ type: "watch-end", pane_id: paneId });
     });
 
-    socket.addEventListener("close", (event) => {
-      if (this.socket !== socket) return;
-      this.socket = null;
-      for (const handler of this.disconnectHandlers) handler();
-      this.markSnapshot();
-      this.settleSubmits(DISCONNECTED);
-      if (event.code === OUTPUT_STALLED_CLOSE_CODE) {
-        this.outputStopped = true;
-        this.emit({ type: "error", code: "output_stalled", message: "Terminal output stopped because this device could not keep up." });
-        return;
-      }
-      this.scheduleReconnect();
-    });
+    socket.addEventListener("close", (event) => this.lost(socket, event.code));
 
     socket.addEventListener("error", () => {
       socket.close();
     });
   }
 
-  private scheduleReconnect(): void {
+  /** The socket ended, by its close event or because it stopped answering. */
+  private lost(socket: WebSocket, code: number): void {
+    if (this.socket !== socket) return;
+    this.socket = null;
+    this.clearPong();
+    for (const handler of this.disconnectHandlers) handler();
+    this.markSnapshot();
+    this.settleSubmits(DISCONNECTED);
+    if (code === OUTPUT_STALLED_CLOSE_CODE) {
+      this.outputStopped = true;
+      this.emit({ type: "error", code: "output_stalled", message: "Terminal output stopped because this device could not keep up." });
+      // the whole connection (status, chat, every pane) went with it: a page in use comes back on its own,
+      // a page out of use when it is used again (probe)
+      if (pageInUse()) this.scheduleReconnect(this.timing.stallReconnectMs);
+      return;
+    }
+    this.scheduleReconnect();
+  }
+
+  /**
+   * Whether the connection still works, asked now: a waiting reconnect goes at once, a stalled
+   * connection comes back, and an open socket is pinged and dropped if nothing comes back.
+   */
+  probe(): void {
+    if (this.disposed) return;
+    if (!this.connected) {
+      if (this.socket?.readyState === WebSocket.CONNECTING) return;
+      if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      this.retries = 0;
+      this.outputStopped = false;
+      this.connect();
+      return;
+    }
+    if (!this.features.has("ping") || this.pongTimer !== null) return;
+    const socket = this.socket!;
+    this.rawSend({ type: "ping", id: this.nextPing++ });
+    this.pongTimer = window.setTimeout(() => {
+      this.pongTimer = null;
+      if (this.socket !== socket) return;
+      // a dead socket's close can take minutes to arrive: stop waiting for it
+      try { socket.close(); } catch { /* already closing */ }
+      this.lost(socket, 1006);
+      if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      this.retries = 0;
+      this.connect();
+    }, this.timing.pongWaitMs);
+  }
+
+  private clearPong(): void {
+    if (this.pongTimer !== null) window.clearTimeout(this.pongTimer);
+    this.pongTimer = null;
+  }
+
+  private bindLifecycle(): void {
+    if (this.lifecycleBound || typeof window.addEventListener !== "function") return;
+    this.lifecycleBound = true;
+    window.addEventListener("online", this.wake);
+    window.addEventListener("focus", this.wake);
+    window.addEventListener("pageshow", this.wake);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.wake);
+    this.pingTimer = window.setInterval(() => { if (pageInUse()) this.probe(); }, PING_EVERY_MS);
+  }
+
+  private unbindLifecycle(): void {
+    if (!this.lifecycleBound) return;
+    this.lifecycleBound = false;
+    window.removeEventListener("online", this.wake);
+    window.removeEventListener("focus", this.wake);
+    window.removeEventListener("pageshow", this.wake);
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.wake);
+    if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+    this.pingTimer = null;
+  }
+
+  private scheduleReconnect(atLeast = 0): void {
     if (this.disposed || this.reconnectTimer !== null) return;
-    const delay = Math.min(5000, 250 * 2 ** this.retries);
+    const delay = Math.max(atLeast, Math.min(5000, 250 * 2 ** this.retries));
     this.retries += 1;
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
@@ -473,6 +562,8 @@ export class HerdrSocket {
     this.disposed = true;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.clearPong();
+    this.unbindLifecycle();
     this.socket?.close();
     this.socket = null;
     this.settleSubmits(DISCONNECTED);

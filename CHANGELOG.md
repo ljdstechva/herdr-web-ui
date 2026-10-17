@@ -104,6 +104,31 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **A Codex chat shows its conversation again.** Since Codex 0.157 one shared app-server holds
+  every conversation file open, so a pane's Codex had no open file to tell which one was its own,
+  and a new Codex pane showed only terminal output in the chat. The thread name Codex puts in its
+  terminal title ("Fix the login | project") now names it, when exactly one thread of the folder
+  has that name and no other Codex pane there shows it.
+- **Picking a model from the phone works in a conversation already under way.** Claude Code
+  2.1.302 asks "Switch model?" after the pick, without a hint line, and the chat showed no card
+  for it, so the pick looked lost while Claude waited. It is now a card. The model label also
+  follows `/model`, `/effort` and the model each prompt is sent to, instead of saying "Model" or
+  the previous model until the next answer, and Codex's GPT-6-Astra is named. The label no longer
+  ignores a tap while the agent works: its menu opens and says the change waits for the turn. The
+  `/model` list is read with Claude Code 2.1.302's Fast mode notice under it too.
+- **The app notices a dead connection.** After a phone sleeps or changes network the socket could
+  stay open but dead while the app said "live". The app now pings the server every 25 s while in
+  use and at once when it comes back to the screen, and opens a new connection when nothing answers
+  within 6 s. A device that could not keep up with terminal output (close 4008) connects again by
+  itself instead of staying cut off, plain requests end after 20 s instead of hanging, and the
+  server no longer cuts a slow request off at 10 s.
+- **A crashed server starts again.** A server that crashed or was killed (earlyoom) is started
+  again by its supervisor, up to five times in ten minutes; a stop is still a stop.
+- **A chat with no message in it while the terminal shows a conversation shows the terminal.**
+  Whatever way of finding the session failed, a Claude or Codex history with no message at all is
+  checked against the screen, and the terminal output stands in when the screen shows answers.
+  A Claude pane follows the session in Claude's own process record when herdr's hook names
+  another one.
 - **Chat stays readable when Claude moves to the background.** A parked foreground session no
   longer hides the current terminal behind its stale conversation. Failed transcript reads show
   terminal output when no history is available, retain known history otherwise, and time out

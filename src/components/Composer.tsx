@@ -1162,7 +1162,7 @@ export function Composer({
                   {fastOn && <span className="composer-fast" title={t("Fast mode is on")}><Zap aria-hidden="true" /><span className="visually-hidden">{t("Fast mode is on")}</span></span>}
                 </>;
                 return modelCommand
-                  ? <button type="button" className="composer-pick composer-pill-button" title={pickTitle} disabled={!pickable} aria-haspopup="menu" aria-expanded={pickMenu !== null}
+                  ? <button type="button" className="composer-pick composer-pill-button" title={pickTitle} disabled={!connected} aria-disabled={!pickable} data-waiting={pickable ? undefined : ""} aria-haspopup="menu" aria-expanded={pickMenu !== null}
                       onClick={(event) => setPickMenu(event.currentTarget)}>{label}<ChevronDown className="composer-pick-caret" aria-hidden="true" /></button>
                   : label;
               })()}
@@ -1244,9 +1244,12 @@ export function Composer({
             return [{
               id: kind,
               label: t(both ? "Change model and reasoning ({command})" : kind === "model" ? "Change model ({command})" : "Change reasoning effort ({command})", { command }),
-              hint: both ? [model?.text, metadata?.reasoning_effort].filter(Boolean).join(" · ") || undefined : kind === "model" ? model?.text : metadata?.reasoning_effort ?? undefined,
+              // a working agent would queue the command: the menu still opens, so a touch learns why
+              // nothing can be picked yet, instead of a pill that silently ignores it
+              hint: !pickable ? t("Available while the agent is not working")
+                : both ? [model?.text, metadata?.reasoning_effort].filter(Boolean).join(" · ") || undefined : kind === "model" ? model?.text : metadata?.reasoning_effort ?? undefined,
               icon: kind === "model" ? Brain : Gauge,
-              run: () => sendQuick(command),
+              run: () => { if (pickable) sendQuick(command); },
             }];
           }),
           ...(fast !== null ? [{

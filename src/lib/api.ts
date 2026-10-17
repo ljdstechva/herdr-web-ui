@@ -160,8 +160,14 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
+/**
+ * A GET with no deadline of its own ends after this long: after a phone wakes, a request can sit on
+ * a connection the network already dropped, and the polls behind it would pile up and never tell.
+ */
+const GET_TIMEOUT_MS = 20_000;
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, signal ? { signal } : undefined);
+  const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(GET_TIMEOUT_MS) });
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
 }

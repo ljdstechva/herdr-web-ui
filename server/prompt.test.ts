@@ -2436,6 +2436,14 @@ ${"─".repeat(120)}
     for (const agent of ["codex", "omp", "pi", "omo", ""]) expect(parseInteractivePrompt(agent, captured)).toBeNull();
   });
 
+  test("reads the list with Claude Code 2.1.302's Fast mode notice under the effort line, wrapped by a narrow pane", () => {
+    const notice = "  ◐ Medium effort (default) ←/→ to adjust\n\n  Fast mode is ON and available with Opus 5.5 only\n  (/fast). Switching to other models turns off fast\n  mode.";
+    const screen = claudeModelList(1).replace("  ◐ Medium effort (default) ←/→ to adjust", notice);
+    const prompt = parseInteractivePrompt("claude", screen)!;
+    expect(prompt.question).toBe("Select model for this session (currently Opus 5.5). 2 more models are listed in the terminal.");
+    expect(prompt.options).toHaveLength(10);
+  });
+
   test("is one card wherever the cursor stands, whatever effort the row under it would run at", () => {
     const first = parseInteractivePrompt("claude", claudeModelList(1))!;
     for (const at of [0, 2, 4, 9]) expect(parseInteractivePrompt("claude", claudeModelList(at))!.id).toBe(first.id);
@@ -4619,5 +4627,37 @@ describe("Claude Code's model list under a hint wrapped anywhere", () => {
     const quoted = `${CLAUDE_MODEL_CLOSED}⏺ Example: Enter to set as default · s to use this session only · Esc to\n  cancel\n──────────── Summary ─\n`;
     expect(modelListWaits("claude", quoted)).toBe(false);
     expect(modelListWaits("claude", `⏺ Enter to set as default · s to use this session only · Esc to cancel\n`)).toBe(false);
+  });
+});
+
+// Captured from Claude Code 2.1.302 after a model was picked in a cached conversation; herdr
+// reported the pane done and the chat showed no card, so the pick looked lost on the phone.
+describe("Claude Code's model switch confirmation", () => {
+  const screen = (cursorOnYes = true) => [
+    "❯ /model", "  ⎿  Set model to Sonnet 5.5 for this session only", "", "▔".repeat(120),
+    "   Switch model?",
+    "   Your next response will be slower and use more tokens",
+    "",
+    "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read on",
+    "   your next message.",
+    "",
+    `   ${cursorOnYes ? "❯" : " "} 1. Yes, switch to Haiku 5.5`,
+    `   ${cursorOnYes ? " " : "❯"} 2. No, go back`,
+    "",
+  ].join("\n");
+
+  test("is a card of its two rows, answered by moves and Enter", () => {
+    const prompt = parseInteractivePrompt("claude", screen())!;
+    expect(prompt).toMatchObject({ kind: "menu", title: "Switch model?", question: "Switch model?" });
+    expect(prompt.options.map((option) => option.label)).toEqual(["Yes, switch to Haiku 5.5", "No, go back"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    expect(answerKeys(parseInteractivePrompt("claude", screen(false))!, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
+  });
+
+  test("is no card once anything follows the rows, or without its title", () => {
+    expect(parseInteractivePrompt("claude", `${screen()}❯ next prompt\n`)).toBeNull();
+    expect(parseInteractivePrompt("claude", screen().replace("Switch model?", "Something else?"))).toBeNull();
+    for (const agent of ["codex", "omp", "pi"]) expect(parseInteractivePrompt(agent, screen())).toBeNull();
   });
 });
