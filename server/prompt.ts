@@ -456,7 +456,7 @@ function queuedQuestionCount(screen: string): number {
   const at = lines.findIndex((line, index) => index > header && index <= header + 7 && CODEX_QUEUE_COUNT_RE.test(line));
   // (the main prompt, not a numbered menu row the parser did not recognise)
   if (at < 0) return 0;
-  const composer = lines.findIndex((line, index) => index > at && index <= at + 4 && /^›\s(?!\d+\.)/.test(line));
+  const composer = lines.findIndex((line, index) => index > at && index <= at + 4 && /^[›»]\s(?!\d+\.)/.test(line));
   if (composer < 0 || !/\bto answer$/i.test(lines.slice(at + 1, composer).join(" "))) return 0;
   return Number(lines[at]!.match(CODEX_QUEUE_COUNT_RE)![1]);
 }
@@ -471,15 +471,15 @@ function codexQuestionRevealKey(screen: string): string | null {
 
 /** A one-line empty Codex composer, with any placeholder proven dim in the matching viewport. */
 function codexComposerEmpty(screen: string, ansi: string): boolean {
-  const input = (text: string) => text.split(/\r?\n/).slice(-8).reverse().find((line) => /^›(?:\s|$)/.test(cleanLine(line)));
+  const input = (text: string) => text.split(/\r?\n/).slice(-8).reverse().find((line) => /^[›»](?:\s|$)/.test(cleanLine(line)));
   const live = input(screen);
   const visible = input(ansi);
   if (live === undefined || visible === undefined || cleanLine(live) !== cleanLine(visible)) return false;
-  if (cleanLine(live) === "›") return true;
+  if (/^[›»]$/.test(cleanLine(live))) return true;
   let marker = false;
   let dimText = false;
   for (const [run, dim] of sgrRuns(visible)) for (const character of run) {
-    if (!marker) { if (character === "›") marker = true; continue; }
+    if (!marker) { if (character === "›" || character === "»") marker = true; continue; }
     if (!character.trim()) continue;
     if (!dim) return false;
     dimText = true;
@@ -508,11 +508,24 @@ async function revealCodexQuestion(paneId: string, signal: AbortSignal, quiet: (
   // typed characters are not dim, unlike Codex's placeholder. Never move input out of a draft.
   const ansi = (await paneRead({ paneId, source: "visible", format: "ansi" })).text;
   if (!codexComposerEmpty(screen, ansi) || signal.aborted || !quiet()) return unchanged();
-  // The viewport read can take time: the final live read must still show the same empty queue.
-  if (await liveScreen(paneId) !== screen || signal.aborted || !quiet()) return unchanged();
+  // Output and queue ages can tick between reads. Only the queue and the verified empty
+  // composer must still match; a new draft, menu or question count still refuses the key.
+  const latest = await liveScreen(paneId);
+  if (codexQuestionRevealKey(latest) !== key || queuedQuestionCount(latest) !== queuedQuestionCount(screen)
+    || !codexComposerEmpty(latest, ansi) || signal.aborted || !quiet()) return unchanged();
   questionReveals.add(owner);
   if (questionReveals.size > 256) questionReveals.delete(questionReveals.keys().next().value!);
-  await paneSendKeys(paneId, [key], undefined, () => !signal.aborted && quiet());
+  try {
+    await paneSendKeys(paneId, [key], undefined, () => !signal.aborted && quiet());
+  } catch (error) {
+    // The final socket guard can refuse before writing: that proven-unsent attempt
+    // may be tried when typing stops. Lost replies remain suppressed as uncertain.
+    if (error instanceof HerdrError && error.code === "cancelled") {
+      questionReveals.delete(owner);
+      return unchanged();
+    }
+    throw error;
+  }
   const deadline = Date.now() + SETTLE_MS;
   while (!signal.aborted && Date.now() < deadline) {
     const opened = await Promise.race([liveScreen(paneId), Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null)]);
