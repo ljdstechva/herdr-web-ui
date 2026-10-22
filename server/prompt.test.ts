@@ -3010,6 +3010,43 @@ describe("an answer and the menu it was made for", () => {
     }
   });
 
+  test("automatically reveals the current Codex double-chevron composer captured from the live pane", async () => {
+    // Codex 0.163.0: the composer is »; menu choices still use ›. These SGR runs
+    // are from the live composer, including its themed background and dim placeholder.
+    const composer = "\x1b[0m\x1b[1m\x1b[38;2;189;142;250m\x1b[48;2;57;57;57m» "
+      + "\x1b[0m\x1b[48;2;57;57;57m\x1b[0m\x1b[2m\x1b[48;2;57;57;57mAsk Codex to do anything"
+      + "\x1b[0m\x1b[48;2;57;57;57m                     \x1b[0m";
+    const ansi = hiddenCodexQuestion("shift+← to answer")
+      .replace("? 1 question · 8s", "? 1 question")
+      .replace("› \x1b[2mAsk Codex to do anything\x1b[0m", `\n${composer}\n`);
+    const screen = ansi.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+    expect(codexQuestionsCollapsed(screen)).toBe(true);
+    await withPane("codex", "blocked", screen, async (pane) => {
+      pane.viewport = ansi;
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; pane.viewport = undefined; };
+      expect(await reveal()).toEqual({ status: 200, body: { revealed: true } });
+      expect((await card())?.question).toBe("Which split?");
+      expect(pane.sent).toEqual(["shift+left"]);
+    });
+    await withPane("codex", "blocked", screen.replace("Ask Codex to do anything", "An unsent draft"), async (pane) => {
+      pane.viewport = ansi.replace("\x1b[2m", "\x1b[22m").replace("Ask Codex to do anything", "An unsent draft");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("automatic reveal tolerates working output and queue timer changes while it verifies the empty composer", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      let reads = 0;
+      pane.onRead = () => {
+        if (++reads === 3) pane.screen = "• Still working on the task\n" + pane.screen.replace("8s", "9s");
+      };
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+      expect((await reveal()).body).toEqual({ revealed: true });
+      expect(pane.sent).toEqual(["shift+left"]);
+    });
+  });
+
   test("automatic reveal ignores other agents, ordinary output, queued messages and open menus", async () => {
     for (const [agent, screen] of [
       ["claude", hiddenCodexQuestion()], ["omo", hiddenCodexQuestion()],
@@ -3053,6 +3090,19 @@ describe("an answer and the menu it was made for", () => {
       pane.onRead = () => { if (++reads === 3) pane.screen = hiddenCodexQuestion().replace("Ask Codex to do anything", "new draft"); };
       expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
       expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("automatic reveal can resume after its final send guard proves no key was written", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      let checks = 0;
+      // Four checks authorize the reads; the socket's final guard sees new typing.
+      expect(await reveal(undefined, undefined, () => ++checks < 5)).toEqual({ status: 200, body: { revealed: false } });
+      expect(checks).toBe(5);
+      expect(pane.sent).toEqual([]);
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+      expect((await reveal()).body).toEqual({ revealed: true });
+      expect(pane.sent).toEqual(["shift+left"]);
     });
   });
 

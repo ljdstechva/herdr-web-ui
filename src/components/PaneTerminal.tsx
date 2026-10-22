@@ -370,9 +370,11 @@ export function PaneTerminal({
   // The prompt the chat shows: while it waits, a message from the composer answers it.
   const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
   const [promptRefresh, setPromptRefresh] = useState(0);
+  const [revealError, setRevealError] = useState<string | null>(null);
   // Reveal Codex's collapsed questions in either lens, only on the pane the user is using.
   // The server checks the current agent/screen again in the pane's serialized input turn.
   useEffect(() => {
+    setRevealError(null);
     if (agent !== "codex" || paneId === null || !active || !presented || !connected
       || ended || held || released || observing || role !== "interact") return;
     let stopped = false;
@@ -388,12 +390,15 @@ export function PaneTerminal({
         request = controller;
         try {
           const result = await revealPaneQuestion(paneId, AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]));
-          if (!stopped && !controller.signal.aborted && result.revealed) setPromptRefresh((key) => key + 1);
+          if (!stopped && !controller.signal.aborted && result.revealed) {
+            setRevealError(null);
+            setPromptRefresh((key) => key + 1);
+          }
         } catch (error) {
           if (!stopped && !controller.signal.aborted) {
-            // Stop this polling session on a failure: an uncertain key is never replayed.
-            setInputError(error instanceof Error ? error.message : String(error));
-            return;
+            // Keep detecting after a transient failure. The server remembers uncertain
+            // key delivery, so another poll never blindly repeats a sent shortcut.
+            setRevealError(error instanceof Error ? error.message : String(error));
           }
         } finally { request = null; }
       }
@@ -2214,6 +2219,7 @@ export function PaneTerminal({
         </div>
       )}
       <div className="terminal-banners">
+        {revealError && <div className="terminal-banner" role="status">{revealError}<button type="button" className="btn terminal-banner-action" onClick={() => setRevealError(null)}>{t("Dismiss")}</button></div>}
         {paneId !== null && held && (
           <div className="terminal-banner terminal-banner-warning" role="status">
             <span>{t("Another app has this pane open. It connects here as soon as that app lets go.")}</span>
