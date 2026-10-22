@@ -2913,7 +2913,7 @@ it("refuses cross-origin changes while allowing same-origin and CLI requests", a
   const base = `http://127.0.0.1:${instance.port}`;
   const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-origin" });
   try {
-    for (const path of ["pane/input", "pane/keys", "pane/close", "pane/focus", "layout/ratio", "workspace/create", "tab/create", "tab/rename", "tab/close", "tab/move", "push/subscribe"]) {
+    for (const path of ["pane/prompt/reveal", "pane/input", "pane/keys", "pane/close", "pane/focus", "layout/ratio", "workspace/create", "tab/create", "tab/rename", "tab/close", "tab/move", "push/subscribe"]) {
       const response = await fetch(`${base}/api/${path}`, { method: "POST", headers: { origin: "http://other.example", "content-type": "text/plain" }, body: JSON.stringify({ pane_id: created.root_pane.pane_id, text: "must not type", keys: ["Enter"] }) });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: { code: "invalid_origin" } });
@@ -2923,4 +2923,21 @@ it("refuses cross-origin changes while allowing same-origin and CLI requests", a
       expect(response.status).toBe(200);
     }
   } finally { instance.stop(); await workspaceClose(created.workspace.workspace_id); rmSync(root, { recursive: true, force: true }); }
+});
+
+it("Codex question reveal API refuses invalid requests and leaves a shell unchanged", async () => {
+  const state = mkdtempSync(join(tmpdir(), "herdr-question-reveal-contract-"));
+  const app = createServer({ port: 0, stateDir: state, token: "", tailscaleOwner: null, machines: false });
+  const created = await workspaceCreate({ cwd: state, label: "herdr-web-ui-test-question-reveal" });
+  const url = `http://127.0.0.1:${app.port}/api/pane/prompt/reveal`;
+  try {
+    const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pane_id: created.root_pane.pane_id }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ revealed: false });
+    expect((await fetch(url)).status).toBe(400);
+    expect((await fetch(url, { method: "POST", body: "{}" })).status).toBe(400);
+    expect((await fetch(url, { method: "POST", body: "invalid" })).status).toBe(400);
+  } finally {
+    app.stop(); await workspaceClose(created.workspace.workspace_id); rmSync(state, { recursive: true, force: true });
+  }
 });

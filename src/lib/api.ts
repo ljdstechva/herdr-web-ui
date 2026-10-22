@@ -36,6 +36,7 @@ import type {
   PluginActions,
   PluginActionsResponse,
   PromptAnswer,
+  PromptRevealResult,
   PushKey,
   RemoteAccess,
   RemoveWorktreeRequest,
@@ -160,8 +161,14 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
+/**
+ * A GET with no deadline of its own ends after this long: after a phone wakes, a request can sit on
+ * a connection the network already dropped, and the polls behind it would pile up and never tell.
+ */
+const GET_TIMEOUT_MS = 20_000;
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, signal ? { signal } : undefined);
+  const response = await fetch(url, { signal: signal ?? AbortSignal.timeout(GET_TIMEOUT_MS) });
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
 }
@@ -388,11 +395,12 @@ export async function uploadPaneImage(paneId: string, image: Blob, machineId = "
   return ((await response.json()) as { path: string }).path;
 }
 
-async function sendJson(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown): Promise<Response> {
+async function sendJson(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown, signal?: AbortSignal): Promise<Response> {
   const response = await fetch(url, {
     method,
     headers: { "content-type": "application/json", "x-herdr-machine": "1" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok) throw await errorFrom(url, response);
   return response;
@@ -685,6 +693,11 @@ export async function fetchPanePromptState(paneId: string, machineId = "local"):
     // a Codex pane's Fast mode as its screen shows it now; null where the screen does not say (or the bridge is older)
     fast: typeof body.fast === "boolean" ? body.fast : null,
   };
+}
+
+/** Reveal a pending Codex question; cancellation never queues input for a later connection. */
+export async function revealPaneQuestion(paneId: string, signal: AbortSignal, machineId = "local"): Promise<PromptRevealResult> {
+  return await (await sendJson(machinePath(machineId, "pane/prompt/reveal"), "POST", { pane_id: paneId }, signal)).json() as PromptRevealResult;
 }
 
 /** POST /api/pane/fast: presses Codex's own Fast mode toggle. ApiError 409 `fast_unbound` when Codex binds no key to it on that PC. */

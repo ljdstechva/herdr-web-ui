@@ -586,3 +586,83 @@ it("tells the server whether the page is in use: on connect, on a change, and ag
   expect(presence(second)).toEqual([{ type: "presence", active: false }]);
   client.close();
 });
+
+it("drops a socket that stops answering pings and opens a new one at once", async () => {
+  const client = new HerdrSocket("ws://test/ws", { pongWaitMs: 20, stallReconnectMs: 20 });
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["ping"]));
+  try {
+    client.probe();
+    expect(socket.sent.filter((frame) => frame.type === "ping")).toHaveLength(1);
+    await Bun.sleep(50);
+    expect(client.connected).toBe(false);
+    expect(FakeSocket.last).not.toBe(socket);
+  } finally {
+    client.close();
+  }
+});
+
+it("keeps a socket that answers, and never pings a bridge without the feature", async () => {
+  const client = new HerdrSocket("ws://test/ws", { pongWaitMs: 20, stallReconnectMs: 20 });
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot([]));
+  try {
+    client.probe();
+    expect(socket.sent.filter((frame) => frame.type === "ping")).toHaveLength(0);
+    socket.receive(snapshot(["ping"]));
+    client.probe();
+    const ping = socket.sent.find((frame) => frame.type === "ping")!;
+    socket.receive({ type: "pong", id: ping.id });
+    await Bun.sleep(50);
+    expect(client.connected).toBe(true);
+    expect(FakeSocket.last).toBe(socket);
+  } finally {
+    client.close();
+  }
+});
+
+it("comes back on its own after an output-stall close", async () => {
+  const client = new HerdrSocket("ws://test/ws", { pongWaitMs: 20, stallReconnectMs: 20 });
+  const errors: string[] = [];
+  client.on((message) => { if (message.type === "error") errors.push(message.code); });
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  try {
+    socket.readyState = 3;
+    (socket as unknown as { emit(type: string, event: unknown): void }).emit("close", { code: 4008 });
+    expect(errors).toEqual(["output_stalled"]);
+    await Bun.sleep(400);
+    expect(FakeSocket.last).not.toBe(socket);
+  } finally {
+    client.close();
+  }
+});
+
+it("reveals Codex questions only on a supported, attached, input-ready interact connection", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["input-ready"]));
+  client.attach("w1:p1", 80, 24);
+  socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  socket.receive(snapshot(["input-ready", "codex-question-reveal"]));
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(true);
+  expect(client.canRevealCodexQuestion("w1:p2")).toBe(false);
+  client.setMode("observe");
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  client.setMode("interact");
+  socket.receive({ type: "input-ready", pane_id: "w1:p1", ready: false });
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+  client.detach("w1:p1");
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  client.close();
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+});

@@ -12,6 +12,10 @@ import { herdrSocketPath } from "./herdr/client.ts";
 import { Updater, type Release } from "./updater.ts";
 import { windowsProcessTable } from "./windows-processes.ts";
 
+/** How many crashes of the bridge are restarted within CRASH_WINDOW_MS before the supervisor gives up. */
+const CRASH_RESTARTS = 5;
+const CRASH_WINDOW_MS = 10 * 60_000;
+
 export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   root = resolve(root);
   const port = Number(process.env["PORT"] ?? DEFAULT_PORT);
@@ -78,10 +82,13 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
           void started.promise.then(() => updater.request(command));
         }
       },
-      onExit(proc, code) {
+      onExit(proc, code, signal) {
         if (child === proc && !switching && !stopping) {
-          console.error(`Bridge exited unexpectedly (${code}).`);
-          void shutdown(1);
+          console.error(`Bridge exited unexpectedly (${code ?? signal}).`);
+          // the plugin's stop (SIGTERM to the group) and Ctrl+C are stops; a kill (earlyoom's SIGKILL) is a crash
+          // (Bun names the signal, though its type says number)
+          const stopped = ["SIGTERM", "SIGINT", "15", "2"].includes(String(signal));
+          void recover(proc, stopped ? 0 : code ?? 1);
         }
       },
     });
@@ -126,6 +133,30 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
       } finally { switching = false; }
     },
   });
+  /**
+   * A bridge that crashed is started again, a few times, rather than leaving the phone with no server
+   * until herdr restarts: nothing else restarts the tree. A clean exit (0, also for SIGTERM: the
+   * plugin's stop terminates the whole process group, and the bridge can end before this process
+   * hears of it) is a stop, and so is a bridge that keeps crashing.
+   */
+  const crashes: number[] = [];
+  async function recover(crashed: ReturnType<typeof Bun.spawn>, code: number) {
+    const now = Date.now();
+    while (crashes.length > 0 && now - crashes[0]! > CRASH_WINDOW_MS) crashes.shift();
+    crashes.push(now);
+    if (code === 0 || crashes.length > CRASH_RESTARTS) { await shutdown(1); return; }
+    await Bun.sleep(1000 * crashes.length);
+    // a stop, an update or another recovery took over meanwhile
+    if (stopping || switching || child !== crashed) return;
+    switching = true;
+    try {
+      await launch(active);
+      console.error(`Bridge restarted after a crash (${crashes.length} of ${CRASH_RESTARTS} in ${CRASH_WINDOW_MS / 60_000} min).`);
+    } catch (error) {
+      console.error("The bridge could not be restarted.", error);
+      await shutdown(1);
+    } finally { switching = false; }
+  }
   async function shutdown(code: number) {
     if (stopping) return;
     stopping = true; updater.stop();

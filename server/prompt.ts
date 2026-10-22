@@ -3,10 +3,10 @@ import { createHash, randomBytes } from "node:crypto";
 import type { HerdrPane, InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
 import { codexTranscriptPath, paneCodexHome, unansweredCodexQuestions, type QueuedQuestion } from "./codex.ts";
 import { codexFastOnScreen } from "./codex-fast.ts";
-import { HerdrError, paneRead, paneScrollInfo, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
+import { HerdrError, herdrSocketPath, paneRead, paneScrollInfo, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
 import { omoTranscriptForPane } from "./omo.ts";
 import { OmoAskReader, omoAsksAfter, type OmoAskCall, type OmoAsks } from "./omo-ask.ts";
-import { badRequest, errorResponse, jsonResponse } from "./http.ts";
+import { badRequest, conflictResponse, errorResponse, jsonResponse } from "./http.ts";
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const SELECTED_RE = /^[❯›>]\s*/;
@@ -108,6 +108,7 @@ type Responder =
   | "claude-approval"
   | "claude-plan"
   | "claude-confirm"
+  | "claude-switch-model"
   | "claude-held"
   | "claude-model"
   | "claude-effort"
@@ -454,8 +455,77 @@ function queuedQuestionCount(screen: string): number {
   if (lines.slice(header).some((line) => /^↳\s/.test(line) || /Messages to be submitted/i.test(line) || CODEX_ASYNC_ASK_HINT_RE.test(line))) return 0;
   const at = lines.findIndex((line, index) => index > header && index <= header + 7 && CODEX_QUEUE_COUNT_RE.test(line));
   // (the main prompt, not a numbered menu row the parser did not recognise)
-  if (at < 0 || !/\bto answer$/i.test(lines[at + 1] ?? "") || !/^›\s(?!\d+\.)/.test(lines[at + 2] ?? "")) return 0;
+  if (at < 0) return 0;
+  const composer = lines.findIndex((line, index) => index > at && index <= at + 4 && /^›\s(?!\d+\.)/.test(line));
+  if (composer < 0 || !/\bto answer$/i.test(lines.slice(at + 1, composer).join(" "))) return 0;
   return Number(lines[at]!.match(CODEX_QUEUE_COUNT_RE)![1]);
+}
+
+/** Only Codex's advertised question-opening chords; a queued message or unknown key is never pressed. */
+function codexQuestionRevealKey(screen: string): string | null {
+  if (!codexQuestionsCollapsed(screen)) return null;
+  const tail = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean).slice(-16).join("\n");
+  const hint = tail.match(/(?:^|\n)(shift\s*\+\s*(?:←|left)|alt\s*\+\s*(?:↑|up))\s+to\s+answer\s*(?=\n|$)/i);
+  return hint ? (/^shift/i.test(hint[1]!) ? "shift+left" : "alt+up") : null;
+}
+
+/** A one-line empty Codex composer, with any placeholder proven dim in the matching viewport. */
+function codexComposerEmpty(screen: string, ansi: string): boolean {
+  const input = (text: string) => text.split(/\r?\n/).slice(-8).reverse().find((line) => /^›(?:\s|$)/.test(cleanLine(line)));
+  const live = input(screen);
+  const visible = input(ansi);
+  if (live === undefined || visible === undefined || cleanLine(live) !== cleanLine(visible)) return false;
+  if (cleanLine(live) === "›") return true;
+  let marker = false;
+  let dimText = false;
+  for (const [run, dim] of sgrRuns(visible)) for (const character of run) {
+    if (!marker) { if (character === "›") marker = true; continue; }
+    if (!character.trim()) continue;
+    if (!dim) return false;
+    dimText = true;
+  }
+  return dimText;
+}
+
+// A key with a lost reply must never be retried just because the queue's age changed.
+// A new screen (open question or no queue) ends this attempt. Includes socket identity for
+// isolated test/bridge sessions whose pane ids can coincide.
+const questionReveals = new Set<string>();
+
+async function revealCodexQuestion(paneId: string, signal: AbortSignal, quiet: () => boolean): Promise<Response> {
+  const unchanged = () => jsonResponse({ revealed: false });
+  if (signal.aborted || !quiet()) return unchanged();
+  const { panes } = await sessionSnapshot();
+  const owner = `${herdrSocketPath()}\0${paneId}`;
+  const pane = panes.find((candidate) => candidate.pane_id === paneId);
+  if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
+  if (pane.agent !== "codex") { questionReveals.delete(owner); return unchanged(); }
+  const screen = await liveScreen(paneId);
+  const key = codexQuestionRevealKey(screen);
+  if (!key) { questionReveals.delete(owner); return unchanged(); }
+  if (signal.aborted || !quiet() || questionReveals.has(owner)) return unchanged();
+  // Detection is the live bottom, ANSI is the viewport. Both must show the same composer;
+  // typed characters are not dim, unlike Codex's placeholder. Never move input out of a draft.
+  const ansi = (await paneRead({ paneId, source: "visible", format: "ansi" })).text;
+  if (!codexComposerEmpty(screen, ansi) || signal.aborted || !quiet()) return unchanged();
+  // The viewport read can take time: the final live read must still show the same empty queue.
+  if (await liveScreen(paneId) !== screen || signal.aborted || !quiet()) return unchanged();
+  questionReveals.add(owner);
+  if (questionReveals.size > 256) questionReveals.delete(questionReveals.keys().next().value!);
+  await paneSendKeys(paneId, [key], undefined, () => !signal.aborted && quiet());
+  const deadline = Date.now() + SETTLE_MS;
+  while (!signal.aborted && Date.now() < deadline) {
+    const opened = await Promise.race([liveScreen(paneId), Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null)]);
+    if (opened === null) break;
+    if (parsePrompt("codex", opened)?.responder === "codex-async-question") {
+      questionReveals.delete(owner);
+      return jsonResponse({ revealed: true });
+    }
+    if (!codexQuestionsCollapsed(opened)) { questionReveals.delete(owner); return unchanged(); }
+    await Bun.sleep(50);
+  }
+  if (signal.aborted) return unchanged();
+  return conflictResponse("question_not_revealed", "Codex did not open its question. Open it in the terminal to continue.");
 }
 
 /** The question a pane's queue opened on, as it showed there, when that was not the card's. */
@@ -1437,6 +1507,48 @@ function parseClaudeConfirm(screen: string): ParsedPrompt | null {
 }
 
 /**
+ * Claude Code's confirmation after a model is picked in a conversation it has cached, live in
+ * 2.1.302 (herdr reports the pane done meanwhile, and no hint line is drawn under the rows):
+ *
+ *   Switch model?
+ *   Your next response will be slower and use more tokens
+ *
+ *   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read on
+ *   your next message.
+ *
+ *   ❯ 1. Yes, switch to Haiku 5.5
+ *     2. No, go back
+ *
+ * Without a card the pick looked lost on the phone while Claude waited for this answer. The two
+ * rows must be the last lines on screen, under the title within a few lines; answered as Claude's
+ * other confirmations are (moves, a look before the Enter).
+ */
+const CLAUDE_SWITCH_TITLE_RE = /^\s*Switch model\?\s*$/;
+const CLAUDE_SWITCH_ROW_RE = /^\s*(❯)?\s*([12])\.\s+(\S.*?)\s*$/;
+
+function parseClaudeSwitchModel(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
+  let end = lines.length - 1;
+  while (end >= 0 && lines[end]!.trim() === "") end -= 1;
+  if (end < 1) return null;
+  const yes = CLAUDE_SWITCH_ROW_RE.exec(lines[end - 1]!);
+  const no = CLAUDE_SWITCH_ROW_RE.exec(lines[end]!);
+  if (yes === null || no === null) return null;
+  if (yes[2] !== "1" || no[2] !== "2" || !/^Yes, switch to /.test(yes[3]!) || !/^No\b/.test(no[3]!) || (yes[1] === undefined) === (no[1] === undefined)) return null;
+  const titleIndex = findLastIndex(lines, (line, index) => index < end - 1 && end - 1 - index <= 10 && CLAUDE_SWITCH_TITLE_RE.test(line));
+  if (titleIndex < 0) return null;
+  const body = lines.slice(titleIndex + 1, end - 1).map(cleanLine).filter(Boolean);
+  return finishPrompt("claude", {
+    kind: "menu", title: "Switch model?", question: "Switch model?",
+    body: body.join("\n") || null,
+    options: [{ label: yes[3]!, description: null }, { label: no[3]!, description: null }], multi_select: false, custom_option_index: null,
+  }, {
+    responder: "claude-switch-model", menuLabels: [yes[3]!, no[3]!], selectedIndex: yes[1] !== undefined ? 0 : 1,
+    checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+  });
+}
+
+/**
  * Claude Code's `/model` list, live in 2.1.290:
  *
  *   Select model
@@ -1472,6 +1584,8 @@ const CLAUDE_MODEL_ROW_RE = /^\s*([❯›>↑↓])?\s*(\d+)\.\s+(\S.*)$/;
 const CLAUDE_MODEL_MORE_RE = /^…\s*\+(\d+) models?$/;
 /** lines between the rows and the hint, at most: the effort line, wrapped by a narrow pane */
 const CLAUDE_MODEL_UNDER_LINES = 3;
+/** the first line of a notice Claude Code 2.1.302 adds under the effort line (Fast mode, or max effort's cost); it runs to the next blank line */
+const CLAUDE_MODEL_NOTICE_RE = /^\s*(?:Fast mode is|Use \/fast\b|Max effort\b)/i;
 
 interface ListRow {
   number: number; cursor: boolean;
@@ -1747,7 +1861,12 @@ function parseClaudeModel(screen: string): ParsedPrompt | null {
   const hintIndex = findLastIndex(lines, (_, index) => hintAt(lines, index, CLAUDE_MODEL_GUARD_RE));
   if (hintIndex < 0) return null;
   const { rows, below, last, unread } = listRows(lines, hintIndex, CLAUDE_MODEL_ROW_RE, CLAUDE_MODEL_MORE_RE);
-  const under = lines.slice(last + 1, hintIndex).filter((line) => line.trim() !== "").length;
+  let inNotice = false;
+  const under = lines.slice(last + 1, hintIndex).filter((line) => {
+    if (line.trim() === "") { inNotice = false; return false; }
+    if (CLAUDE_MODEL_NOTICE_RE.test(line)) inNotice = true;
+    return !inNotice;
+  }).length;
   const selectedIndex = rows.findIndex((row) => row.cursor);
   if (unread || under > CLAUDE_MODEL_UNDER_LINES || rows.length < 2 || rows.filter((row) => row.cursor).length !== 1) return null;
   const names = listNames(rows);
@@ -1900,6 +2019,8 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // chord. Anchor that suffix so arbitrary trailing text cannot keep an old approval live.
   if (prompt.responder === "claude-approval") return ends(/esc to cancel.*(?:tab|ctrl\+e)|ctrl\+e to explain|^esc to cancel(?:\s*·\s*ctrl\+x ctrl\+k twice to stop background agents)?$/i);
   if (prompt.responder === "claude-confirm") return ends(CLAUDE_CONFIRM_HINT_RE);
+  // no hint under it: its own last row, "2. No, go back", is the screen's last line
+  if (prompt.responder === "claude-switch-model") return /^(?:[›>❯]\s*)?2\.\s+No\b/.test(last);
   // its parser already found the hint over the input box with only the footer under it
   if (prompt.responder === "claude-held") return true;
   if (prompt.responder === "claude-model") return claudeModelListWaits(screen);
@@ -2318,7 +2439,7 @@ function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null
       // `pi` reads pi's own dialogs first: pi's hint is its own, so an omo form never matches
       // it and falls through to omo()'s parsers.
       : agent === "claude"
-        ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
+        ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeSwitchModel(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
         : agent === "pi"
           ? [parsePiModel(screen), parsePiDialog(screen), ...omo()]
         : agent === "hermes"
@@ -3193,10 +3314,11 @@ function sameText(shown: string, asked: string): boolean {
 async function openQueuedQuestion(paneId: string, queued: ParsedPrompt, givenUp: () => boolean = () => false, opens: (open: boolean) => void = () => undefined): Promise<InteractivePrompt | null> {
   // the key only once the screen still shows the questions' count, nothing of the user's queued,
   // and while somebody still waits for the answer (asked after the read, which takes its time)
-  if (queuedQuestionCount(await liveScreen(paneId)) === 0 || givenUp()) return null;
+  const key = codexQuestionRevealKey(await liveScreen(paneId));
+  if (key === null || givenUp()) return null;
   // told before the key goes: it may be pressed and its reply still be lost
   opens(true);
-  await paneSendKeys(paneId, [KEY.openQueue]);
+  await paneSendKeys(paneId, [key]);
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await Bun.sleep(100);
     const opened = parsePrompt("codex", await liveScreen(paneId));
@@ -3251,10 +3373,12 @@ export interface PromptRequestOptions {
   serialize?: <T>(paneId: string, task: () => Promise<T>) => Promise<T>;
   /** Native Codex store, for the rollout behind a collapsed queue; defaults to CODEX_HOME */
   codexHome?: string;
+  /** Automatic reveals defer while any client is typing in this pane. */
+  revealQuiet?: (paneId: string) => boolean;
 }
 
 export async function handlePromptRequest(request: Request, url: URL, options: PromptRequestOptions = {}): Promise<Response | null> {
-  if (url.pathname !== "/api/pane/prompt" && url.pathname !== "/api/pane/prompt/answer") return null;
+  if (!["/api/pane/prompt", "/api/pane/prompt/answer", "/api/pane/prompt/reveal"].includes(url.pathname)) return null;
   try {
     if (url.pathname === "/api/pane/prompt") {
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
@@ -3291,6 +3415,10 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     }
     if (!body || typeof body !== "object") return badRequest("invalid_answer", "The answer body is required.");
     if (typeof body.pane_id !== "string" || !body.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required.");
+    if (url.pathname === "/api/pane/prompt/reveal") {
+      const serialize = options.serialize ?? (<T>(_paneId: string, task: () => Promise<T>) => task());
+      return await serialize(body.pane_id, () => revealCodexQuestion(body.pane_id, request.signal, () => options.revealQuiet?.(body.pane_id) ?? true));
+    }
     if (typeof body.prompt_id !== "string" || !body.prompt_id) return badRequest("invalid_answer", "prompt_id is required.");
 
     // read, checked and answered in the pane's turn: a message still in flight goes first, and
@@ -3372,7 +3500,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         // Claude's unnumbered rows and pi's models are read with no number to aim at: looked at
         // again before the Enter even when it needs no move. So is Claude's model list, picked
         // with a letter: typed after the list has gone, it would stand in the agent's own prompt
-        let moved = responder === "claude-confirm" || responder === "pi-model" || responder === "omo-question" || responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "fallback-gjc-menu";
+        let moved = responder === "claude-confirm" || responder === "claude-switch-model" || responder === "pi-model" || responder === "omo-question" || responder === "claude-model" || responder === "claude-effort" || responder === "codex-model" || responder === "fallback-gjc-menu";
         // Claude's and Codex's model lists: a window on a list, picked with a letter; Claude's effort
         // slider the same way, its levels side by side
         const list = responder === "claude-model" || responder === "claude-effort" || responder === "codex-model";

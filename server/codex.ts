@@ -1181,6 +1181,41 @@ async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[
   return claimed;
 }
 
+/**
+ * The thread name a Codex TUI shows in its terminal title, "<name> | <project folder>", with
+ * any leading spinner or status mark dropped. Null for a title that names no thread (the bare
+ * folder of a conversation not named yet, or no title).
+ */
+export function codexTitleName(title: string | null | undefined, cwd: string): string | null {
+  if (typeof title !== "string") return null;
+  let name = title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  const folder = cwd.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) ?? "";
+  const cut = name.lastIndexOf(" | ");
+  if (cut >= 0 && name.slice(cut + 3).trim() === folder) name = name.slice(0, cut).trim();
+  if (name.length < 3 || name === folder || name.includes(" | ")) return null;
+  return name;
+}
+
+/**
+ * The rollout of the thread a pane's Codex names in its terminal title. Since Codex 0.157 the
+ * shared app-server daemon, not the TUI, holds every rollout open, so the pane's processes have
+ * no descriptor to tell; the title still does (live-verified 2026-10-17 with Codex 0.163:
+ * "Return PONG | project" for the thread named "Return PONG"). Only a name exactly one
+ * interactive thread of this cwd has, and no other Codex pane here shows, counts.
+ */
+function titleThread(paneId: string, cwd: string, home: string, db: Database, panes: readonly HerdrPane[]): string | null {
+  const pane = panes.find((candidate) => candidate.pane_id === paneId);
+  const name = codexTitleName(pane?.terminal_title_stripped ?? pane?.terminal_title, cwd);
+  if (name === null) return null;
+  if (codexPeersIn(panes, paneId, cwd).some((peer) => codexTitleName(peer.terminal_title_stripped ?? peer.terminal_title, cwd) === name)) return null;
+  if (db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'name'").get() === null) return null;
+  const { where, params } = storedCwdCondition(cwd);
+  const rows = db.query<{ rollout_path: string }, string[]>(
+    `SELECT rollout_path FROM threads WHERE ${where} AND archived = 0 AND agent_role IS NULL${interactive(db)} AND name = ? LIMIT 2`,
+  ).all(...params, name);
+  return rows.length === 1 ? codexRolloutPath(rows[0]!.rollout_path, home) : null;
+}
+
 /** Whether another Codex pane in this cwd was started as `codex resume <thread>`. */
 async function resumedElsewhere(paneId: string, cwd: string, thread: string, sessionPanes?: HerdrPane[]): Promise<boolean> {
   const panes = codexPeersIn(sessionPanes ?? (await sessionSnapshot()).panes, paneId, cwd);
@@ -1348,8 +1383,11 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   let reported: string | null = null;
   /** whether every interactive thread in this cwd is among the candidates */
   let listed = false;
+  /** the rollout of the thread the pane's terminal title names */
+  let titled: string | null = null;
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
+    titled = titleThread(paneId, cwd, home, db, panes ?? (await sessionSnapshot()).panes);
     if (session?.value && UUID.test(session.value)) {
       const first = db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'first_user_message'").get() !== null ? ", first_user_message" : "";
       const row = db.query<{ rollout_path: string; first_user_message?: string | null }, [string]>(`SELECT rollout_path${first} FROM threads WHERE id = ?`).get(session.value);
@@ -1394,6 +1432,12 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     boundRollouts.set(paneId, { processes, path: matched, at: Date.now() });
     if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
     return matched;
+  }
+  if (titled !== null && codexProcesses.length > 0) {
+    boundRollouts.delete(paneId);
+    boundRollouts.set(paneId, { processes, path: titled, at: Date.now() });
+    if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
+    return titled;
   }
   // Nothing on screen tells: a long run of tool output pushed the last answer out of
   // the read, or nothing is answered yet. The same Codex process still writes the

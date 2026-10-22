@@ -12,6 +12,7 @@ export function useMachineApi() {
     fetchPaneConversation: (pane: string, page?: api.ConversationPageQuery) => api.fetchPaneConversation(pane, id, page),
     peekPaneConversation: (pane: string) => api.peekPaneConversation(pane, id),
     fetchPanePrompt: (pane: string) => api.fetchPanePrompt(pane, id),
+    revealPaneQuestion: (pane: string, signal: AbortSignal) => api.revealPaneQuestion(pane, signal, id),
     fetchPanePromptState: (pane: string) => api.fetchPanePromptState(pane, id),
     answerPanePrompt: (answer: Parameters<typeof api.answerPanePrompt>[0]) => api.answerPanePrompt(answer, id),
     togglePaneFast: (pane: string) => api.togglePaneFast(pane, id),

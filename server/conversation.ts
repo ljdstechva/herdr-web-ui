@@ -38,7 +38,7 @@ import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } f
 import nodePath, { type PlatformPath } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
-import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
+import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessState, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
@@ -1100,7 +1100,9 @@ async function claudeTranscriptPath(paneId: string, cwds: readonly (string | nul
   // PID record still name the parked history; parkedJobId does not identify the displayed
   // session either. Use this pane's terminal until Claude owns an interactive session again.
   if (native?.parked) throw new ConversationUnavailable("no_session_id");
-  if (typeof session !== "string" || !SESSION_ID.test(session)) session = native?.sessionId;
+  // Claude rewrites its own validated PID record on /clear and resume; herdr's hook reports only
+  // at SessionStart, best effort, so a report lost under load would keep the chat on the old session
+  if (native && SESSION_ID.test(native.sessionId)) session = native.sessionId;
   if (typeof session !== "string" || !SESSION_ID.test(session)) throw new ConversationUnavailable("no_session_id");
   const path = await claudeTranscriptFile(home, session, cwds, configDir);
   // Claude writes the file with its first message: until then the session it reports holds nothing
@@ -1333,7 +1335,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   const snapshot = await sessionSnapshot();
   let resolved: NativeTranscript;
 
-  const onNotStarted = (error: ConversationNotStarted): RecognizedConversation => {
+  const onNotStarted = async (error: ConversationNotStarted): Promise<RecognizedConversation> => {
     // a file read before and gone since is no conversation not begun: the terminal stands in for it
     if (writtenSessions.has(`${error.source}\0${error.identity}`)) throw new ConversationUnavailable("transcript_missing");
     // nothing comes before a conversation not begun: a cursor into it is another one's
@@ -1341,6 +1343,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     // an agent at work on its first turn has written nothing yet, but its terminal shows the turn
     const status = snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
     if (status === "working" || status === "blocked") throw error;
+    if (await screenShowsConversation(paneId, error.source)) throw new ConversationUnavailable("display_mismatch");
     // the chat says there is nothing yet; the session's first prompt writes the file and
     // the next refresh's history_id differs, so the chat takes it whole
     const id = `unwritten:${error.sessionId}`;
@@ -1350,7 +1353,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   try {
     resolved = await paneTranscript(paneId, codexHome, snapshot, devinDbPath, opencodeDb, hermesHome);
   } catch (error) {
-    if (error instanceof ConversationNotStarted) return onNotStarted(error);
+    if (error instanceof ConversationNotStarted) return await onNotStarted(error);
     throw error;
   }
   if (resolved.source === "devin-transcript") {
@@ -1381,7 +1384,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       rememberPaneSession(paneId, `${resolved.source}\0${resolved.sessionId}`);
       return answer;
     } catch (error) {
-      if (error instanceof ConversationNotStarted) return onNotStarted(error);
+      if (error instanceof ConversationNotStarted) return await onNotStarted(error);
       throw error;
     }
   }
@@ -1390,7 +1393,34 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   rememberPaneRead(paneId, resolved.path);
   const answer = transcriptPage(resolved.source, resolved.path, page, resolved.codexHome ?? codexHome);
   if (identity !== null) { writtenSessions.add(`${resolved.source}\0${identity}`); rememberPaneSession(paneId, `${resolved.source}\0${identity}`); }
+  // The last line of defence against a chat with nothing in it while the terminal shows a
+  // conversation: whatever way of naming the session failed (a background session the window
+  // only displays, a lost hook report, a store a new agent version moved), a history with no
+  // message at all is checked against the screen, and the terminal stands in when they differ.
+  if (page.before === undefined && page.since === undefined && page.from === undefined && answer.cursor === null
+    && !answer.turns.some(hasMessageText) && await screenShowsConversation(paneId, resolved.source)) {
+    throw new ConversationUnavailable("display_mismatch");
+  }
   return answer;
+}
+
+/** A user or assistant turn with text of its own, not only notices, tools or dividers. */
+function hasMessageText(turn: ConversationTurn): boolean {
+  return (turn.role === "user" || turn.role === "assistant")
+    && turn.parts.some((part) => part.kind === "text" && part.text.trim() !== "");
+}
+
+/**
+ * Whether the pane's screen shows an exchange: an answer mark at the start of a line, Claude Code's
+ * "⏺" or Codex's "•". Asked only of a history with no message in it, so one read per refresh of
+ * an empty chat; an unreadable screen shows nothing.
+ */
+async function screenShowsConversation(paneId: string, source: string): Promise<boolean> {
+  const mark = source === "claude-transcript" ? /^\s*⏺ \S/m : source === "codex-transcript" ? /^\s*• \S/m : null;
+  if (mark === null) return false;
+  try {
+    return mark.test((await paneRead({ paneId, source: "visible", stripAnsi: true, timeoutMs: 3000 })).text);
+  } catch { return false; }
 }
 
 /** One page of a resolved transcript (paneConversation's `page`). */

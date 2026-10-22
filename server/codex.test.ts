@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSyn
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { Database } from "bun:sqlite";
-import { codexCallFailed, codexHistoryTail, codexHomeInPsLine, codexRolloutPath, processCodexHome, forgetHistoryChains, matchCodexFirstExchange, matchCodexTranscript, matchShortCodexAnswers, parseCodexTranscript, codexPeersIn, resumedThread, rolloutInsideStore, sameDirectory, storedCwdCondition, storedCwds, unansweredCodexQuestions, withoutVerbatimPrefix } from "./codex.ts";
+import { codexCallFailed, codexTitleName, codexHistoryTail, codexHomeInPsLine, codexRolloutPath, processCodexHome, forgetHistoryChains, matchCodexFirstExchange, matchCodexTranscript, matchShortCodexAnswers, parseCodexTranscript, codexPeersIn, resumedThread, rolloutInsideStore, sameDirectory, storedCwdCondition, storedCwds, unansweredCodexQuestions, withoutVerbatimPrefix } from "./codex.ts";
 import type { HerdrPane } from "../shared/protocol.ts";
 import { splitTurn } from "../src/lib/workBlocks.ts";
 
@@ -882,5 +882,20 @@ describe("incremental Codex records", () => {
     parser.write(final);
     expect(parser.snapshot()).toEqual(parseCodexTranscript(`${first}\n${second}\n${final}`));
     expect(parser.snapshot().at(-1)?.parts.at(-1)).toMatchObject({ phase: "final_answer", text: "Finished" });
+  });
+});
+
+describe("codexTitleName", () => {
+  it("reads the thread name from Codex's terminal title", () => {
+    expect(codexTitleName("Return PONG | project", "/tmp/qa/project")).toBe("Return PONG");
+    expect(codexTitleName("⠋ Restore browser access in Herdr | 15 herdr-web-ui", "/opt/workstation/15 herdr-web-ui")).toBe("Restore browser access in Herdr");
+    expect(codexTitleName("Fix a bug | repo", "C:\\Users\\me\\repo\\")).toBe("Fix a bug");
+  });
+
+  it("names no thread for a bare folder, another folder or no title", () => {
+    expect(codexTitleName("project", "/tmp/qa/project")).toBeNull();
+    expect(codexTitleName("Fix it | other | project", "/tmp/qa/project")).toBeNull();
+    expect(codexTitleName("", "/tmp/qa/project")).toBeNull();
+    expect(codexTitleName(null, "/tmp/qa/project")).toBeNull();
   });
 });

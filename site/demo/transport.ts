@@ -757,6 +757,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     conversationChanged(target);
     return json({ ok: true });
   }
+  if (path === "/api/pane/prompt/reveal") return json({ revealed: false });
   if (path === "/api/pane/prompt/answer") {
     const body = await bodyOf(init, input);
     const target = String(body["pane_id"] ?? "");
@@ -1334,6 +1335,9 @@ class DemoSocket extends EventTarget {
           this.holdPending(message.pane_id, "not_attached", "This pane was detached. Pending messages will not be sent automatically.");
           this.conversationInterests.delete(message.pane_id);
         }
+        break;
+      case "ping":
+        this.push({ type: "pong", id: message.id ?? 0 });
         break;
       case "conversation-watch":
         if (typeof message.pane_id !== "string" || message.pane_id.trim() === "" || typeof message.enabled !== "boolean") {

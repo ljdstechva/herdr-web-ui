@@ -23,6 +23,7 @@ describe("modelLabel", () => {
   test("names the one GPT tier Codex's own status line writes, with its hyphen", () => {
     expect(modelLabel("gpt-5.6-sol")).toEqual({ text: "GPT-5.6-Sol", named: true });
     expect(modelLabel("gpt-6-sol")).toEqual({ text: "GPT-6-Sol", named: true });
+    expect(modelLabel("gpt-6-astra")).toEqual({ text: "GPT-6-Astra", named: true });
   });
 
   test("shows an id it cannot name for certain exactly as received", () => {

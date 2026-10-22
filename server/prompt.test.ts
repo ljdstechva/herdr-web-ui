@@ -2436,6 +2436,14 @@ ${"─".repeat(120)}
     for (const agent of ["codex", "omp", "pi", "omo", ""]) expect(parseInteractivePrompt(agent, captured)).toBeNull();
   });
 
+  test("reads the list with Claude Code 2.1.302's Fast mode notice under the effort line, wrapped by a narrow pane", () => {
+    const notice = "  ◐ Medium effort (default) ←/→ to adjust\n\n  Fast mode is ON and available with Opus 5.5 only\n  (/fast). Switching to other models turns off fast\n  mode.";
+    const screen = claudeModelList(1).replace("  ◐ Medium effort (default) ←/→ to adjust", notice);
+    const prompt = parseInteractivePrompt("claude", screen)!;
+    expect(prompt.question).toBe("Select model for this session (currently Opus 5.5). 2 more models are listed in the terminal.");
+    expect(prompt.options).toHaveLength(10);
+  });
+
   test("is one card wherever the cursor stands, whatever effort the row under it would run at", () => {
     const first = parseInteractivePrompt("claude", claudeModelList(1))!;
     for (const at of [0, 2, 4, 9]) expect(parseInteractivePrompt("claude", claudeModelList(at))!.id).toBe(first.id);
@@ -2967,6 +2975,129 @@ describe("an answer and the menu it was made for", () => {
     const body = await response.json() as { error?: { code: string } };
     return { status: response.status, code: body.error?.code };
   }
+
+  const hiddenCodexQuestion = (hint = "shift + ← to answer") => `
+• Queued follow-up inputs
+  ? 1 question · 8s
+    ${hint}
+› \x1b[2mAsk Codex to do anything\x1b[0m
+  GPT-6-Sol xhigh · ~/lab · Context 97% left
+`;
+  const revealedCodexQuestion = `
+• Queued follow-up inputs
+  Which split?
+  › 1. train
+    2. test
+    3. Other
+  enter submit   ctrl+] skip   shift + → main prompt
+`;
+  async function reveal(signal?: AbortSignal, serialize?: NonNullable<Parameters<typeof handlePromptRequest>[2]>["serialize"], revealQuiet?: () => boolean) {
+    const url = new URL("http://127.0.0.1/api/pane/prompt/reveal");
+    const response = await handlePromptRequest(new Request(url, { method: "POST", signal, body: JSON.stringify({ pane_id: "p_1" }) }), url, { serialize, revealQuiet });
+    expect(response).not.toBeNull();
+    return { status: response!.status, body: await response!.json() };
+  }
+
+  test("automatically reveals a Codex question using its advertised shortcut without answering", async () => {
+    for (const [hint, key] of [["shift + ← to answer", "shift+left"], ["alt+↑ to answer", "alt+up"], ["shift+left to\n    answer", "shift+left"]] as const) {
+      await withPane("codex", "working", hiddenCodexQuestion(hint), async (pane) => {
+        pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+        expect(await reveal()).toEqual({ status: 200, body: { revealed: true } });
+        expect((await card())?.question).toBe("Which split?");
+        expect(await reveal()).toEqual({ status: 200, body: { revealed: false } });
+        expect(pane.sent).toEqual([key]);
+      });
+    }
+  });
+
+  test("automatic reveal ignores other agents, ordinary output, queued messages and open menus", async () => {
+    for (const [agent, screen] of [
+      ["claude", hiddenCodexQuestion()], ["omo", hiddenCodexQuestion()],
+      ["codex", "Use shift + ← to answer questions.\n› \x1b[2mAsk Codex to do anything\x1b[0m"],
+      ["codex", hiddenCodexQuestion().replace("shift + ← to answer", "ctrl+x to answer")],
+      ["codex", hiddenCodexQuestion().replace("? 1 question · 8s", "? 1 question · 8s\n  ↳ A queued message")],
+      ["codex", revealedCodexQuestion],
+      ["codex", hiddenCodexQuestion().replace("› \x1b[2mAsk Codex to do anything\x1b[0m", "› 1. Allow once\n  2. Deny")],
+    ]) {
+      await withPane(agent!, "blocked", screen!, async (pane) => {
+        expect(await reveal()).toEqual({ status: 200, body: { revealed: false } });
+        expect(pane.sent).toEqual([]);
+      });
+    }
+  });
+
+  test("automatic reveal rechecks after waiting its turn and respects cancellation", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      const abort = new AbortController();
+      pane.onRead = () => abort.abort();
+      expect((await reveal(abort.signal)).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+      pane.onRead = undefined;
+      expect((await reveal(undefined, async (_pane, task) => {
+        pane.screen = "› \x1b[2mAsk Codex to do anything\x1b[0m";
+        return task();
+      })).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("automatic reveal defers if typing starts while the screen is being checked", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      let quiet = false;
+      expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
+      quiet = true;
+      pane.onRead = () => { quiet = false; };
+      expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
+      quiet = true;
+      let reads = 0;
+      pane.onRead = () => { if (++reads === 3) pane.screen = hiddenCodexQuestion().replace("Ask Codex to do anything", "new draft"); };
+      expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("automatic reveal serializes concurrent polls and never repeats an uncertain key", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      let turn: Promise<unknown> = Promise.resolve();
+      const serialize = <T>(_pane: string, task: () => Promise<T>): Promise<T> => {
+        const next = turn.then(task); turn = next.catch(() => undefined); return next;
+      };
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+      const results = await Promise.all([reveal(undefined, serialize), reveal(undefined, serialize)]);
+      expect(results.map((result) => result.body)).toEqual([{ revealed: true }, { revealed: false }]);
+      expect(pane.sent).toEqual(["shift+left"]);
+      pane.screen = hiddenCodexQuestion();
+      pane.onSent = undefined;
+      pane.replyLostOn = "shift+left";
+      expect((await reveal()).status).not.toBe(200);
+      pane.screen = hiddenCodexQuestion().replace("8s", "9s").replace("1 question", "2 questions");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual(["shift+left", "shift+left"]);
+    });
+  });
+
+  test("automatic reveal handles consecutive questions without needing a poll between them", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+      expect((await reveal()).body).toEqual({ revealed: true });
+      pane.screen = hiddenCodexQuestion();
+      expect((await reveal()).body).toEqual({ revealed: true });
+      expect(pane.sent).toEqual(["shift+left", "shift+left"]);
+    });
+  });
+
+  test("automatic reveal defers while the terminal has a draft or its viewport cannot prove an empty composer", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      pane.screen = hiddenCodexQuestion().replace("\x1b[2mAsk Codex to do anything\x1b[0m", "Do the next task");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      pane.screen = hiddenCodexQuestion();
+      pane.viewport = "Old screen, scrolled away";
+      expect((await reveal()).body).toEqual({ revealed: false });
+      pane.viewport = hiddenCodexQuestion().replace("Ask Codex to do anything", "Different input");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
 
   const omoRule = "─".repeat(100);
   const omoWidget = (box = "❯") => `? Question pending (1 unanswered) · 30m
@@ -4619,5 +4750,37 @@ describe("Claude Code's model list under a hint wrapped anywhere", () => {
     const quoted = `${CLAUDE_MODEL_CLOSED}⏺ Example: Enter to set as default · s to use this session only · Esc to\n  cancel\n──────────── Summary ─\n`;
     expect(modelListWaits("claude", quoted)).toBe(false);
     expect(modelListWaits("claude", `⏺ Enter to set as default · s to use this session only · Esc to cancel\n`)).toBe(false);
+  });
+});
+
+// Captured from Claude Code 2.1.302 after a model was picked in a cached conversation; herdr
+// reported the pane done and the chat showed no card, so the pick looked lost on the phone.
+describe("Claude Code's model switch confirmation", () => {
+  const screen = (cursorOnYes = true) => [
+    "❯ /model", "  ⎿  Set model to Sonnet 5.5 for this session only", "", "▔".repeat(120),
+    "   Switch model?",
+    "   Your next response will be slower and use more tokens",
+    "",
+    "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read on",
+    "   your next message.",
+    "",
+    `   ${cursorOnYes ? "❯" : " "} 1. Yes, switch to Haiku 5.5`,
+    `   ${cursorOnYes ? " " : "❯"} 2. No, go back`,
+    "",
+  ].join("\n");
+
+  test("is a card of its two rows, answered by moves and Enter", () => {
+    const prompt = parseInteractivePrompt("claude", screen())!;
+    expect(prompt).toMatchObject({ kind: "menu", title: "Switch model?", question: "Switch model?" });
+    expect(prompt.options.map((option) => option.label)).toEqual(["Yes, switch to Haiku 5.5", "No, go back"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    expect(answerKeys(parseInteractivePrompt("claude", screen(false))!, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
+  });
+
+  test("is no card once anything follows the rows, or without its title", () => {
+    expect(parseInteractivePrompt("claude", `${screen()}❯ next prompt\n`)).toBeNull();
+    expect(parseInteractivePrompt("claude", screen().replace("Switch model?", "Something else?"))).toBeNull();
+    for (const agent of ["codex", "omp", "pi"]) expect(parseInteractivePrompt(agent, screen())).toBeNull();
   });
 });

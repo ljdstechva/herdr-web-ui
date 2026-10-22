@@ -9,6 +9,7 @@ import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isServeOwnerRequest } from "./access.ts";
+import { loadAgentPresets, resolvePreset, withPresets } from "./agent-presets.ts";
 import { DeviceStore, handleDeviceRequest } from "./devices.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
@@ -217,7 +218,7 @@ const RESTORED_CLEAR_GAP_MS = 200;
 const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "conversation-watch"];
+const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping", "codex-question-reveal"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -561,6 +562,11 @@ export function createServer(
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
+  // New workspace's extra choices (agent-presets.ts): a preset's kind starts its herdr agent with its arguments
+  const launchAgent = (paneId: string, agent: AgentPayload) => {
+    const resolved = resolvePreset(agent.kind as string, agent.args as string[] | undefined, loadAgentPresets(options.stateDir ?? defaultStateDir()));
+    return agentLaunch(paneId, { ...agent, kind: resolved.kind, ...(resolved.args === undefined ? {} : { args: resolved.args }) });
+  };
   const usage = options.usage ?? new UsageService();
   const voice = options.voice ?? new VoiceService({ stateDir: options.stateDir ?? defaultStateDir(), env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (HERDR_WEB_TAILSCALE_OWNER) */
@@ -1660,6 +1666,9 @@ export function createServer(
   const server = Bun.serve<SocketData>({
     port: options.port ?? (envPort ? Number(envPort) : DEFAULT_PORT),
     hostname,
+    // Bun's default 10 s cut a herdr RPC (itself 10 s) or a usage read (up to 15 s) off with a
+    // dropped connection instead of its JSON error; streams set their own timeout
+    idleTimeout: 30,
 
     async fetch(request, bunServer) {
       // the route's answer, gzipped for a browser that takes it (server/compress.ts)
@@ -1853,9 +1862,8 @@ export function createServer(
           kinds.add("claude");
           // not herdr kinds: offered where this server can run them (see shell-agent.ts)
           for (const kind of Object.keys(SHELL_AGENTS)) if (shellAgentExecutable(kind)) kinds.add(kind);
-          const agents: AgentKind[] = [...kinds]
-            .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind }))
-            .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
+          const agents: AgentKind[] = withPresets([...kinds].map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind })),
+            loadAgentPresets(options.stateDir ?? defaultStateDir()));
           return jsonResponse({ agents });
         } catch (error) {
           return errorResponse(error);
@@ -1941,7 +1949,7 @@ export function createServer(
           if (!payload.agent) {
             return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, agent_started: false });
           }
-          return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, ...(await agentLaunch(created.root_pane.pane_id, payload.agent)) });
+          return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, ...(await launchAgent(created.root_pane.pane_id, payload.agent)) });
         } catch (error) {
           return errorResponse(error);
         }
@@ -2099,7 +2107,7 @@ export function createServer(
             path: made.path,
             branch: made.branch,
             existing: kept !== undefined,
-            ...(agent ? await agentLaunch(created.root_pane.pane_id, agent) : { agent_started: false as const }),
+            ...(agent ? await launchAgent(created.root_pane.pane_id, agent) : { agent_started: false as const }),
           } satisfies WorktreeTabCreated);
         } catch (error) {
           return worktreeFailure(error);
@@ -2168,7 +2176,7 @@ export function createServer(
             already_open: opened.already_open === true,
             path: opened.worktree.path,
             branch: opened.worktree.branch,
-            ...(agent ? await agentLaunch(opened.root_pane.pane_id, agent) : {}),
+            ...(agent ? await launchAgent(opened.root_pane.pane_id, agent) : {}),
           });
         } catch (error) {
           return errorResponse(error);
@@ -2753,7 +2761,7 @@ export function createServer(
 
       if (pathname.startsWith("/api/pane/prompt")) {
         try {
-          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome });
+          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, revealQuiet: (paneId) => Date.now() - (lastTyped.get(paneId) ?? 0) >= 1_000 });
           if (response) return response;
         } catch (error) {
           return errorResponse(error);
@@ -2838,6 +2846,10 @@ export function createServer(
         }
         try {
           switch (message.type) {
+            case "ping": {
+              send(client, { type: "pong", id: Number(message.id) });
+              break;
+            }
             case "watch": {
               const geometry = validGeometry(message.cols, message.rows);
               if (!geometry) {

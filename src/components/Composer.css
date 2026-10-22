@@ -407,7 +407,8 @@
 }
 
 .composer-pick:disabled ~ .composer-pick-caret,
-.composer-pick:disabled .composer-pick-caret {
+.composer-pick:disabled .composer-pick-caret,
+.composer-pick[data-waiting] .composer-pick-caret {
   opacity: 0.5;
 }
 

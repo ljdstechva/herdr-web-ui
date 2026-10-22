@@ -32,6 +32,15 @@ function contextOf(used: number, model: string | null, window: number | null, be
   return { used, window: long ? CLAUDE_LONG_WINDOW : null };
 }
 
+/**
+ * Claude Code's name for a model as /model reports it ("Opus 5.5", "Opus 5.5 (1M context)",
+ * "Sonnet 5.5 (default)") as its id, claude-opus-5-5; a name of another shape stays as written.
+ */
+export function claudeModelId(name: string): string {
+  const named = /^(Opus|Sonnet|Haiku|Fable|Mythos) ([1-9]\d?)(?:\.(0|[1-9]\d?))?(?: \(.*\))?$/.exec(name.trim());
+  return named ? `claude-${named[1]!.toLowerCase()}-${named[2]}${named[3] === undefined ? "" : `-${named[3]}`}` : name.trim();
+}
+
 /** Read recorded settings, never infer effort from the presence of thinking text.
  * Codex turn_context is a snapshot; omp/omo setting changes are separate events. */
 export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata): ConversationMetadata {
@@ -97,6 +106,23 @@ export function parseConversationMetadata(text: string, source: ConversationResp
     } else if (source === "claude-transcript") {
       const message = record(entry.message);
       if (entry.type === "assistant" && label(message.model)) metadata.model = label(message.model);
+      // What the session runs at from here on, written before any answer: the model each prompt
+      // is sent to, and /model or /effort as Claude Code reports them. Without these the label
+      // said "Model", or the model before a switch, until the next answer was finished.
+      if (entry.isSidechain !== true) {
+        const attachment = record(entry.attachment);
+        if (entry.type === "attachment" && attachment.type === "model") {
+          const id = label(record(attachment.identity).modelId);
+          if (id) metadata.model = id;
+        }
+        const said = entry.type === "user" ? message.content : entry.type === "system" && entry.subtype === "local_command" ? entry.content : null;
+        if (typeof said === "string" && said.includes("<local-command-stdout>Set ")) {
+          const model = /<local-command-stdout>Set model to `?([^`<]+?)`? (?:for this session|and saved)/.exec(said)?.[1];
+          if (model) metadata.model = claudeModelId(model);
+          const effort = /<local-command-stdout>Set effort level to ([a-z]+)\b/.exec(said)?.[1];
+          if (effort) metadata.reasoning_effort = effort;
+        }
+      }
       // a subagent's request fills its own context, not this one's
       if (entry.type === "assistant" && entry.isSidechain !== true && label(message.model)) {
         const usage = record(message.usage);

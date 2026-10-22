@@ -11,7 +11,8 @@
  *   omo record it) is the same model.
  * - OpenAI: `gpt-<version>` is "GPT-<version>" (gpt-5.6 is GPT-5.6), and `gpt-<version>-sol` is
  *   "GPT-<version>-Sol", written as Codex's own status line writes it (the "GPT-6-Sol" captured
- *   in server/prompt.test.ts). No other tier word has a source here, so none is named.
+ *   in server/prompt.test.ts), and `gpt-<version>-astra` "GPT-<version>-Astra" (Codex 0.163's
+ *   status line, seen live 2026-10-17). No other tier word has a source here, so none is named.
  * - Z.ai: `glm-<version>` is "GLM-<version>" (glm-5.3 is GLM-5.3).
  *
  * The patterns follow the vendor's id SYNTAX, not a list of released versions. That was chosen
@@ -40,7 +41,7 @@ export interface ModelLabel {
 // a version part in canonical form: no leading zero, two digits at most
 const NUMBER = "[1-9]\\d?";
 const CLAUDE = new RegExp(`^(?:anthropic/)?claude-(opus|sonnet|haiku|fable|mythos)-(${NUMBER})(?:-(0|${NUMBER}))?$`, "u");
-const GPT = new RegExp(`^gpt-(${NUMBER}(?:\\.${NUMBER})?)(-sol)?$`, "u");
+const GPT = new RegExp(`^gpt-(${NUMBER}(?:\\.${NUMBER})?)(-sol|-astra)?$`, "u");
 const GLM = new RegExp(`^glm-(${NUMBER}(?:\\.${NUMBER})?)$`, "u");
 
 export function modelLabel(id: string): ModelLabel {
@@ -50,7 +51,7 @@ export function modelLabel(id: string): ModelLabel {
     return { text: `${family.charAt(0).toUpperCase()}${family.slice(1)} ${claude[2]}${claude[3] === undefined ? "" : `.${claude[3]}`}`, named: true };
   }
   const gpt = GPT.exec(id);
-  if (gpt) return { text: `GPT-${gpt[1]}${gpt[2] === undefined ? "" : "-Sol"}`, named: true };
+  if (gpt) return { text: `GPT-${gpt[1]}${gpt[2] === undefined ? "" : gpt[2] === "-sol" ? "-Sol" : "-Astra"}`, named: true };
   const glm = GLM.exec(id);
   if (glm) return { text: `GLM-${glm[1]}`, named: true };
   return { text: id, named: false };
