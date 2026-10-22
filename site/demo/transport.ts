@@ -757,6 +757,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     conversationChanged(target);
     return json({ ok: true });
   }
+  if (path === "/api/pane/prompt/reveal") return json({ revealed: false });
   if (path === "/api/pane/prompt/answer") {
     const body = await bodyOf(init, input);
     const target = String(body["pane_id"] ?? "");

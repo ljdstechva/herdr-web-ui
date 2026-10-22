@@ -164,7 +164,7 @@ export function PaneTerminal({
   const presented = useContext(PanePresentedContext);
   const presentedRef = useRef(presented); presentedRef.current = presented;
   const awayReleased = useContext(PaneAwayContext);
-  const { answerPanePrompt, uploadPaneImage } = useMachineApi();
+  const { answerPanePrompt, revealPaneQuestion, uploadPaneImage } = useMachineApi();
   const uploadFileRef = useRef(uploadPaneImage);
   uploadFileRef.current = uploadPaneImage;
   const chatView = view === "chat";
@@ -370,6 +370,47 @@ export function PaneTerminal({
   // The prompt the chat shows: while it waits, a message from the composer answers it.
   const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
   const [promptRefresh, setPromptRefresh] = useState(0);
+  // Reveal Codex's collapsed questions in either lens, only on the pane the user is using.
+  // The server checks the current agent/screen again in the pane's serialized input turn.
+  useEffect(() => {
+    if (agent !== "codex" || paneId === null || !active || !presented || !connected
+      || ended || held || released || observing || role !== "interact") return;
+    let stopped = false;
+    let timer = 0;
+    let request: AbortController | null = null;
+    let lastInput = 0;
+    const typing = () => { lastInput = Date.now(); request?.abort(); };
+    const leave = () => { if (!inUse()) request?.abort(); };
+    const poll = async (): Promise<void> => {
+      if (stopped) return;
+      if (inUse() && Date.now() - lastInput >= 1_000 && !modalOpen() && !composingRef.current && socketRef.current?.canRevealCodexQuestion(paneId)) {
+        const controller = new AbortController();
+        request = controller;
+        try {
+          const result = await revealPaneQuestion(paneId, AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]));
+          if (!stopped && !controller.signal.aborted && result.revealed) setPromptRefresh((key) => key + 1);
+        } catch (error) {
+          if (!stopped && !controller.signal.aborted) {
+            // Stop this polling session on a failure: an uncertain key is never replayed.
+            setInputError(error instanceof Error ? error.message : String(error));
+            return;
+          }
+        } finally { request = null; }
+      }
+      if (!stopped) timer = window.setTimeout(() => void poll(), 2_000);
+    };
+    for (const event of ["keydown", "beforeinput", "pointerdown"]) window.addEventListener(event, typing, true);
+    window.addEventListener("blur", leave);
+    document.addEventListener("visibilitychange", leave);
+    void poll();
+    return () => {
+      stopped = true; window.clearTimeout(timer); request?.abort();
+      for (const event of ["keydown", "beforeinput", "pointerdown"]) window.removeEventListener(event, typing, true);
+      window.removeEventListener("blur", leave);
+      document.removeEventListener("visibilitychange", leave);
+    };
+  }, [agent, paneId, active, presented, connected, ended, held, released, observing, role, revealPaneQuestion]);
+
   // what the agent suggests typing next (Claude's grey input text), for the composer's placeholder
   const [chatSuggestion, setChatSuggestion] = useState<{ pane: string; value: string } | null>(null);
   const onChatSuggestion = useCallback((pane: string, value: string | null) => {

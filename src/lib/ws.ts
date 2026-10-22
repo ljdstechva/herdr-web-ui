@@ -403,6 +403,12 @@ export class HerdrSocket {
     return this.connected && this.mode === "interact" && this.features.has("take-over");
   }
 
+  /** Automatic question reveals are only for a ready, writable pane on a supporting bridge. */
+  canRevealCodexQuestion(paneId: string): boolean {
+    return this.connected && this.mode === "interact" && this.features.has("codex-question-reveal")
+      && this.attached.has(paneId) && this.inputReady.has(paneId);
+  }
+
   /** Explicitly takes the pane's attach slot; never queued or replayed on reconnect. */
   takeOver(paneId: string): boolean {
     if (!this.canTakeOver() || !this.attached.has(paneId)) return false;

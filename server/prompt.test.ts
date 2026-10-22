@@ -2976,6 +2976,129 @@ describe("an answer and the menu it was made for", () => {
     return { status: response.status, code: body.error?.code };
   }
 
+  const hiddenCodexQuestion = (hint = "shift + ← to answer") => `
+• Queued follow-up inputs
+  ? 1 question · 8s
+    ${hint}
+› \x1b[2mAsk Codex to do anything\x1b[0m
+  GPT-6-Sol xhigh · ~/lab · Context 97% left
+`;
+  const revealedCodexQuestion = `
+• Queued follow-up inputs
+  Which split?
+  › 1. train
+    2. test
+    3. Other
+  enter submit   ctrl+] skip   shift + → main prompt
+`;
+  async function reveal(signal?: AbortSignal, serialize?: NonNullable<Parameters<typeof handlePromptRequest>[2]>["serialize"], revealQuiet?: () => boolean) {
+    const url = new URL("http://127.0.0.1/api/pane/prompt/reveal");
+    const response = await handlePromptRequest(new Request(url, { method: "POST", signal, body: JSON.stringify({ pane_id: "p_1" }) }), url, { serialize, revealQuiet });
+    expect(response).not.toBeNull();
+    return { status: response!.status, body: await response!.json() };
+  }
+
+  test("automatically reveals a Codex question using its advertised shortcut without answering", async () => {
+    for (const [hint, key] of [["shift + ← to answer", "shift+left"], ["alt+↑ to answer", "alt+up"], ["shift+left to\n    answer", "shift+left"]] as const) {
+      await withPane("codex", "working", hiddenCodexQuestion(hint), async (pane) => {
+        pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+        expect(await reveal()).toEqual({ status: 200, body: { revealed: true } });
+        expect((await card())?.question).toBe("Which split?");
+        expect(await reveal()).toEqual({ status: 200, body: { revealed: false } });
+        expect(pane.sent).toEqual([key]);
+      });
+    }
+  });
+
+  test("automatic reveal ignores other agents, ordinary output, queued messages and open menus", async () => {
+    for (const [agent, screen] of [
+      ["claude", hiddenCodexQuestion()], ["omo", hiddenCodexQuestion()],
+      ["codex", "Use shift + ← to answer questions.\n› \x1b[2mAsk Codex to do anything\x1b[0m"],
+      ["codex", hiddenCodexQuestion().replace("shift + ← to answer", "ctrl+x to answer")],
+      ["codex", hiddenCodexQuestion().replace("? 1 question · 8s", "? 1 question · 8s\n  ↳ A queued message")],
+      ["codex", revealedCodexQuestion],
+      ["codex", hiddenCodexQuestion().replace("› \x1b[2mAsk Codex to do anything\x1b[0m", "› 1. Allow once\n  2. Deny")],
+    ]) {
+      await withPane(agent!, "blocked", screen!, async (pane) => {
+        expect(await reveal()).toEqual({ status: 200, body: { revealed: false } });
+        expect(pane.sent).toEqual([]);
+      });
+    }
+  });
+
+  test("automatic reveal rechecks after waiting its turn and respects cancellation", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      const abort = new AbortController();
+      pane.onRead = () => abort.abort();
+      expect((await reveal(abort.signal)).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+      pane.onRead = undefined;
+      expect((await reveal(undefined, async (_pane, task) => {
+        pane.screen = "› \x1b[2mAsk Codex to do anything\x1b[0m";
+        return task();
+      })).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("automatic reveal defers if typing starts while the screen is being checked", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      let quiet = false;
+      expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
+      quiet = true;
+      pane.onRead = () => { quiet = false; };
+      expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
+      quiet = true;
+      let reads = 0;
+      pane.onRead = () => { if (++reads === 3) pane.screen = hiddenCodexQuestion().replace("Ask Codex to do anything", "new draft"); };
+      expect((await reveal(undefined, undefined, () => quiet)).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("automatic reveal serializes concurrent polls and never repeats an uncertain key", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      let turn: Promise<unknown> = Promise.resolve();
+      const serialize = <T>(_pane: string, task: () => Promise<T>): Promise<T> => {
+        const next = turn.then(task); turn = next.catch(() => undefined); return next;
+      };
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+      const results = await Promise.all([reveal(undefined, serialize), reveal(undefined, serialize)]);
+      expect(results.map((result) => result.body)).toEqual([{ revealed: true }, { revealed: false }]);
+      expect(pane.sent).toEqual(["shift+left"]);
+      pane.screen = hiddenCodexQuestion();
+      pane.onSent = undefined;
+      pane.replyLostOn = "shift+left";
+      expect((await reveal()).status).not.toBe(200);
+      pane.screen = hiddenCodexQuestion().replace("8s", "9s").replace("1 question", "2 questions");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual(["shift+left", "shift+left"]);
+    });
+  });
+
+  test("automatic reveal handles consecutive questions without needing a poll between them", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      pane.onSent = () => { pane.screen = revealedCodexQuestion; };
+      expect((await reveal()).body).toEqual({ revealed: true });
+      pane.screen = hiddenCodexQuestion();
+      expect((await reveal()).body).toEqual({ revealed: true });
+      expect(pane.sent).toEqual(["shift+left", "shift+left"]);
+    });
+  });
+
+  test("automatic reveal defers while the terminal has a draft or its viewport cannot prove an empty composer", async () => {
+    await withPane("codex", "working", hiddenCodexQuestion(), async (pane) => {
+      pane.screen = hiddenCodexQuestion().replace("\x1b[2mAsk Codex to do anything\x1b[0m", "Do the next task");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      pane.screen = hiddenCodexQuestion();
+      pane.viewport = "Old screen, scrolled away";
+      expect((await reveal()).body).toEqual({ revealed: false });
+      pane.viewport = hiddenCodexQuestion().replace("Ask Codex to do anything", "Different input");
+      expect((await reveal()).body).toEqual({ revealed: false });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
   const omoRule = "─".repeat(100);
   const omoWidget = (box = "❯") => `? Question pending (1 unanswered) · 30m
  QA — Which one?

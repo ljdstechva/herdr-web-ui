@@ -920,6 +920,12 @@ export interface SlashCommand {
   trigger?: "$";
 }
 
+/** POST /api/pane/prompt/reveal: { pane_id } → { revealed: boolean }.
+ * Opens a collapsed Codex question with its screen-advertised shortcut, without answering.
+ * Serialized with pane input; never retries an uncertain opening while that queue remains.
+ * Advertised by the `codex-question-reveal` server feature. GET prompt remains read-only. */
+export interface PromptRevealResult { revealed: boolean }
+
 /**
  * GET /api/pane/prompt: an agent's interactive TUI menu currently on the pane's screen
  * (Claude/omp/codex question, approval or plan prompts), parsed server-side from the
@@ -1075,7 +1081,7 @@ export type ClientMessage =
   | { type: "ping"; id: number };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping";
+export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "codex-question-reveal";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }

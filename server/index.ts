@@ -218,7 +218,7 @@ const RESTORED_CLEAR_GAP_MS = 200;
 const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping"];
+const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping", "codex-question-reveal"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -2761,7 +2761,7 @@ export function createServer(
 
       if (pathname.startsWith("/api/pane/prompt")) {
         try {
-          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome });
+          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, revealQuiet: (paneId) => Date.now() - (lastTyped.get(paneId) ?? 0) >= 1_000 });
           if (response) return response;
         } catch (error) {
           return errorResponse(error);

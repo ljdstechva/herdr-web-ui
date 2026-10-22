@@ -642,3 +642,27 @@ it("comes back on its own after an output-stall close", async () => {
     client.close();
   }
 });
+
+it("reveals Codex questions only on a supported, attached, input-ready interact connection", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["input-ready"]));
+  client.attach("w1:p1", 80, 24);
+  socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  socket.receive(snapshot(["input-ready", "codex-question-reveal"]));
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(true);
+  expect(client.canRevealCodexQuestion("w1:p2")).toBe(false);
+  client.setMode("observe");
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  client.setMode("interact");
+  socket.receive({ type: "input-ready", pane_id: "w1:p1", ready: false });
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+  client.detach("w1:p1");
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+  client.close();
+  expect(client.canRevealCodexQuestion("w1:p1")).toBe(false);
+});
