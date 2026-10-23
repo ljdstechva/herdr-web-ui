@@ -106,9 +106,9 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const ifNoneMatch = request.headers.get("if-none-match");
       if (ifNoneMatch) headers.set("if-none-match", ifNoneMatch);
       const abort = new AbortController();
-      if (path === "fs/file") {
-        // a file (a video, say) streams through, with its ranges, never held here; it can
-        // play for longer than any request timeout
+      if (path === "fs/file" || path === "fs/preview/pdf") {
+        // a file (a video, say, or a document's PDF) streams through, with its ranges, never held
+        // here; it can play or load for longer than any request timeout
         const range = request.headers.get("range");
         if (range) headers.set("range", range);
         try {

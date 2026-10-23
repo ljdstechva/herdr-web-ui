@@ -326,6 +326,8 @@ describe("text no one wrote by hand", () => {
     }
     // a label closed with an address that is not, and a `__` that only a `_` closes
     within(1000, () => expect(parseInline("[a](b".repeat(200_000))).toHaveLength(1));
+    // a `<…>` target the pattern refuses (`<x> y>`), and targets with spaces that never close, are not read again from every opener
+    within(1000, () => expect(parseInline(`${"[".repeat(80_000)}a](<x> y>)`)).toHaveLength(1));
     // targets with spaces that never close, and one closer far away, are not read again from every opener
     within(1000, () => expect(parseInline(`${"[a](/x y ".repeat(50_000)}z.pdf)`).length).toBeGreaterThan(0));
     within(1000, () => expect(parseInline("__a b_ ".repeat(150_000))).toHaveLength(300_000));

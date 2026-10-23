@@ -106,7 +106,19 @@ try {
   const scrolled = await page.locator(".pdf-scroll").evaluate((element) => ({ wide: element.scrollWidth > element.clientWidth, page: document.documentElement.scrollWidth }));
   assert.ok(scrolled.wide, "a pinched page is wider than the view, which scrolls sideways");
   assert.ok(scrolled.page <= 390, "the app itself never scrolls sideways");
-  console.log("PASS a PDF is drawn in the page, fitted, selectable, and zooms by button and pinch");
+  // a double tap zooms in around the tapped point, and a second one fits the width again
+  await page.getByRole("button", { name: "Fit to width" }).tap();
+  const doubleTap = async () => {
+    for (let tap = 0; tap < 2; tap += 1) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 300, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    }
+  };
+  await doubleTap();
+  await page.getByRole("button", { name: "Fit to width" }).filter({ hasText: "250%" }).waitFor();
+  await doubleTap();
+  await page.getByRole("button", { name: "Fit to width" }).filter({ hasText: "100%" }).waitFor();
+  console.log("PASS a PDF is drawn in the page, fitted, selectable, and zooms by button, pinch and double tap");
 
   // a Word file: converted on the server, drawn the same way; the new tab opens the PDF
   await open(origin, "report.docx");

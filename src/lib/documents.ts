@@ -68,12 +68,20 @@ export async function awaitPreview(
 }
 
 /** What went wrong with a preview, in the words the viewer has for each case. */
-export type PreviewProblem = "unavailable" | "outdated" | "failed" | "protected" | "timeout" | "too_large" | "busy" | "other";
+export type PreviewProblem = "unavailable" | "outdated" | "missing" | "failed" | "protected" | "timeout" | "too_large" | "busy" | "other";
 
-/** `remote`: the file is on another PC, whose server may be from before previews (its 404 passes through). */
-export function previewProblem(error: unknown, remote: boolean): PreviewProblem {
+/**
+ * Whether the server that described `info` is from before previews: it gave an office file no
+ * office kind (`binary`, or `text` for an RTF). Only such a server's 404 means a missing route.
+ */
+export function olderServer(info: FileInfo): boolean {
+  return info.kind !== viewerKind(info);
+}
+
+/** `older`: the file's server is from before previews (`olderServer`), so its 404 is the route's, not the file's. */
+export function previewProblem(error: unknown, older: boolean): PreviewProblem {
   if (error instanceof PreviewDeadline) return "timeout";
-  if (remote && routeMissing(error)) return "outdated";
+  if (routeMissing(error)) return older ? "outdated" : "missing";
   if (!(error instanceof ApiError)) return "other";
   switch (error.code) {
     case "preview_unavailable": return "unavailable";

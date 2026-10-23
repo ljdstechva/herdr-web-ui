@@ -47,6 +47,8 @@ const FAILURE_KEPT_MS = 60_000;
 const STALE_JOB_MS = 10 * 60_000;
 const ID = /^[0-9a-f]{64}$/;
 const STDERR_KEPT = 2048;
+/** How long a conversion killed at its deadline is waited for before the queue moves on without it. */
+const KILL_GRACE_MS = 5_000;
 
 /** Office Open XML and OpenDocument files are zip archives; the older formats are not checked (a `.doc` is often RTF or HTML). */
 const ZIPPED = /\.(?:docx|docm|dotx|xlsx|xlsm|xlsb|pptx|pptm|ppsx|potx|odt|ods|odp)$/i;
@@ -87,7 +89,8 @@ export function previewId(info: FileInfo): string {
  */
 export function findSoffice(env: Record<string, string | undefined> = process.env): string | null {
   const configured = env["HERDR_WEB_SOFFICE"]?.trim();
-  if (configured) return configured;
+  // a path must be there, a bare name on PATH: one that is not is no LibreOffice, not a damaged file
+  if (configured) return /[\\/]/.test(configured) ? (existsSync(configured) ? configured : null) : Bun.which(configured);
   for (const name of ["soffice", "libreoffice"]) {
     const found = Bun.which(name);
     if (found) return found;
@@ -179,6 +182,15 @@ export class DocumentPreviews {
     return existsSync(path) ? path : null;
   }
 
+  /** The PDF an id names, marked as just opened: one a viewer is still reading in ranges is the last to be pruned. */
+  open(id: string): string | null {
+    const path = this.pdfPath(id);
+    if (path !== null) {
+      try { const now = new Date(); utimesSync(path, now, now); } catch { /* pruned meanwhile: the read finds it gone */ }
+    }
+    return path;
+  }
+
   /** Ends the conversion under way and refuses new ones. */
   stop(): void {
     this.stopped = true;
@@ -241,7 +253,7 @@ export class DocumentPreviews {
       if (size === 0) throw new PreviewError("preview_failed", "LibreOffice could not open this file; it may be damaged or password protected", 422);
       chmodSync(pdf, 0o600);
       renameSync(pdf, join(this.directory, `${id}.pdf`));
-      this.prune();
+      this.prune(`${id}.pdf`);
     } finally {
       rmSync(job, { recursive: true, force: true });
     }
@@ -267,34 +279,50 @@ export class DocumentPreviews {
       });
       let stderr = "";
       child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-STDERR_KEPT); });
-      let timedOut = false;
+      let settled = false;
+      let grace: ReturnType<typeof setTimeout> | undefined;
       const kill = () => {
+        if (child.pid === undefined) return;
         try {
-          if (!windows && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-          else child.kill("SIGKILL");
+          if (!windows) process.kill(-child.pid, "SIGKILL");
+          // the launcher alone would leave soffice.bin converting: /T ends its tree
+          else spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
         } catch { /* already gone */ }
       };
-      const timer = setTimeout(() => { timedOut = true; kill(); }, this.timeoutMs);
+      const finish = (error?: PreviewError) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(grace);
+        this.running.delete(kill);
+        if (error) reject(error); else resolve();
+      };
+      const late = () => new PreviewError("preview_timeout", "LibreOffice took too long to convert this file", 504);
+      // killed at the deadline, and waited for a moment so the next conversion does not meet it in
+      // the profile; a process that will not end (or a child holding its pipe) never holds the queue
+      const timer = setTimeout(() => {
+        kill();
+        grace = setTimeout(() => finish(late()), KILL_GRACE_MS);
+      }, this.timeoutMs);
       this.running.add(kill);
-      const settle = () => { clearTimeout(timer); this.running.delete(kill); };
       child.on("error", (error: NodeJS.ErrnoException) => {
-        settle();
         console.error(`preview soffice ${soffice}: ${error.message}`);
-        reject(error.code === "ENOENT" ? unavailable() : new PreviewError("preview_failed", "LibreOffice could not be started", 422));
+        finish(error.code === "ENOENT" ? unavailable() : new PreviewError("preview_failed", "LibreOffice could not be started", 422));
       });
       child.on("close", (code, signal) => {
-        settle();
-        if (timedOut) { reject(new PreviewError("preview_timeout", "LibreOffice took too long to convert this file", 504)); return; }
-        if (this.stopped && signal !== null) { reject(new PreviewError("preview_failed", "The server is stopping", 503)); return; }
+        if (grace !== undefined) { finish(late()); return; }
+        if (this.stopped && signal !== null) { finish(new PreviewError("preview_failed", "The server is stopping", 503)); return; }
+        // `nice` could not find the command it was to run
+        if (nice && code === 127) { console.error(`preview soffice ${soffice}: not found`); finish(unavailable()); return; }
         // an unreadable file still exits 0: the missing PDF is what tells
         if (code !== 0) console.error(`preview soffice exited ${code ?? signal}: ${stderr.trim()}`);
-        resolve();
+        finish();
       });
     });
   }
 
-  /** The least recently opened PDFs go first, past KEPT_FILES or KEPT_BYTES. */
-  private prune(): void {
+  /** The least recently opened PDFs go first, past KEPT_FILES or KEPT_BYTES; never `made`, the one just converted, however large. */
+  private prune(made: string): void {
     try {
       const pdfs = readdirSync(this.directory)
         .filter((name) => /^[0-9a-f]{64}\.pdf$/.test(name))
@@ -308,7 +336,7 @@ export class DocumentPreviews {
       let bytes = 0;
       pdfs.forEach((pdf, index) => {
         bytes += pdf.size;
-        if (index >= KEPT_FILES || bytes > KEPT_BYTES) rmSync(join(this.directory, pdf.name), { force: true });
+        if (pdf.name !== made && (index >= KEPT_FILES || bytes > KEPT_BYTES)) rmSync(join(this.directory, pdf.name), { force: true });
       });
     } catch (error) {
       console.error(`preview prune: ${error instanceof Error ? error.message : String(error)}`);

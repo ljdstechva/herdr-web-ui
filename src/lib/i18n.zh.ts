@@ -451,6 +451,7 @@ export const ZH: Record<string, string> = {
   "This workbook is password protected. Download it to open it.": "此工作簿受密码保护。请下载后打开。",
   "This workbook is {size}; download it to view.": "此工作簿大小为 {size}，请下载后查看。",
   "This workbook could not be read. It may be damaged.": "无法读取此工作簿。文件可能已损坏。",
+  "Reading this workbook took too long. Download it to view.": "读取此工作簿耗时过长。请下载后查看。",
   "This sheet is empty.": "此工作表为空。",
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "仅显示前 {rows} 行和 {columns} 列。下载文件可查看全部内容。",
   "Sheets": "工作表",

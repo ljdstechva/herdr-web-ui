@@ -449,6 +449,7 @@ export const JA: Record<string, string> = {
   "This workbook is password protected. Download it to open it.": "このブックはパスワードで保護されています。ダウンロードして開いてください。",
   "This workbook is {size}; download it to view.": "このブックは {size} あります。ダウンロードして表示してください。",
   "This workbook could not be read. It may be damaged.": "このブックを読み込めませんでした。破損している可能性があります。",
+  "Reading this workbook took too long. Download it to view.": "このブックの読み込みに時間がかかりすぎました。ダウンロードして表示してください。",
   "This sheet is empty.": "このシートは空です。",
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "最初の {rows} 行と {columns} 列を表示しています。すべてを見るにはファイルをダウンロードしてください。",
   "Sheets": "シート",

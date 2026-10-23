@@ -28,6 +28,8 @@ export interface SheetGrid {
   /** rows and columns the sheet has in use, hidden ones included: more than shown when it was cut short */
   totalRows: number;
   totalCols: number;
+  /** rows or columns that are not hidden were left out at `GRID_LIMITS` (or were not read at all) */
+  cut: boolean;
 }
 
 /** What is drawn of one sheet: a phone lays out a table of tens of thousands of cells slowly. */
@@ -116,6 +118,11 @@ export function sheetGrid(name: string, sheet: WorkSheet, limits = GRID_LIMITS):
   const rows: number[] = [];
   for (let r = 0; r <= end.row && rows.length < maxRows; r += 1) if (!hiddenRow(r)) rows.push(r);
 
+  // left out: a visible row or column past the last one shown, or rows `sheetRows` did not read
+  let cut = full !== null && read !== null && full.row > read.row;
+  for (let r = (rows[rows.length - 1] ?? -1) + 1; !cut && r <= end.row; r += 1) cut = !hiddenRow(r);
+  for (let c = (cols[cols.length - 1] ?? -1) + 1; !cut && c <= end.col; c += 1) cut = !hiddenCol(c);
+
   const cells: GridCell[][] = rows.map((r) => cols.map((c) => cellText(cellAt(sheet, r, c))));
   // merged cells: the corner spans the shown rows and columns inside the merge, the rest is covered
   const rowAt = new Map(rows.map((r, index) => [r, index]));
@@ -138,7 +145,7 @@ export function sheetGrid(name: string, sheet: WorkSheet, limits = GRID_LIMITS):
     const px = info?.hpx ?? (info?.hpt !== undefined ? info.hpt * 4 / 3 : undefined);
     return px === undefined ? null : Math.round(Math.min(400, Math.max(8, px)));
   });
-  return { name, rows, cols, cells, widths: cols.map((c) => columnWidth(sheet, c)), heights, totalRows, totalCols };
+  return { name, rows, cols, cells, widths: cols.map((c) => columnWidth(sheet, c)), heights, totalRows, totalCols, cut };
 }
 
 /**

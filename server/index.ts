@@ -1893,7 +1893,7 @@ export function createServer(
       // the PDF a preview made: by its id alone, which names a file in the preview folder and nothing else
       if (pathname === "/api/fs/preview/pdf") {
         if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
-        const pdf = previews.pdfPath(url.searchParams.get("id") ?? "");
+        const pdf = previews.open(url.searchParams.get("id") ?? "");
         if (pdf === null) return jsonResponse({ error: { code: "not_found", message: "no such preview; open the file again" } }, 404);
         return previewResponse(pdf, url.searchParams.get("name"));
       }
@@ -1910,6 +1910,8 @@ export function createServer(
         // several files end in that name: the viewer lists them to choose from
         if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
         if (pathname === "/api/fs/preview") {
+          // it starts LibreOffice on a file the URL names: only this app may ask, never an <img> on another site
+          if (!sameOrigin(request)) return jsonResponse({ error: { code: "invalid_origin", message: "Ask for previews from this app" } }, 403);
           // an ask answers within PREVIEW_WAIT_MS, `converting` if LibreOffice is still at it: well inside the idle timeout and the PC proxy's
           bunServer.timeout(request, 60);
           try {

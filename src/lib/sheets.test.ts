@@ -53,6 +53,18 @@ describe("sheets", () => {
     expect(grid.heights[1]).toBeNull();
   });
 
+  it("is not cut short by rows and columns that are only hidden", () => {
+    const book = roundTrip((book) => {
+      const sheet = utils.aoa_to_sheet([["a", "b", "x"], ["c", "d", "y"], ["e", "f", "z"]]);
+      sheet["!rows"] = [{}, {}, { hidden: true }];
+      sheet["!cols"] = [{}, {}, { hidden: true }];
+      utils.book_append_sheet(book, sheet, "Hidden tail");
+    });
+    const grid = workbookGrids(book)[0]!;
+    expect([grid.rows, grid.cols, grid.cut]).toEqual([[0, 1], [0, 1], false]);
+    expect(workbookGrids(book, { maxRows: 1, maxCols: 80, maxCells: 1_000 })[0]!.cut).toBe(true);
+  });
+
   it("draws the cells in use, not a range that runs on", () => {
     const book = roundTrip((book) => {
       const sheet = utils.aoa_to_sheet([["only"]]);
@@ -73,6 +85,7 @@ describe("sheets", () => {
     expect(grid.cols.length).toBe(30);
     expect(grid.rows.length).toBe(Math.floor(GRID_LIMITS.maxCells / 30));
     expect(grid.totalRows).toBe(5_000);
+    expect(grid.cut).toBe(true);
     expect(grid.cells[1]![2]).toEqual({ t: "102", a: "r" });
   });
 

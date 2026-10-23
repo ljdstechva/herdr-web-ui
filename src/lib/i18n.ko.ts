@@ -447,6 +447,7 @@ export const KO: Record<string, string> = {
   "This workbook is password protected. Download it to open it.": "이 통합 문서는 암호로 보호되어 있습니다. 다운로드해서 여세요.",
   "This workbook is {size}; download it to view.": "이 통합 문서는 {size}입니다. 다운로드해서 보세요.",
   "This workbook could not be read. It may be damaged.": "이 통합 문서를 읽을 수 없습니다. 파일이 손상되었을 수 있습니다.",
+  "Reading this workbook took too long. Download it to view.": "이 통합 문서를 읽는 데 시간이 너무 오래 걸렸습니다. 다운로드해서 보세요.",
   "This sheet is empty.": "이 시트는 비어 있습니다.",
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "처음 {rows}행, {columns}열만 표시합니다. 전체를 보려면 파일을 다운로드하세요.",
   "Sheets": "시트",

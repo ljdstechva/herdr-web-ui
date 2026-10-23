@@ -8,7 +8,12 @@ import { columnName, type SheetGrid } from "../lib/sheets.ts";
 import { anchoredScroll, clampZoom, useZoomGestures, ZOOM_STEP, type ZoomAnchor } from "../lib/zoomGestures.ts";
 
 /** Larger workbooks are offered as a download: the phone reads one whole before it draws a cell. */
-export const MAX_SHEET_BYTES = 40 * 1024 * 1024;
+export const MAX_SHEET_BYTES = 25 * 1024 * 1024;
+/**
+ * A worker still reading after this long is given up on: a phone that runs out of memory in one
+ * may never say so, and the view would wait on "Opening…" for good.
+ */
+const READ_TIMEOUT_MS = 60_000;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 3;
 /** The row numbers' column, and a row with no height of its own, in CSS px at zoom 1. */
@@ -21,7 +26,7 @@ export interface SheetViewProps {
   size: number;
 }
 
-type Loaded = { sheets: SheetGrid[] } | { problem: "password" | "unreadable" | "too_large" | "unreachable" };
+type Loaded = { sheets: SheetGrid[] } | { problem: "password" | "unreadable" | "too_large" | "slow" | "unreachable" };
 
 /**
  * A spreadsheet's cells, read in the browser (lib/sheet.worker.ts): column letters and row
@@ -51,13 +56,15 @@ export default function SheetView({ url, name, size }: SheetViewProps) {
       if (abort.signal.aborted) return;
       const reader = new Worker(new URL("../lib/sheet.worker.ts", import.meta.url), { type: "module" });
       worker = reader;
-      const answer = await new Promise<SheetWorkerAnswer>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const answer = await new Promise<SheetWorkerAnswer | "slow">((resolve, reject) => {
+        timer = setTimeout(() => resolve("slow"), READ_TIMEOUT_MS);
         reader.onmessage = (event: MessageEvent<SheetWorkerAnswer>) => resolve(event.data);
         reader.onerror = (event) => { event.preventDefault(); reject(new Error(event.message || "the sheet reader failed")); };
         reader.postMessage(bytes, [bytes]);
-      });
+      }).finally(() => clearTimeout(timer));
       if (abort.signal.aborted) return;
-      setLoaded("sheets" in answer ? { sheets: answer.sheets } : { problem: answer.error });
+      setLoaded(answer === "slow" ? { problem: "slow" } : "sheets" in answer ? { sheets: answer.sheets } : { problem: answer.error });
     })().catch((error: unknown) => {
       if (abort.signal.aborted) return;
       console.warn(`sheet ${name}:`, error);
@@ -85,7 +92,7 @@ export default function SheetView({ url, name, size }: SheetViewProps) {
     root.scrollLeft = left;
     root.scrollTop = top;
   }, [zoom]);
-  useZoomGestures(area, content, zoom, { min: MIN_ZOOM, max: MAX_ZOOM }, zoomTo);
+  useZoomGestures(area, content, zoom, { min: MIN_ZOOM, max: MAX_ZOOM, tap: 2 }, zoomTo);
 
   // another sheet starts at its top-left corner, nothing chosen in it
   const showSheet = (index: number) => {
@@ -119,14 +126,15 @@ export default function SheetView({ url, name, size }: SheetViewProps) {
 
   const picked = grid !== null && selected !== null ? grid.cells[selected.row]?.[selected.col] : null;
   const pickedName = grid !== null && selected !== null ? `${columnName(grid.cols[selected.col] ?? 0)}${(grid.rows[selected.row] ?? 0) + 1}` : "";
-  const cut = grid !== null && ((grid.rows[grid.rows.length - 1] ?? -1) + 1 < grid.totalRows || (grid.cols[grid.cols.length - 1] ?? -1) + 1 < grid.totalCols);
+  const cut = grid?.cut === true;
 
   const message = loaded === null ? null
     : "problem" in loaded
       ? loaded.problem === "password" ? t("This workbook is password protected. Download it to open it.")
         : loaded.problem === "too_large" ? t("This workbook is {size}; download it to view.", { size: formatBytes(size) })
           : loaded.problem === "unreadable" ? t("This workbook could not be read. It may be damaged.")
-            : t("The file could not be opened.")
+            : loaded.problem === "slow" ? t("Reading this workbook took too long. Download it to view.")
+              : t("The file could not be opened.")
       : grid === null || grid.rows.length === 0 ? t("This sheet is empty.") : null;
 
   return (

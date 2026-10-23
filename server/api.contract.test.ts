@@ -2984,6 +2984,11 @@ describe.skipIf(process.platform === "win32")("document preview API", () => {
       expect(unknown.status).toBe(404);
       expect((await fetch(`http://localhost:${app.port}/api/fs/preview/pdf?id=../../etc/passwd`)).status).toBe(404);
 
+      // a page on another site cannot start a conversion (an <img> pointed at this PC)
+      const crossSite = await fetch(`http://localhost:${app.port}/api/fs/preview?path=${encodeURIComponent(join(docs, "report.docx"))}`, { headers: { "sec-fetch-site": "cross-site" } });
+      expect(crossSite.status).toBe(403);
+      expect((await crossSite.json() as ApiError).error.code).toBe("invalid_origin");
+
       const unavailable = await ask(none, join(docs, "report.docx"));
       expect(unavailable.status).toBe(501);
       expect((await unavailable.json() as ApiError).error.code).toBe("preview_unavailable");

@@ -143,8 +143,8 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   const mathClose = next(/\\\)/g);
   const labelEnd = next(/[\]\n]/g);
   const targetEnd = next(/[\s)]/g);
-  // a `<…>` target's end, and the `)` a target with spaces in it ends at
-  const angleEnd = next(/>\)/g);
+  // what ends a `<…>` target (it holds no `<`, `>` or line break), and the `)` a target with spaces in it ends at
+  const angleStop = next(/[<>\n]/g);
   const parenEnd = next(/\)/g);
   const emphasisClose = next(/(?<=\S)_(?![\p{L}\p{N}\p{M}_])/gu);
   const strongClose = next(/(?<=\S)__(?![\p{L}\p{N}\p{M}_])/gu);
@@ -163,8 +163,9 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
       const target = label + 2;
       if (!(label > start + 1 && source[label] === "]" && source[label + 1] === "(")) pattern = null;
       else if (source[target] === "<") {
-        const end = angleEnd(target);
-        if (!(end > target + 1 && end < lineEnd(target))) pattern = null;
+        // the same test as `marker`'s: anything else lets every `[` before this one try the pattern again
+        const end = angleStop(target + 1);
+        if (!(end > target + 1 && source[end] === ">" && source[end + 1] === ")")) pattern = null;
       } else {
         const end = targetEnd(target);
         if (!(end > target && source[end] === ")")) {

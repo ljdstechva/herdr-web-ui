@@ -1,9 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { FileInfo } from "../../shared/protocol.ts";
-import { LOCAL_MACHINE } from "../../shared/machines.ts";
-import { awaitPreview, previewProblem, type PreviewProblem } from "../lib/documents.ts";
+import { awaitPreview, olderServer, previewProblem, type PreviewProblem } from "../lib/documents.ts";
 import { useT } from "../lib/i18n.ts";
-import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { useMachineApi } from "../lib/machineContext.tsx";
 
 const PdfView = lazy(() => import("./PdfView.tsx"));
 
@@ -25,7 +24,8 @@ export interface DocumentPreviewProps {
 export function DocumentPreview({ info, paneId, onPdf }: DocumentPreviewProps) {
   const t = useT();
   const { fetchFilePreview, filePreviewUrl } = useMachineApi();
-  const remote = useMachineId() !== LOCAL_MACHINE;
+  // a PC whose server is from before previews answers their route with a 404
+  const older = olderServer(info);
   const [pdf, setPdf] = useState<string | null>(null);
   const [problem, setProblem] = useState<PreviewProblem | null>(null);
   const [slow, setSlow] = useState(false);
@@ -46,18 +46,19 @@ export function DocumentPreview({ info, paneId, onPdf }: DocumentPreviewProps) {
     }, (error: unknown) => {
       if (abort.signal.aborted) return;
       console.warn(`preview ${info.name}:`, error);
-      setProblem(previewProblem(error, remote));
+      setProblem(previewProblem(error, older));
     }).finally(() => clearTimeout(slowTimer));
     return () => {
       abort.abort();
       clearTimeout(slowTimer);
     };
-  }, [info.path, info.name, info.modified, paneId, attempt, fetchFilePreview, filePreviewUrl, remote]);
+  }, [info.path, info.name, info.modified, paneId, attempt, fetchFilePreview, filePreviewUrl, older]);
 
   if (problem !== null) {
     const message = {
       unavailable: t("Previewing Word, Excel and PowerPoint files needs LibreOffice on the PC that has them. Download the file to open it."),
       outdated: t("This PC needs an update before it can preview documents. Download the file to open it."),
+      missing: t("No readable file at this path."),
       failed: t("LibreOffice could not open this file. It may be damaged or password protected."),
       protected: t("This file is password protected. Download it to open it."),
       timeout: t("Converting this file took too long."),

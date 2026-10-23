@@ -144,6 +144,33 @@ describe.skipIf(process.platform === "win32")("document previews", () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it("moves on from a conversion whose child outlives the kill and holds its pipe", async () => {
+    const root = temp();
+    const info = document(root);
+    // a child in a session of its own escapes the group kill and keeps stderr open
+    const escaped = join(root, "escaped.pid");
+    const soffice = join(root, "soffice-escaping");
+    writeFileSync(soffice, `#!/bin/sh\nsetsid sh -c 'echo $$ > "${escaped}"; exec sleep 30' &\nsleep 30\n`);
+    chmodSync(soffice, 0o755);
+    const previews = service({ directory: join(root, "previews"), soffice, timeoutMs: 200 });
+    const started = Date.now();
+    try {
+      const error = await previews.preview(info, 20_000).catch((reason: unknown) => reason);
+      expect((error as PreviewError).code).toBe("preview_timeout");
+      expect(Date.now() - started).toBeLessThan(9_000);
+    } finally {
+      try { process.kill(Number(readFileSync(escaped, "utf8")), "SIGKILL"); } catch { /* gone */ }
+    }
+  }, 15_000);
+
+  it("calls a soffice that is not there no LibreOffice, not a damaged file", async () => {
+    expect(findSoffice({ HERDR_WEB_SOFFICE: "/nowhere/soffice" })).toBeNull();
+    expect(findSoffice({ HERDR_WEB_SOFFICE: "no-such-office-command" })).toBeNull();
+    const root = temp();
+    const previews = service({ directory: join(root, "previews"), soffice: "/nowhere/soffice" });
+    expect(((await previews.preview(document(root), 5_000).catch((error: unknown) => error)) as PreviewError).code).toBe("preview_unavailable");
+  });
+
   it("refuses without LibreOffice, a file too large, and what is no office file", async () => {
     const root = temp();
     const none = service({ directory: join(root, "previews"), soffice: null });
@@ -166,6 +193,21 @@ describe.skipIf(process.platform === "win32")("document previews", () => {
     expect(soffice.runs()).toBe(0);
     // the older formats are not zips, and a .doc is often RTF or HTML: LibreOffice decides
     expect((await previews.preview(document(root, "old.doc", "{\\rtf1 hi}"), 5_000)).state).toBe("ready");
+  });
+
+  it("keeps the PDF it just made, however large, while pruning older ones", async () => {
+    const root = temp();
+    const previews = service({ directory: join(root, "previews"), soffice: fakeSoffice(root).path });
+    const first = await previews.preview(document(root, "a.docx"), 5_000);
+    // a stand-in that prints a PDF larger than all the PDFs kept together (sparse: no disk is used)
+    const huge = join(root, "soffice-huge");
+    writeFileSync(huge, `#!/bin/sh\nout=""\nwhile [ $# -gt 0 ]; do if [ "$1" = "--outdir" ]; then out="$2"; shift; fi; shift; done\nprintf '%%PDF' > "$out/source.pdf"\ntruncate -s 200M "$out/source.pdf"\n`);
+    chmodSync(huge, 0o755);
+    const large = service({ directory: join(root, "previews"), soffice: huge });
+    const answer = await large.preview(document(root, "big.pptx"), 5_000);
+    expect(answer.state === "ready" && answer.size).toBe(200 * 1024 * 1024);
+    // the older one makes room for it
+    expect(first.state === "ready" && previews.pdfPath(first.id)).toBeNull();
   });
 
   it("names nothing outside its folder by id", () => {

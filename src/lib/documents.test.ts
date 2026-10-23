@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { FileInfo, PdfPreview } from "../../shared/protocol.ts";
 import { ApiError } from "./api.ts";
-import { awaitPreview, PreviewDeadline, previewProblem, viewerKind } from "./documents.ts";
+import { awaitPreview, olderServer, PreviewDeadline, previewProblem, viewerKind } from "./documents.ts";
 import { anchoredScroll, clampZoom } from "./zoomGestures.ts";
 
 const file = (name: string, kind: FileInfo["kind"]): FileInfo => ({ path: `/w/${name}`, name, size: 1, modified: "2026-10-23T00:00:00.000Z", mime: "application/octet-stream", kind });
@@ -62,9 +62,12 @@ describe("documents", () => {
     expect(previewProblem(refused(413, "preview_too_large"), false)).toBe("too_large");
     expect(previewProblem(refused(503, "preview_busy"), false)).toBe("busy");
     expect(previewProblem(refused(422, "preview_protected"), false)).toBe("protected");
-    // another PC's server from before previews has no such route
+    // a server from before previews has no such route; a current one's 404 is a file gone since it was opened
     expect(previewProblem(refused(404, "not_found"), true)).toBe("outdated");
-    expect(previewProblem(refused(404, "not_found"), false)).toBe("other");
+    expect(previewProblem(refused(404, "not_found"), false)).toBe("missing");
+    expect(olderServer(file("report.docx", "binary"))).toBe(true);
+    expect(olderServer(file("memo.rtf", "text"))).toBe(true);
+    expect(olderServer(file("report.docx", "document"))).toBe(false);
   });
 
   it("keeps the point under the fingers in place across a zoom", () => {

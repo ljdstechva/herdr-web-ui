@@ -64,10 +64,16 @@ export default function PdfView({ url, name }: PdfViewProps) {
       setDoc(pdf);
       for (let start = 2; start <= pdf.numPages; start += SIZE_BATCH) {
         const numbers = Array.from({ length: Math.min(SIZE_BATCH, pdf.numPages - start + 1) }, (_, index) => start + index);
-        const batch = await Promise.all(numbers.map(async (number) => {
-          const viewport = (await pdf.getPage(number)).getViewport({ scale: 1 });
-          return { number, width: viewport.width, height: viewport.height };
-        }));
+        // a page that cannot be read keeps the first page's size: the others still show, and it says so where it is drawn
+        const batch = (await Promise.all(numbers.map(async (number) => {
+          try {
+            const viewport = (await pdf.getPage(number)).getViewport({ scale: 1 });
+            return { number, width: viewport.width, height: viewport.height };
+          } catch (error) {
+            if (!abort.signal.aborted) console.warn(`pdf page ${number} size:`, error);
+            return null;
+          }
+        }))).filter((size) => size !== null);
         if (abort.signal.aborted) return;
         setSizes((old) => {
           const changed = batch.filter(({ number, width: w, height: h }) => old[number - 1]?.width !== w || old[number - 1]?.height !== h);
@@ -168,7 +174,7 @@ export default function PdfView({ url, name }: PdfViewProps) {
     root.scrollLeft = left;
     root.scrollTop = top;
   }, [zoom]);
-  useZoomGestures(area, content, zoom, { min: MIN_ZOOM, max: MAX_ZOOM }, zoomTo);
+  useZoomGestures(area, content, zoom, { min: MIN_ZOOM, max: MAX_ZOOM, tap: 2.5 }, zoomTo);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -239,6 +245,16 @@ const PdfPage = memo(function PdfPage({ doc, number, size, scale, near, observe,
     }
     let cancelled = false;
     let task: { cancel: () => void } | null = null;
+    // drawn aside first: the page keeps its last drawing (stretched) until the new one is whole
+    let drawing: HTMLCanvasElement | null = null;
+    // a canvas holds its pixels until its size is zero, also once nothing refers to it: a phone's
+    // budget for them is small, and every zoom step cancels the drawings near the view
+    const release = () => {
+      if (drawing === null) return;
+      drawing.width = 0;
+      drawing.height = 0;
+      drawing = null;
+    };
     void (async () => {
       const page = await doc.getPage(number);
       if (cancelled) return;
@@ -246,24 +262,25 @@ const PdfPage = memo(function PdfPage({ doc, number, size, scale, near, observe,
       const pixels = size.width * size.height * output * output;
       if (pixels > MAX_CANVAS_PIXELS) output *= Math.sqrt(MAX_CANVAS_PIXELS / pixels);
       const viewport = page.getViewport({ scale: output });
-      // drawn aside first: the page keeps its last drawing (stretched) until the new one is whole
-      const drawing = document.createElement("canvas");
-      drawing.width = Math.max(1, Math.floor(viewport.width));
-      drawing.height = Math.max(1, Math.floor(viewport.height));
-      const render = page.render({ canvas: drawing, viewport });
+      const aside = document.createElement("canvas");
+      drawing = aside;
+      aside.width = Math.max(1, Math.floor(viewport.width));
+      aside.height = Math.max(1, Math.floor(viewport.height));
+      const render = page.render({ canvas: aside, viewport });
       task = render;
       await render.promise;
       if (cancelled) return;
-      target.width = drawing.width;
-      target.height = drawing.height;
-      target.getContext("2d")?.drawImage(drawing, 0, 0);
-      drawing.width = 0;
+      target.width = aside.width;
+      target.height = aside.height;
+      target.getContext("2d")?.drawImage(aside, 0, 0);
     })().catch((error: unknown) => {
       if (!cancelled && !(error instanceof Error && error.name === "RenderingCancelledException")) console.warn(`pdf page ${number}:`, error);
-    });
+    }).finally(release);
     return () => {
       cancelled = true;
       task?.cancel();
+      // a cancelled render settles later, if at all: let go of its canvas now
+      release();
     };
   }, [doc, number, near, scale, size.width, size.height]);
 

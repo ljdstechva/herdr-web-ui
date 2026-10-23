@@ -11,7 +11,12 @@ const remote = Bun.serve({
     const path = new URL(request.url).pathname;
     if (path === "/api/pane/conversation/image") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
     if (path === "/api/pane/conversation/tool-output") return new Response("complete remote output", { headers: { "content-type": "text/plain; charset=utf-8" } });
-    if (path === "/api/fs/file" || path === "/api/fs/preview/pdf") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
+    if (path === "/api/fs/file") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
+    // a range of a document's PDF, as Bun answers one for a file body
+    if (path === "/api/fs/preview/pdf") return new Response(request.headers.get("range") === "bytes=0-3" ? "%PDF" : "%PDF-1.7", {
+      status: request.headers.has("range") ? 206 : 200,
+      headers: { "content-type": "application/pdf", "accept-ranges": "bytes", "content-disposition": "inline; filename*=UTF-8''report.pdf", ...(request.headers.has("range") ? { "content-range": "bytes 0-3/8" } : {}) },
+    });
     if (path === "/api/fs/preview") return Response.json({ state: "converting" }, { status: 202 });
     const ifNoneMatch = request.headers.get("if-none-match");
     asked.push(ifNoneMatch);
@@ -84,7 +89,14 @@ it("forwards a document's preview, and opens its PDF from a navigation as a file
   expect(await preview.json()).toEqual({ state: "converting" });
   const pdf = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/fs/preview/pdf?id=${"a".repeat(64)}`, { headers: { "sec-fetch-site": "cross-site" } }), manager);
   expect(pdf.status).toBe(200);
+  expect(pdf.headers.get("content-disposition")).toBe("inline; filename*=UTF-8''report.pdf");
+  expect(pdf.headers.get("accept-ranges")).toBe("bytes");
   expect(await pdf.text()).toBe("%PDF-1.7");
+  // pdf.js reads it in ranges, which pass through as they do for a file
+  const part = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/fs/preview/pdf?id=${"a".repeat(64)}`, { headers: { "sec-fetch-site": "same-origin", range: "bytes=0-3" } }), manager);
+  expect(part.status).toBe(206);
+  expect(part.headers.get("content-range")).toBe("bytes 0-3/8");
+  expect(await part.text()).toBe("%PDF");
   // asking for a conversion is this app's alone
   expect((await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/preview?path=%2Ftmp%2Freport.docx", { headers: { "sec-fetch-site": "cross-site" } }), manager)).status).toBe(403);
 });
