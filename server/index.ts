@@ -34,6 +34,7 @@ import { freeAgentName } from "./agent-name.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
 import { fileResponse, locateFile } from "./file-view.ts";
+import { DocumentPreviews, PreviewError, previewResponse } from "./file-preview.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -123,6 +124,12 @@ const MAX_REPLAY_BYTES = 256 * 1024;
 const PLUGIN_PLATFORM = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
 /** How long POST /api/plugin/action waits for the command herdr started to end before it answers `running`. */
 const PLUGIN_ACTION_WAIT_MS = 5_000;
+/**
+ * How long GET /api/fs/preview waits for LibreOffice before answering `converting`: most files
+ * take a few seconds, and a longer one is asked about again rather than held past Bun's idle
+ * timeout (30 s) or a phone's dozing connection.
+ */
+const PREVIEW_WAIT_MS = 20_000;
 /** How far back in herdr's plugin command log a run is looked for. */
 const livePaneIds = async (timeoutMs?: number): Promise<string[]> => (await sessionSnapshot(undefined, timeoutMs)).panes.map((pane) => pane.pane_id);
 /**
@@ -500,6 +507,8 @@ export function createServer(
     terminalAttach?: boolean | (() => Promise<boolean>);
     /** whether this runtime can run the PTY sidecar; unset, server/pty/sidecar.ts says. Tests give a runtime without Node or node-pty, while herdr keeps its own answer. */
     sidecar?: boolean;
+    /** LibreOffice's soffice for document previews (server/file-preview.ts); null: none; unset, HERDR_WEB_SOFFICE or found on PATH. Tests pass a stand-in or null. */
+    soffice?: string | null;
   } = {},
 ): ServerInstance {
   const attachments = new Map<string, PaneAttachment>();
@@ -562,6 +571,7 @@ export function createServer(
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
+  const previews = new DocumentPreviews({ directory: join(options.stateDir ?? defaultStateDir(), "previews"), soffice: options.soffice });
   // New workspace's extra choices (agent-presets.ts): a preset's kind starts its herdr agent with its arguments
   const launchAgent = (paneId: string, agent: AgentPayload) => {
     const resolved = resolvePreset(agent.kind as string, agent.args as string[] | undefined, loadAgentPresets(options.stateDir ?? defaultStateDir()));
@@ -1880,7 +1890,15 @@ export function createServer(
         }
       }
 
-      if (pathname === "/api/fs/stat" || pathname === "/api/fs/file") {
+      // the PDF a preview made: by its id alone, which names a file in the preview folder and nothing else
+      if (pathname === "/api/fs/preview/pdf") {
+        if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
+        const pdf = previews.pdfPath(url.searchParams.get("id") ?? "");
+        if (pdf === null) return jsonResponse({ error: { code: "not_found", message: "no such preview; open the file again" } }, 404);
+        return previewResponse(pdf, url.searchParams.get("name"));
+      }
+
+      if (pathname === "/api/fs/stat" || pathname === "/api/fs/file" || pathname === "/api/fs/preview") {
         if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
         const paneId = url.searchParams.get("pane_id");
         let cwd: string | null = null;
@@ -1891,6 +1909,17 @@ export function createServer(
         if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
         // several files end in that name: the viewer lists them to choose from
         if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
+        if (pathname === "/api/fs/preview") {
+          // an ask answers within PREVIEW_WAIT_MS, `converting` if LibreOffice is still at it: well inside the idle timeout and the PC proxy's
+          bunServer.timeout(request, 60);
+          try {
+            const preview = await previews.preview(found.info, PREVIEW_WAIT_MS);
+            return jsonResponse(preview, preview.state === "ready" ? 200 : 202);
+          } catch (error) {
+            if (error instanceof PreviewError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
+            return errorResponse(error);
+          }
+        }
         return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1");
       }
 
@@ -3435,6 +3464,7 @@ export function createServer(
     alertsSettled: () => push.settled(),
     stop: () => {
       stopped = true;
+      previews.stop();
       conversations.stop();
       clearInterval(outputTimer);
       collector.stop();

@@ -64,7 +64,7 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Document surface | `--pdf-page` | `#ffffff` | `#ffffff` |
 
 `--pdf-page` is the one color with the same value in both columns, on purpose: a PDF page is
-paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the theme. It is named in
+paper, not UI, and the viewer (`.pdf-page` in PdfView) must not tint it for the theme. It is named in
 `src/styles.css` under the same note and no theme or palette block overrides it.
 
 ### Opt-in palettes

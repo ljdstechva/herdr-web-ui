@@ -591,7 +591,11 @@ export interface DirectoryListing {
 }
 
 /** How the file viewer shows a file. */
-export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
+/**
+ * `document` (Word, OpenDocument text, RTF) and `presentation` open as the PDF GET /api/fs/preview
+ * converts them to; `spreadsheet` opens as its cells, read in the browser from GET /api/fs/file.
+ */
+export type FileKind = "image" | "video" | "audio" | "pdf" | "document" | "spreadsheet" | "presentation" | "text" | "binary";
 
 /** GET /api/fs/stat: a file the viewer can open (GET /api/fs/file streams it). */
 export interface FileInfo {
@@ -603,6 +607,16 @@ export interface FileInfo {
   mime: string;
   kind: FileKind;
 }
+
+/**
+ * GET /api/fs/preview (`path`, `pane_id` as for /api/fs/stat): an office file converted to PDF by
+ * LibreOffice on the PC that has the file. `converting` answers while it works (202): ask again,
+ * the conversion goes on between asks. `id` names the PDF for GET /api/fs/preview/pdf?id=, and
+ * stays the same until the file changes. A PC without LibreOffice answers 501
+ * `preview_unavailable`; a file it cannot open, 422 `preview_failed` (`preview_protected` for
+ * a password-protected one).
+ */
+export type PdfPreview = { state: "ready"; id: string; size: number } | { state: "converting" };
 
 export interface AgentKind {
   kind: string;

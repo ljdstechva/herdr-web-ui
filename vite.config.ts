@@ -3,7 +3,8 @@ import { defineConfig, normalizePath, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const xtermSource = normalizePath(buildXtermSource(fileURLToPath(new URL(".", import.meta.url))));
 
@@ -18,11 +19,47 @@ const thirdPartyNotices: Plugin = {
   },
 };
 
+// pdf.js reads data of its own at run time (src/lib/pdf.ts): the CMaps of CJK text, the standard
+// fonts a PDF may leave out, and the JavaScript decoders of scanned images (JBIG2, JPEG 2000, fax),
+// with their licenses. They ship under /assets/pdfjs-<version>/: a versioned folder, cached like
+// the bundles, which src/lib/pdf.ts finds beside its own chunk.
+const pdfjsRoot = fileURLToPath(new URL("./node_modules/pdfjs-dist/", import.meta.url));
+const pdfjsFolder = `pdfjs-${(JSON.parse(readFileSync(join(pdfjsRoot, "package.json"), "utf8")) as { version: string }).version}/`;
+function pdfjsData(): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const folder of ["cmaps", "standard_fonts"]) {
+    for (const name of readdirSync(join(pdfjsRoot, folder))) files.set(`${folder}/${name}`, join(pdfjsRoot, folder, name));
+  }
+  // only the JavaScript decoders: the app's CSP has no 'wasm-unsafe-eval', so the .wasm builds would never load
+  for (const name of readdirSync(join(pdfjsRoot, "wasm"))) {
+    if (name.endsWith("_nowasm_fallback.js") || name.startsWith("LICENSE")) files.set(`wasm/${name}`, join(pdfjsRoot, "wasm", name));
+  }
+  return files;
+}
+const pdfjsAssets: Plugin = {
+  name: "pdfjs-data",
+  configureServer(server) {
+    const files = pdfjsData();
+    server.middlewares.use((request, response, next) => {
+      const path = (request.url ?? "").split("?")[0]!;
+      const at = path.indexOf(`/${pdfjsFolder}`);
+      const file = at === -1 ? undefined : files.get(decodeURIComponent(path.slice(at + pdfjsFolder.length + 1)));
+      if (file === undefined) { next(); return; }
+      response.setHeader("content-type", file.endsWith(".js") ? "text/javascript" : "application/octet-stream");
+      response.end(readFileSync(file));
+    });
+  },
+  generateBundle() {
+    for (const [name, file] of pdfjsData()) this.emitFile({ type: "asset", fileName: `assets/${pdfjsFolder}${name}`, source: readFileSync(file) });
+  },
+};
+
 export default defineConfig({
-  plugins: [react(), thirdPartyNotices],
+  plugins: [react(), thirdPartyNotices, pdfjsAssets],
   define: {
     __APP_REVISION__: JSON.stringify(revision),
     __APP_VERSION__: JSON.stringify((JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version),
+    __PDFJS_DATA__: JSON.stringify(pdfjsFolder),
   },
   server: {
     port: 5173,

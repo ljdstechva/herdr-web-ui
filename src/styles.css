@@ -61,7 +61,7 @@
 
   /* document surfaces: NOT theme-driven. A PDF page is paper, not UI — it is white in either
      theme, so it is named here and never overridden by the theme blocks below
-     (FileViewer's .file-viewer-pdf) */
+     (PdfView's .pdf-page) */
   --pdf-page: #ffffff;
 
   /* terminal theme: mirrored verbatim in src/lib/settings.ts terminalTheme() */

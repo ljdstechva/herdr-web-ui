@@ -34,4 +34,10 @@ describe("file paths in chat text", () => {
     // a file of any language still opens: what is refused above is known code, not an unknown extension
     for (const code of ["main.c", "util.h", "App.vue", "go.mod", "Cargo.lock", "nginx.conf", "config.env", "src/process.env", "os.py", "std.rs", "tool.ts", "fmt.go", "app.dev", "tool.vue", "std.lock", "os.conf", "Math.js", "process.yml", "README.org", "notes.io", "example.com"]) expect(codeIsFilePath(code)).toBe(true);
   });
+
+  it("takes a rooted path with spaces only when it ends in a document or media file", () => {
+    for (const code of ["/opt/work/09 Online Jobs/Report.docx", "~/Engineer Reports/Q3 results.xlsx", "./out/Final deck.pptx", "/srv/scans/ECC permit.pdf", "/tmp/My Photos/site 1.jpg"]) expect(codeIsFilePath(code)).toBe(true);
+    // commands, and paths of files the viewer has no view of
+    for (const code of ["/usr/bin/env python3 x.py", "/usr/bin/convert in.png out.pdf", "/bin/ls -la report.pdf", "cat /tmp/a b.pdf", "/opt/work/my notes.txt", "/a  b/c.pdf", "/a/ b.pdf"]) expect(codeIsFilePath(code)).toBe(false);
+  });
 });

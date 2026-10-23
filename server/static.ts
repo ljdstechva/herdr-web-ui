@@ -49,7 +49,7 @@ function cacheControlFor(pathname: string): string {
 
 /**
  * The app's own Content-Security-Policy, sent with the shell and every static file. The file
- * viewer's own answers (`/api/fs/*`, a PDF in a frame, images in an <img>) do not pass through
+ * viewer's own answers (`/api/fs/*`: a PDF pdf.js reads, images in an <img>) do not pass through
  * here: `fileResponse` (file-view.ts) sends them its own, stricter `sandbox; default-src 'none'`.
  * Every directive is here for a reason, and none of them is a guess:
  *
@@ -83,8 +83,10 @@ function cacheControlFor(pathname: string): string {
  *   an explicit `new WebSocket("ws://<same host>/ws")` and the machines event stream both
  *   connect under the enforcing header).
  * - `media-src 'self'`: the file viewer's <video>/<audio>, same-origin.
- * - `frame-src 'self'`: the PDF viewer frames /api/fs/file, same-origin.
- * - `worker-src 'self'`: the service worker is /sw.js, same-origin.
+ * - `frame-src 'none'`: nothing is framed. PDFs are drawn in the page by pdf.js (PdfView),
+ *   which needs no frame, where the viewer once framed /api/fs/file.
+ * - `worker-src 'self'`: the service worker is /sw.js, and pdf.js, the spreadsheet reader and
+ *   the code highlighter run in bundled workers under /assets/, all same-origin.
  * - `object-src 'none'`: no <object>/<embed> in the app, and none may appear.
  * - `base-uri 'self'`: no <base>, and a tag that adds one changes what every relative URL
  *   in the page means.
@@ -100,7 +102,7 @@ const CSP_DIRECTIVES = [
   "font-src 'self' data:",
   "connect-src 'self'",
   "media-src 'self'",
-  "frame-src 'self'",
+  "frame-src 'none'",
   "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",

@@ -39,8 +39,17 @@ export function splitFilePaths(text: string): (string | { path: string })[] {
   return parts;
 }
 
+/**
+ * A rooted path with spaces in its folders or name (`/opt/work/09 Online Jobs/Report.docx`),
+ * which counts only when it ends in a document or media file the viewer shows: a command line
+ * in backticks has spaces too (`/usr/bin/env python3 x.py`), and so does one that names files
+ * (`/usr/bin/convert in.png out.pdf`), hence no extension may stand before a space either.
+ */
+const SPACED_CODE_PATH = /^(?:~\/|\.{1,2}\/|\/)(?:[^/\n`]+\/)*[^/\n`]+\.(?:pdf|docx?|docm|dotx?|odt|rtf|xlsx?|xlsm|xlsb|ods|pptx?|pptm|ppsx?|potx?|odp|csv|png|jpe?g|gif|webp|svg|mp4|m4v|mov|webm|mp3|m4a|wav|ogg)$/i;
+
 /** A code span that is a single file name or path (`README.md`, `src/app.ts`). */
 export function codeIsFilePath(code: string): boolean {
+  if (code.includes(" ")) return SPACED_CODE_PATH.test(code) && !/\.[A-Za-z0-9]{1,8}\s|\s-|\s{2}|\s\/|\/\s/.test(code);
   return CODE_PATH.test(code) && !isCodeName(code) && /[A-Za-z]/.test(code.replace(/\.[A-Za-z0-9]{1,8}$/, "")) && !/^\d+(?:\.\d+)+$/.test(code);
 }
 

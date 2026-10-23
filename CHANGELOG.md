@@ -8,6 +8,16 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Word, Excel, PowerPoint and PDF previews.** A file path an agent writes now opens these files
+  in the file viewer on any phone or computer. PDFs are drawn in the page, so they show on Android,
+  whose browser has no viewer for them in a frame. Word and PowerPoint files (and RTF and the
+  OpenDocument formats) show as the pages LibreOffice prints them to on the PC that has them; the
+  PDF is kept, so a file opens again at once until it changes. A spreadsheet shows its cells,
+  with each sheet's tab, its merged cells and column widths and the file's own number and date
+  formats, and a tapped cell shows its whole text; the viewer's page button switches it to its
+  printed pages. Pages are drawn as they come into view, pinch or Ctrl+wheel zooms, and a PDF's
+  text can be selected and copied. A PC without LibreOffice says so and offers the download.
+  Links in the chat to files in folders with spaces in their names now open too.
 - **Agent presets.** New workspace can offer agents of your own: one of herdr's kinds started with
   arguments of its own, from `agent-presets.json` in the state directory, such as Claude Code
   running on GPT through a gateway. The pane is that agent's in every other way, and the picker

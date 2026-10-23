@@ -450,6 +450,7 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_TAILSCALE_OWNER` | this PC's Tailscale login | The Tailscale login that gets in through `tailscale serve` without pairing. Set it on a PC whose Tailscale node is tagged, which has no login of its own |
 | `HERDR_WEB_TAILSCALE_SERVE_ONLY` | unset (off) | `1` declares `tailscale serve` the only way anything reaches this port. Then the owner's own device gets in through serve without a code, on a tailnet one login owns with no tagged node. Enable it only when no public reverse proxy, tunnel or other forwarding server exposes this port: a visitor through one would otherwise get the owner's access |
 | `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Push keys, device subscriptions, PC registrations and update builds |
+| `HERDR_WEB_SOFFICE` | `soffice` on `PATH`, else where LibreOffice installs | LibreOffice's `soffice`, which prints Word, PowerPoint and Excel files to the PDF the file viewer shows. Without LibreOffice those files offer the download (a spreadsheet's cells still show). Converted PDFs are kept under `previews/` in the state directory, at most 128 MB |
 | `HERDR_WEB_OPENAI_API_KEY` | unset | OpenAI API key for [voice input](#voice-input). Set here, it cannot be changed from the app |
 | `HERDR_WEB_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API root for voice input |
 | `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new releases without asking |

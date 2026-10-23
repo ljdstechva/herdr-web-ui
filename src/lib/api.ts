@@ -9,6 +9,7 @@ import type {
   CreateWorktreeTabRequest,
   DirectoryListing,
   FileInfo,
+  PdfPreview,
   FocusPaneRequest,
   HealthAuth,
   IntegrationsResponse,
@@ -566,6 +567,35 @@ export async function fetchFileInfo(path: string, paneId: string | null, machine
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
 export function fileUrl(path: string, paneId: string | null, machineId = "local", download = false): string {
   return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
+}
+
+/** How long one ask for a preview may take: the server answers `converting` after 20 s, so this only ends a dead connection. */
+const PREVIEW_ASK_TIMEOUT_MS = 45_000;
+
+/**
+ * GET /api/fs/preview: an office file as the PDF LibreOffice prints it to on the PC that has it;
+ * `converting` (202) while it works, to be asked again.
+ */
+export async function fetchFilePreview(path: string, paneId: string | null, machineId = "local", signal?: AbortSignal): Promise<PdfPreview> {
+  const url = machinePath(machineId, `fs/preview?${fileQuery(path, paneId)}`);
+  // the caller's signal or the deadline, whichever comes first (AbortSignal.any is too new for older phones)
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(new DOMException("preview ask timed out", "TimeoutError")), PREVIEW_ASK_TIMEOUT_MS);
+  const cancel = () => abort.abort(signal?.reason);
+  if (signal?.aborted) cancel(); else signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    const response = await fetch(url, { signal: abort.signal });
+    if (!response.ok) throw await errorFrom(url, response);
+    return (await response.json()) as PdfPreview;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+
+/** GET /api/fs/preview/pdf: the PDF a preview made, named after the file it shows. */
+export function filePreviewUrl(id: string, name: string, machineId = "local"): string {
+  return machinePath(machineId, `fs/preview/pdf?${new URLSearchParams({ id, name }).toString()}`);
 }
 
 export type { CreateTabRequest, CreateWorkspaceRequest } from "../../shared/protocol.ts";

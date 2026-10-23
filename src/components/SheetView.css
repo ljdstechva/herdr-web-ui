@@ -1,0 +1,193 @@
+/* fills the file viewer's body (.file-viewer-body-fill): the grid scrolls, the bar stays below it */
+.sheet-view {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* one finger scrolls; two pinch the grid (lib/zoomGestures.ts), not the whole app */
+  touch-action: pan-x pan-y;
+  outline: none;
+  background: var(--bg-panel);
+}
+
+.sheet-scroll:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.sheet-content {
+  width: max-content;
+  min-width: 100%;
+  transform-origin: 0 0;
+}
+
+.sheet-grid {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--text);
+  font-size: calc(var(--fs-xs) * var(--sheet-zoom, 1));
+  line-height: 1.2;
+}
+
+.sheet-grid :is(th, td) {
+  padding: 0 calc(var(--space-1) * var(--sheet-zoom, 1));
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: clip;
+  border-right: var(--hairline) solid var(--border);
+  border-bottom: var(--hairline) solid var(--border);
+  vertical-align: bottom;
+}
+
+.sheet-grid td {
+  background: var(--bg);
+  cursor: cell;
+}
+
+.sheet-grid td.is-number { text-align: right; font-variant-numeric: tabular-nums; }
+.sheet-grid td.is-centered { text-align: center; }
+
+.sheet-grid td.is-selected {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* the column letters and row numbers stay in view while the cells scroll */
+.sheet-grid th {
+  position: sticky;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-2xs) * var(--sheet-zoom, 1));
+  font-weight: 500;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.sheet-grid thead th {
+  top: 0;
+  z-index: 2;
+}
+
+.sheet-grid tbody th {
+  left: 0;
+  z-index: 1;
+}
+
+.sheet-grid thead th.sheet-corner {
+  left: 0;
+  z-index: 3;
+}
+
+.sheet-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-top: var(--hairline) solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.sheet-cut,
+.sheet-cell {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  font-size: var(--fs-xs);
+}
+
+.sheet-cut {
+  color: var(--text-dim);
+}
+
+.sheet-cell {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  max-height: 6.5em;
+  overflow: auto;
+}
+
+.sheet-cell-name {
+  flex: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.sheet-cell-text {
+  min-width: 0;
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.sheet-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+}
+
+.sheet-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sheet-tab {
+  flex: none;
+  max-width: 14em;
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.sheet-tab[aria-selected="true"] {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text-strong);
+}
+
+@media (hover: hover) {
+  .sheet-tab:hover:not([aria-selected="true"]) {
+    background: var(--bg-hover);
+  }
+}
+
+.sheet-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+@media (pointer: coarse) {
+  .sheet-tab {
+    height: max(44px, var(--touch-target));
+  }
+}

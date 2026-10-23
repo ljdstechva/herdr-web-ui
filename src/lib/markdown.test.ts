@@ -101,6 +101,24 @@ describe("inline markdown", () => {
     }
   });
 
+  it("links a file in a folder with spaces, however the target is written", () => {
+    const report: InlineNode = { type: "file", path: "/opt/work/09 Online Jobs/Report.docx", children: [{ type: "text", value: "Report" }] };
+    expect(parseInline("[Report](/opt/work/09 Online Jobs/Report.docx)")).toEqual([report]);
+    expect(parseInline("[Report](</opt/work/09 Online Jobs/Report.docx>)")).toEqual([report]);
+    expect(parseInline("[Report](/opt/work/09%20Online%20Jobs/Report.docx)")).toEqual([report]);
+    expect(parseInline("see [deck](~/My Decks/Q3 review.pptx:2) now")).toMatchObject([
+      { type: "text", value: "see " }, { type: "file", path: "~/My Decks/Q3 review.pptx" }, { type: "text", value: " now" },
+    ]);
+    // a `<…>` target may hold parentheses; an address in one stays an address
+    expect(parseInline("[x](</a/Report (final).pdf>)")).toMatchObject([{ type: "file", path: "/a/Report (final).pdf" }]);
+    expect(parseInline("[site](<https://example.com/a>)")).toMatchObject([{ type: "link", href: "https://example.com/a" }]);
+    // prose in parentheses after a label is no target
+    expect(parseInline("[note] (see the report.docx)")).toEqual([{ type: "text", value: "[note] (see the report.docx)" }]);
+    expect(parseInline("[x](not a path)")).toEqual([{ type: "text", value: "[x](not a path)" }]);
+    // an escape that does not decode is kept as written
+    expect(parseInline("[x](/tmp/100%zz.pdf)")).toMatchObject([{ type: "file", path: "/tmp/100%zz.pdf" }]);
+  });
+
   it("links an address written without its scheme, and leaves files and non-addresses alone", () => {
     expect(parseInline("[docs](www.example.com/x)")).toEqual([{ type: "link", href: "https://www.example.com/x", children: [{ type: "text", value: "docs" }] }]);
     expect(parseInline("[guide](docs.example.com/guide)")).toMatchObject([{ type: "link", href: "https://docs.example.com/guide" }]);
@@ -308,6 +326,8 @@ describe("text no one wrote by hand", () => {
     }
     // a label closed with an address that is not, and a `__` that only a `_` closes
     within(1000, () => expect(parseInline("[a](b".repeat(200_000))).toHaveLength(1));
+    // targets with spaces that never close, and one closer far away, are not read again from every opener
+    within(1000, () => expect(parseInline(`${"[a](/x y ".repeat(50_000)}z.pdf)`).length).toBeGreaterThan(0));
     within(1000, () => expect(parseInline("__a b_ ".repeat(150_000))).toHaveLength(300_000));
     // the marks are the ones it found as one pattern, searching the whole line
     const asBefore = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/gu;

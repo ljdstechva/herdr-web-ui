@@ -932,3 +932,33 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
+
+## PDF.js
+
+The file viewer draws PDFs, and the PDFs Word, Excel and PowerPoint files are converted to, with
+[PDF.js](https://github.com/mozilla/pdf.js) (`pdfjs-dist`), its worker and its text layer
+styles (`src/components/PdfView.css` follows `web/pdf_viewer.css`).
+
+Copyright 2024 Mozilla Foundation. Licensed under the Apache License, Version 2.0; you may not
+use these files except in compliance with the License. You may obtain a copy of the License at
+https://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in
+writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+The data PDF.js reads at run time ships in `assets/pdfjs-<version>/` with the license file of
+each part beside it: Adobe's CMaps (`cmaps/LICENSE`), the Foxit and Liberation standard fonts
+(`standard_fonts/LICENSE_FOXIT`, `standard_fonts/LICENSE_LIBERATION`, the SIL Open Font
+License 1.1), and the JavaScript builds of the OpenJPEG and PDFium JBIG2 decoders
+(`wasm/LICENSE_*`).
+
+## SheetJS Community Edition
+
+The file viewer reads spreadsheets (xlsx, xls, ods) in the browser with
+[SheetJS Community Edition](https://sheetjs.com) (`xlsx`), installed from the project's own
+distribution (`https://cdn.sheetjs.com/`).
+
+Copyright (C) 2012-present SheetJS LLC. Licensed under the Apache License, Version 2.0; you may
+not use these files except in compliance with the License. You may obtain a copy of the License
+at https://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to
+in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.

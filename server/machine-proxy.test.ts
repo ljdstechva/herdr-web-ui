@@ -11,7 +11,8 @@ const remote = Bun.serve({
     const path = new URL(request.url).pathname;
     if (path === "/api/pane/conversation/image") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
     if (path === "/api/pane/conversation/tool-output") return new Response("complete remote output", { headers: { "content-type": "text/plain; charset=utf-8" } });
-    if (path === "/api/fs/file") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
+    if (path === "/api/fs/file" || path === "/api/fs/preview/pdf") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
+    if (path === "/api/fs/preview") return Response.json({ state: "converting" }, { status: 202 });
     const ifNoneMatch = request.headers.get("if-none-match");
     asked.push(ifNoneMatch);
     if (ifNoneMatch === "\"v1\"") return new Response(null, { status: 304, headers: { etag: "\"v1\"" } });
@@ -75,6 +76,17 @@ it("opens a PC's file from a navigation another site started, and keeps every ot
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: { code: "invalid_origin" } });
   }
+});
+
+it("forwards a document's preview, and opens its PDF from a navigation as a file opens", async () => {
+  const preview = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/preview?path=%2Ftmp%2Freport.docx", { headers: { "sec-fetch-site": "same-origin" } }), manager);
+  expect(preview.status).toBe(202);
+  expect(await preview.json()).toEqual({ state: "converting" });
+  const pdf = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/fs/preview/pdf?id=${"a".repeat(64)}`, { headers: { "sec-fetch-site": "cross-site" } }), manager);
+  expect(pdf.status).toBe(200);
+  expect(await pdf.text()).toBe("%PDF-1.7");
+  // asking for a conversion is this app's alone
+  expect((await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/preview?path=%2Ftmp%2Freport.docx", { headers: { "sec-fetch-site": "cross-site" } }), manager)).status).toBe(403);
 });
 
 it("refuses a path with an empty segment instead of forwarding it as another route", async () => {

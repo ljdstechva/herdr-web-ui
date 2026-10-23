@@ -68,8 +68,23 @@ export function markdownFileTarget(href: string): string | null {
   const withoutAnchor = value.replace(/#.*$/, "");
   const path = withoutAnchor.replace(/(?::\d+){1,2}$/, "");
   if (path === "" || /^[a-z][a-z0-9+.-]*:/i.test(path) || (path !== withoutAnchor && !/[./]/.test(path))) return null;
+  // a link target is a URL: `09%20Online%20Jobs/` is the folder `09 Online Jobs/`
+  if (/%[0-9a-f]{2}/i.test(path)) {
+    try {
+      const decoded = decodeURIComponent(path);
+      if (!/[\u0000-\u001f\u007f]/.test(decoded)) return decoded;
+    } catch { /* not percent-encoding after all: the path as written */ }
+  }
   return path;
 }
+
+/**
+ * A link target that is a file path with spaces in it, written as it is rather than in `<…>`
+ * (`[Report](/opt/work/09 Online Jobs/Report.docx)`): rooted, without parentheses, ending in a
+ * file name with an extension and perhaps a line.
+ */
+const SPACED_FILE_TARGET = /^(?:~|\.{1,2})?\/[^()<>\n]*?\.[A-Za-z0-9]{1,8}(?::\d+){0,2}$/;
+const MAX_SPACED_TARGET = 1024;
 
 /** A bare URL without the punctuation that closes the sentence around it (GFM's autolink rule). */
 export function trimUrl(url: string): string {
@@ -106,7 +121,7 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   // rendering exactly as it appears in the terminal and native transcript.
   // a bare or <angle> http(s) URL is a link too; it stops at the first non-ASCII character,
   // so `…/pull/36에서` links the address and leaves the Korean after it as text
-  const marker = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
+  const marker = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\((?:<[^<>\n]+>|[^\s)]+|(?:~|\.{1,2})?\/[^()<>\n]*?\.[A-Za-z0-9]{1,8}(?::\d+){0,2})\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
   // its last part alone, for a `__` that nothing closes as bold: one `_` may still close it
   const emphasis = /(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu;
   // what any part of `marker` starts with
@@ -128,6 +143,9 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   const mathClose = next(/\\\)/g);
   const labelEnd = next(/[\]\n]/g);
   const targetEnd = next(/[\s)]/g);
+  // a `<…>` target's end, and the `)` a target with spaces in it ends at
+  const angleEnd = next(/>\)/g);
+  const parenEnd = next(/\)/g);
   const emphasisClose = next(/(?<=\S)_(?![\p{L}\p{N}\p{M}_])/gu);
   const strongClose = next(/(?<=\S)__(?![\p{L}\p{N}\p{M}_])/gu);
   let from = 0;
@@ -144,9 +162,16 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
       const label = labelEnd(start + 1);
       const target = label + 2;
       if (!(label > start + 1 && source[label] === "]" && source[label + 1] === "(")) pattern = null;
-      else {
+      else if (source[target] === "<") {
+        const end = angleEnd(target);
+        if (!(end > target + 1 && end < lineEnd(target))) pattern = null;
+      } else {
         const end = targetEnd(target);
-        if (!(end > target && source[end] === ")")) pattern = null;
+        if (!(end > target && source[end] === ")")) {
+          // a path is not longer than this: a line of unclosed targets is not read again from each
+          const close = parenEnd(target);
+          if (!(close < lineEnd(target) && close - target <= MAX_SPACED_TARGET && SPACED_FILE_TARGET.test(source.slice(target, close)))) pattern = null;
+        }
       }
     } else if (char === "_") {
       const end = lineEnd(start + 1);
@@ -192,7 +217,9 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
     } else if (token.startsWith("[")) {
       const split = token.lastIndexOf("](");
       const label = token.slice(1, split);
-      const target = token.slice(split + 2, -1);
+      const written = token.slice(split + 2, -1);
+      // `<…>` holds a target with spaces (CommonMark): the brackets are not part of it
+      const target = written.startsWith("<") && written.endsWith(">") ? written.slice(1, -1) : written;
       // a label holds no `]`, so no link nests in one: only emphasis counts toward the depth
       const href = safeMarkdownHref(target) ?? webLikeHref(target);
       const file = href === null ? markdownFileTarget(target) : null;

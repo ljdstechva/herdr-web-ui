@@ -6,7 +6,7 @@ import { isJsonObject, jsonResponse } from "./http.ts";
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
 /** git, then agent.start or the repository's hooks: these wait longer than any other PC call */
 export const SLOW_WORKTREE_PATH = /^worktree\/(?:create|tab|merge)$/;
-export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove|tab|status|merge)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove|tab|status|merge)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file|preview(?:\/pdf)?))$/;
 
 
 /**
@@ -26,9 +26,9 @@ function transportFailure(id: string, path: string, error: unknown): Response {
 export async function handleMachineRequest(request: Request, manager: MachineManager, onRevoke?: (close: () => void) => () => void): Promise<Response> {
   const url = new URL(request.url);
   // A PC's file opens as this PC's /api/fs/file does, from any navigation: reading it changes
-  // nothing, and Chrome on Android shows a PDF in the viewer's frame as an "Open" button whose
-  // navigation is cross-site. Every other PC route still answers only this app.
-  const fileRead = ["GET", "HEAD"].includes(request.method) && /^\/api\/machines\/[^/]+\/fs\/file$/.test(url.pathname);
+  // nothing, and a PDF opened in a new tab (a file, or the one a document's preview made) can
+  // arrive from a navigation the browser calls cross-site. Every other PC route still answers only this app.
+  const fileRead = ["GET", "HEAD"].includes(request.method) && /^\/api\/machines\/[^/]+\/fs\/(?:file|preview\/pdf)$/.test(url.pathname);
   if (!fileRead && !sameOrigin(request)) return fail("invalid_origin", "Use PC controls from this app", 403);
   if (!["GET", "HEAD"].includes(request.method) && request.headers.get("x-herdr-machine") !== "1") return fail("invalid_machine_request", "Use PC controls from this app", 403);
   // an empty segment is never a route: dropping it would forward `<id>//fs/file` as `fs/file`

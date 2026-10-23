@@ -1,0 +1,177 @@
+/* fills the file viewer's body (.file-viewer-body-fill): the view scrolls, the toolbar floats over it */
+.pdf-view {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* one finger scrolls; two pinch the pages (lib/zoomGestures.ts), not the whole app */
+  touch-action: pan-x pan-y;
+  outline: none;
+}
+
+.pdf-scroll:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* wider than the view once zoomed: it scrolls sideways, and a narrower page sits in the middle */
+.pdf-pages {
+  position: relative;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* the bottom keeps the last page clear of the toolbar */
+  padding: var(--space-3) var(--space-3) calc(var(--space-3) + var(--touch-target) + var(--space-4));
+  transform-origin: 0 0;
+}
+
+.pdf-page {
+  position: relative;
+  flex: none;
+  margin-inline: auto;
+  overflow: hidden;
+  background: var(--pdf-page);
+  box-shadow: var(--shadow-card);
+}
+
+.pdf-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pdf-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+}
+
+.pdf-progress {
+  width: min(240px, 60%);
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.pdf-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+
+.pdf-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-3));
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.pdf-page-count {
+  flex: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* pdf.js's text layer (pdfjs-dist/web/pdf_viewer.css, .textLayer): transparent spans laid over the
+   drawing so text selects and copies; sized by the page's --total-scale-factor */
+.pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  text-align: initial;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: transparent;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pdf-text :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.pdf-text > :not(.markedContent),
+.pdf-text .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text .markedContent {
+  display: contents;
+}
+
+.pdf-text span[role="img"] {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.pdf-text ::selection {
+  background: var(--accent-tint);
+  color: transparent;
+}
+
+.pdf-text br::selection {
+  background: transparent;
+}
+
+.pdf-text .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* the layer is laid out unrotated and turned with its page (setLayerDimensions) */
+.pdf-text[data-main-rotation="90"] { transform: rotate(90deg) translateX(-100%); }
+.pdf-text[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.pdf-text[data-main-rotation="270"] { transform: rotate(270deg) translateY(-100%); }

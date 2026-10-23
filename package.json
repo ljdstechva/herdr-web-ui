@@ -35,10 +35,12 @@
     "@xterm/xterm": "5.5.0",
     "katex": "^0.18.9",
     "lucide-react": "^1.47.0",
+    "pdfjs-dist": "6.4.299",
     "qrcode-generator": "^2.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/bun": "^1.1.14",

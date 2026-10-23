@@ -1,16 +1,22 @@
-import { useEffect, useState } from "react";
-import { Download, ExternalLink, X } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Download, ExternalLink, FileText, Table2, X } from "lucide-react";
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
+import { DocumentPreview } from "./DocumentPreview.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
+import { viewerKind } from "../lib/documents.ts";
 import { downloads } from "../lib/downloads.ts";
 import { formatBytes } from "../lib/bridgeProgress.ts";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+
+// the document views are chunks of their own (pdf.js, SheetJS), fetched when one opens
+const PdfView = lazy(() => import("./PdfView.tsx"));
+const SheetView = lazy(() => import("./SheetView.tsx"));
 
 /** Bigger images are offered as a download: a phone decodes an image whole. */
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -30,7 +36,8 @@ export interface FileViewerProps {
 
 /**
  * A file an agent wrote, opened in the browser: images, video and audio (streamed, so they
- * play and seek at once), PDFs, and the start of a text file. Anything can be downloaded.
+ * play and seek at once), PDFs, Word and PowerPoint files (as the PDF LibreOffice prints them
+ * to), spreadsheets as their cells, and the start of a text file. Anything can be downloaded.
  */
 export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true }: FileViewerProps) {
   const t = useT();
@@ -45,13 +52,17 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const [candidates, setCandidates] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
+  // a document's converted PDF, which "Open in a new tab" opens instead of the original
+  const [previewPdf, setPreviewPdf] = useState<string | null>(null);
+  // a spreadsheet as its cells, or as the pages LibreOffice prints
+  const [sheetPages, setSheetPages] = useState(false);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
   const surface = useFocusTrap<HTMLElement>(true);
   useEffect(() => setPath(asked), [asked]);
 
   useEffect(() => {
     let cancelled = false;
-    setInfo(null); setCandidates(null); setError(null); setText(null); setDirectory(null);
+    setInfo(null); setCandidates(null); setError(null); setText(null); setDirectory(null); setPreviewPdf(null); setSheetPages(false);
     fetchFileInfo(path, paneId).then(async (next) => {
       if (cancelled) return;
       if ("candidates" in next) { setCandidates(next.candidates); return; }
@@ -88,6 +99,10 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
 
   // the file found (a bare name may have been found deeper in the folder), else as asked
   const url = fileUrl(info?.path ?? path, paneId);
+  const kind = info === null ? null : viewerKind(info);
+  const opening = <p className="file-viewer-note">{t("Opening…")}</p>;
+  // a document view fills the viewer and scrolls itself, so the viewer takes its full height
+  const fill = directory === null && error === null && candidates === null && (kind === "pdf" || kind === "document" || kind === "presentation" || kind === "spreadsheet");
   const body = (() => {
     if (directory !== null) return <DirectoryBrowser key={directory} start={directory} onOpenFile={onOpen ?? setPath} />;
     if (error !== null) return <p className="file-viewer-note" role="alert">{error}</p>;
@@ -95,8 +110,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <p className="file-viewer-note">Several files are named {path.split("/").pop()}:</p>
       <ul>{candidates.map((candidate) => <li key={candidate}><button type="button" className="btn btn-ghost" onClick={() => setPath(candidate)}>{candidate}</button></li>)}</ul>
     </div>;
-    if (info === null) return <p className="file-viewer-note">{t("Opening…")}</p>;
-    switch (info.kind) {
+    if (info === null) return opening;
+    switch (kind) {
       case "image":
         return info.size > MAX_INLINE_IMAGE_BYTES
           ? <p className="file-viewer-note">This image is {formatBytes(info.size)}; download it to view.</p>
@@ -106,7 +121,14 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       case "audio":
         return <audio className="file-viewer-audio" src={url} controls preload="metadata" />;
       case "pdf":
-        return <iframe className="file-viewer-pdf" src={url} title={info.name} />;
+        return <Suspense fallback={opening}><PdfView url={url} name={info.name} /></Suspense>;
+      case "document":
+      case "presentation":
+        return <DocumentPreview info={info} paneId={paneId} onPdf={setPreviewPdf} />;
+      case "spreadsheet":
+        return sheetPages
+          ? <DocumentPreview info={info} paneId={paneId} onPdf={setPreviewPdf} />
+          : <Suspense fallback={opening}><SheetView url={url} name={info.name} size={info.size} /></Suspense>;
       case "text":
         return text === null ? <p className="file-viewer-note">{t("Opening…")}</p> : <>
           <pre className="file-viewer-text">{text}</pre>
@@ -119,7 +141,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
 
   return (
     <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section ref={surface} className="modal file-viewer" role="dialog" aria-modal="true" aria-label={info?.name ?? path} tabIndex={-1}>
+      <section ref={surface} className={`modal file-viewer${fill ? " file-viewer-fill" : ""}`} role="dialog" aria-modal="true" aria-label={info?.name ?? path} tabIndex={-1}>
         <header className="modal-header file-viewer-header">
           <div className="file-viewer-title">
             <h2 className="modal-title">{info?.name ?? path.split("/").pop()}</h2>
@@ -128,11 +150,17 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
               <span className="file-viewer-path"><span dir="ltr">{info?.path ?? path}</span></span>
             </p>
           </div>
-          <a className="icon-button" href={url} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>
+          {kind === "spreadsheet" && (
+            <button type="button" className="icon-button" onClick={() => { setSheetPages((pages) => !pages); setPreviewPdf(null); }}
+              aria-label={sheetPages ? t("Show as cells") : t("Show as pages")} title={sheetPages ? t("Show as cells") : t("Show as pages")}>
+              {sheetPages ? <Table2 aria-hidden="true" /> : <FileText aria-hidden="true" />}
+            </button>
+          )}
+          <a className="icon-button" href={previewPdf ?? url} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>
           <button type="button" className="icon-button" disabled={info === null || error !== null} onClick={() => { if (info) downloads.start({ url: fileUrl(info.path, paneId, true), name: info.name, size: info.size }); }} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></button>
           <button type="button" className="icon-button" aria-label={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
-        <div className="file-viewer-body">{body}</div>
+        <div className={`file-viewer-body${fill ? " file-viewer-body-fill" : ""}`}>{body}</div>
       </section>
     </div>
   );

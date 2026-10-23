@@ -1,0 +1,43 @@
+/* the zoom buttons of the document views (PdfView, SheetView) */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.zoom-controls .icon-button {
+  border-radius: var(--radius-pill);
+}
+
+.zoom-controls-level {
+  min-width: 52px;
+  height: var(--control-h);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .zoom-controls-level:hover {
+    background: var(--bg-hover);
+  }
+}
+
+@media (pointer: coarse) {
+  .zoom-controls .icon-button,
+  .zoom-controls-level {
+    width: max(44px, var(--touch-target));
+    height: max(44px, var(--touch-target));
+  }
+
+  .zoom-controls-level {
+    width: auto;
+    min-width: 56px;
+  }
+}

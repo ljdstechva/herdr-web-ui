@@ -2,6 +2,7 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, resolve } from "node:path";
 
+import { officeKind } from "../shared/office.ts";
 import type { FileInfo, FileKind } from "../shared/protocol.ts";
 import { filesNamed } from "./files.ts";
 
@@ -32,6 +33,8 @@ const TEXT_TYPES = /^(?:text\/|application\/(?:json|javascript|typescript|xml|x-
 const SNIFF_BYTES = 8192;
 
 function kindOf(mime: string, path: string): FileKind {
+  const office = officeKind(basename(path));
+  if (office !== null) return office;
   if (mime === "image/svg+xml") return "image";
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "video";
@@ -96,9 +99,12 @@ export function fileResponse(info: FileInfo, download: boolean): Response {
     "content-disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${name}`,
     "x-content-type-options": "nosniff",
     "cache-control": "private, no-store",
+    // Bun answers a Range request for a file body; said up front, pdf.js reads a large PDF a
+    // part at a time (the first page shows before the rest arrives) and a video seeks at once
+    "accept-ranges": "bytes",
   });
-  // a PDF is drawn by the browser's own viewer, which refuses a sandboxed document; its
-  // scripts stay inside that viewer, never on this origin
+  // a PDF opened in a new tab is drawn by the browser's own viewer, which refuses a sandboxed
+  // document; its scripts stay inside that viewer, never on this origin
   if (info.kind !== "pdf") headers.set("content-security-policy", "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
   // text shows as text, whatever its extension says it runs as
   const type = info.kind === "text" && info.mime !== "image/svg+xml" ? "text/plain; charset=utf-8" : info.mime;

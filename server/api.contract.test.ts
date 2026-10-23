@@ -2941,3 +2941,58 @@ it("Codex question reveal API refuses invalid requests and leaves a shell unchan
     app.stop(); await workspaceClose(created.workspace.workspace_id); rmSync(state, { recursive: true, force: true });
   }
 });
+
+describe.skipIf(process.platform === "win32")("document preview API", () => {
+  it("converts an office file to a PDF fetched by its id, and refuses what it cannot preview", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-preview-api-"));
+    const docs = join(state, "docs");
+    mkdirSync(docs);
+    // a docx is a zip; the stand-in reads no further than the signature the server checks
+    writeFileSync(join(docs, "report.docx"), Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("not really a document")]));
+    writeFileSync(join(docs, "notes.txt"), "words");
+    // a stand-in soffice: prints --outdir's source.<ext> to source.pdf
+    const soffice = join(state, "soffice");
+    writeFileSync(soffice, `#!/bin/sh\nout=""; last=""\nwhile [ $# -gt 0 ]; do if [ "$1" = "--outdir" ]; then out="$2"; shift; fi; last="$1"; shift; done\nprintf '%%PDF-1.4 stand-in\\n' > "$out/source.pdf"\n`);
+    chmodSync(soffice, 0o755);
+    const app = createServer({ port: 0, stateDir: state, token: "", soffice });
+    const noneState = mkdtempSync(join(tmpdir(), "herdr-preview-none-"));
+    const gatedState = mkdtempSync(join(tmpdir(), "herdr-preview-gated-"));
+    const none = createServer({ port: 0, stateDir: noneState, token: "", soffice: null });
+    const gated = createServer({ port: 0, stateDir: gatedState, token: "test-preview-token", soffice });
+    const ask = (server: { port: number }, path: string) => fetch(`http://localhost:${server.port}/api/fs/preview?path=${encodeURIComponent(path)}`);
+    try {
+      const stat = await (await fetch(`http://localhost:${app.port}/api/fs/stat?path=${encodeURIComponent(join(docs, "report.docx"))}`)).json() as { kind: string };
+      expect(stat.kind).toBe("document");
+      const answer = await ask(app, join(docs, "report.docx"));
+      expect(answer.status).toBe(200);
+      const preview = await answer.json() as { state: string; id: string; size: number };
+      expect(preview.state).toBe("ready");
+      expect(preview.id).toMatch(/^[0-9a-f]{64}$/);
+      const pdf = await fetch(`http://localhost:${app.port}/api/fs/preview/pdf?id=${preview.id}&name=report.docx`);
+      expect(pdf.status).toBe(200);
+      expect(pdf.headers.get("content-type")).toBe("application/pdf");
+      expect(pdf.headers.get("content-disposition")).toBe("inline; filename*=UTF-8''report.pdf");
+      expect(await pdf.text()).toBe("%PDF-1.4 stand-in\n");
+      expect(readFileSync(join(docs, "report.docx"), "utf8")).toEndWith("not really a document");
+      expect(existsSync(join(docs, "source.pdf"))).toBe(false);
+
+      const plain = await ask(app, join(docs, "notes.txt"));
+      expect(plain.status).toBe(415);
+      expect((await plain.json() as ApiError).error.code).toBe("not_previewable");
+      expect((await ask(app, join(docs, "missing.docx"))).status).toBe(404);
+      const unknown = await fetch(`http://localhost:${app.port}/api/fs/preview/pdf?id=${"0".repeat(64)}`);
+      expect(unknown.status).toBe(404);
+      expect((await fetch(`http://localhost:${app.port}/api/fs/preview/pdf?id=../../etc/passwd`)).status).toBe(404);
+
+      const unavailable = await ask(none, join(docs, "report.docx"));
+      expect(unavailable.status).toBe(501);
+      expect((await unavailable.json() as ApiError).error.code).toBe("preview_unavailable");
+
+      expect((await ask(gated, join(docs, "report.docx"))).status).toBe(401);
+      expect((await fetch(`http://localhost:${gated.port}/api/fs/preview/pdf?id=${preview.id}`)).status).toBe(401);
+    } finally {
+      app.stop(); none.stop(); gated.stop();
+      for (const dir of [state, noneState, gatedState]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
