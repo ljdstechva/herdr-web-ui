@@ -20,7 +20,8 @@ import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { isMouseReport, sameAttachment } from "./input-guard.ts";
 import { startStatusCollector } from "./collector.ts";
-import { claudePanePid, claudePaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
+import { claudePanePid, claudePaneSession, codexPaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
+import { CodexSubagentStatus } from "./codex-subagents.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import { ConversationMonitor } from "./conversation-monitor.ts";
@@ -1067,6 +1068,18 @@ export function createServer(
     },
     onChange: (paneId, running, turnRunning, promptAt) => claudeAgentsChanged(paneId, running, turnRunning, promptAt),
   });
+  /**
+   * Codex panes count the subagents their session spawned as background tasks (server/codex-subagents.ts).
+   * One starting or ending is no turn: the status stands, nothing is alerted.
+   */
+  const codexAgents = new CodexSubagentStatus({
+    resolve: (pane) => codexPaneSession(pane, options.codexHome),
+    onChange: (paneId, running) => {
+      const status = completions.current(paneId);
+      // a pane never reported here carries its count in the next snapshot
+      if (status !== undefined) broadcastAll(paneStatus(paneId, status, { background_tasks: running }));
+    },
+  });
   /** herdr's snapshot with OmO's own status in it: what the completion tracker and web push are given */
   const rawSnapshot = async (): Promise<SessionSnapshot> => {
     const snapshot = await sessionSnapshot();
@@ -1074,9 +1087,10 @@ export function createServer(
     const named = omo.apply(snapshot);
     // not waited for: finding a transcript costs process calls, and a snapshot must not wait on them
     void claudeAgents.refresh(named.panes).catch(() => undefined);
+    void codexAgents.refresh(named.panes).catch(() => undefined);
     return named;
   };
-  const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId);
+  const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId) || codexAgents.countOf(paneId);
   /** the snapshot clients get: finishes settled, OmO panes named, their running background tasks counted, the waits on them */
   const clientSnapshot = async (): Promise<SessionSnapshot> => {
     const snapshot = await completions.readSnapshot(rawSnapshot);
@@ -1669,6 +1683,7 @@ export function createServer(
   }, { snapshot: rawSnapshot });
   omo.start();
   claudeAgents.start();
+  codexAgents.start();
   const waitTimer = setInterval(waitsRanOut, 1000);
   waitTimer.unref?.();
 
@@ -2453,7 +2468,15 @@ export function createServer(
             })());
           }
           const claude = claudeAgents.sessionOf(paneId);
-          return jsonResponse({ tasks: claude === null ? [] : claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
+          if (claude !== null) return jsonResponse({ tasks: claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
+          // a Codex pane's subagents, kept by its poll; found here if the background lookup has not got to it yet
+          if (!codexAgents.known(paneId)) {
+            await within(1000, (async () => {
+              const pane = await paneGet(paneId);
+              if (pane.agent === "codex") await codexAgents.ensure(pane);
+            })());
+          }
+          return jsonResponse({ tasks: codexAgents.tasksOf(paneId), runs: [], server_time });
         }
         return jsonResponse({ tasks: omoTasks(session.cwd, session.sessionId, processAlive), runs: omoRuns(session.cwd, session.sessionId), server_time });
       }
@@ -3472,6 +3495,7 @@ export function createServer(
       collector.stop();
       omo.stop();
       claudeAgents.stop();
+      codexAgents.stop();
       clearInterval(waitTimer);
       machines?.stop();
       registration?.close();

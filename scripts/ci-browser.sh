@@ -74,6 +74,7 @@ run_script scripts/file-viewer-regression.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/document-preview-regression.ts
+run_script scripts/agent-activity-regression.ts
 run_script scripts/download-regression.ts
 run_script scripts/droplet-demo-regression.ts
 run_script scripts/chat-greeting-demo-regression.ts

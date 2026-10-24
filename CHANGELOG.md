@@ -8,6 +8,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **The chat says what is still working.** A line over the message box shows while the agent
+  works, and keeps showing after its turn ends while what it started runs on: "Claude is
+  working · 2 subagents", "1 background command still running". Tap it for the list of what runs
+  and for how long. Codex's own subagents are now counted too, as Claude Code's subagents and
+  background commands and OmO's tasks already were, so a Codex pane's sidebar row and status
+  line show its background work as well.
 - **Word, Excel, PowerPoint and PDF previews.** A file path an agent writes now opens these files
   in the file viewer on any phone or computer. PDFs are drawn in the page, so they show on Android,
   whose browser has no viewer for them in a frame. Word and PowerPoint files (and RTF and the

@@ -35,6 +35,7 @@ import { SecretInput } from "./SecretInput.tsx";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
+import { AgentActivity } from "./AgentActivity.tsx";
 import { Composer, type SendResult } from "./Composer.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
@@ -76,7 +77,7 @@ export interface PaneTerminalProps {
   agent?: string | null;
   /** the pane's live agent status: `working` turns composer sends into the queue */
   agentStatus?: AgentStatus;
-  /** an OmO pane's running background tasks: the composer's status line offers their list */
+  /** a pane's running background tasks (OmO's, Claude Code's or Codex's subagents, Claude Code's commands): the activity line says them, the composer's status line offers their list */
   backgroundTasks?: number;
   /** the pane's turn ended on work still running in the background: the composer says BG */
   backgroundWait?: boolean;
@@ -2415,6 +2416,9 @@ export function PaneTerminal({
         onSendNow={(id) => actOnPending(id, "steer")}
         onDiscard={(id) => actOnPending(id, "discard")}
       />}
+      {/* while the agent works, and while what it started runs on after its turn: over the box, and over
+          the prompt card when one asks, which stays directly on the box */}
+      {presented && paneId !== null && chatView && !ended && <AgentActivity key={`activity-${paneId}`} paneId={paneId} agent={agent} status={agentStatus} background={backgroundTasks} waiting={backgroundWait} />}
       {/* The prompt card's place: under the held messages (which fold to their caption while it is
           open), directly over the input card, on the same column. ChatView renders the card into
           it. It is a live region of its own, since the card is no longer inside the transcript's

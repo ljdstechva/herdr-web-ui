@@ -39,7 +39,7 @@ import nodePath, { type PlatformPath } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
-import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
+import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexPaneStartedAt, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessState, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
@@ -1120,6 +1120,13 @@ export async function claudePaneSession(pane: HerdrPane): Promise<{ path: string
     if (error instanceof ConversationUnavailable) return null;
     throw error;
   }
+}
+
+/** A Codex pane's rollout, the store it is in and when its Codex started, or null while it has none (server/codex-subagents.ts). */
+export async function codexPaneSession(pane: HerdrPane, configuredHome?: string): Promise<{ path: string; home: string; startedAt: number | null } | null> {
+  const home = await paneCodexHome(pane.pane_id, configuredHome);
+  const path = await codexTranscriptPath(pane.pane_id, pane.cwd ?? "", home);
+  return path === null ? null : { path, home, startedAt: await codexPaneStartedAt(pane.pane_id) };
 }
 
 /**

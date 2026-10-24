@@ -1,0 +1,131 @@
+/* The activity line (AgentActivity.tsx): under the held messages and over the prompt card's place,
+   which stays directly on the input card; all on the chat column (Composer.css .prompt-dock). Its
+   words are the chat's size; the open list grows upward from it and scrolls past a few rows. */
+.agent-activity {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: min(calc(100% - 2 * var(--space-4)), var(--chat-w));
+  margin: var(--space-2) auto 0;
+  font-family: var(--font-chat, var(--font-ui));
+  font-size: calc(var(--fs-sm) * var(--chat-scale, 1));
+}
+
+/* the composer's resize grip reaches above the box: after this line it keeps that strip to itself */
+.agent-activity ~ .composer {
+  padding-top: var(--composer-grip-h);
+}
+
+/* a card under the line: the air the held list's buttons get before it too */
+.agent-activity + .prompt-dock:not(:empty) {
+  margin-top: var(--space-2);
+}
+
+.agent-activity-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  max-width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--status-working-tint);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.agent-activity-bar {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  button.agent-activity-bar:hover {
+    border-color: var(--border-strong);
+  }
+}
+
+.agent-activity-bar svg {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--text-dim);
+}
+
+/* the sidebar's RUN color: the agent, or what it left running, is at work */
+.agent-activity-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--status-working);
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
+}
+
+.agent-activity-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-activity-list {
+  max-height: calc(5 * (var(--control-h) + var(--space-1)));
+  margin: 0 0 var(--space-2);
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.agent-activity-task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+}
+
+.agent-activity-task svg {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--status-working);
+}
+
+.agent-activity-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+}
+
+.agent-activity-task-kind,
+.agent-activity-task-time {
+  flex: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+.agent-activity-task-time {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (pointer: coarse) {
+  button.agent-activity-bar {
+    min-height: max(40px, var(--touch-target));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-activity-dot { animation: none; }
+}

@@ -1087,6 +1087,14 @@ const VALUELESS_OPTIONS = new Set([
   "no-experimental-fetch", "harmony", "bun", "smol", "hot", "watch", "noprofile", "norc", "posix", "login",
 ]);
 
+/** When the pane's Codex started: its earliest Codex process, or null when herdr or the process table cannot say. */
+export async function codexPaneStartedAt(paneId: string): Promise<number | null> {
+  try {
+    const starts = (await codexProcessesOf(paneId)).list.map((found) => processStartedAt(found.pid)).filter((at): at is number => at !== null);
+    return starts.length === 0 ? null : Math.min(...starts);
+  } catch { return null; }
+}
+
 /** A pane's Codex executables (or interpreter scripts), and their pids as one key. */
 async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
   const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
