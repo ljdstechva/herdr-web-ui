@@ -1073,6 +1073,7 @@ export const JA: Record<string, string> = {
   "Could not load the server's browsers. Check the connection and retry.": "サーバーのブラウザーを読み込めませんでした。接続を確認して再試行してください。",
   "Open a browser on the server, then retry. This view reconnects automatically.": "サーバーでブラウザーを開いて再試行してください。この画面は自動的に再接続します。",
   // sign-in cards (components/SignInCard.tsx)
+  "Website": "ウェブサイト",
   "After a reboot the vault is locked. Your passphrase unlocks it for this PC's agents, without showing them any password.": "再起動後は保管庫がロックされています。パスフレーズでこのPCのエージェント用に解錠しますが、パスワードは一切見せません。",
   "An agent needs {site} signed in. The login goes to this PC's sign-in broker and into the browser; the agent never sees it.": "エージェントが {site} へのサインインを必要としています。ログイン情報はこのPCのサインイン仲介とブラウザーにだけ渡り、エージェントには見えません。",
   "Asked by {who}": "依頼元: {who}",

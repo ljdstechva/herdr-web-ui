@@ -1071,6 +1071,7 @@ export const KO: Record<string, string> = {
   "Could not load the server's browsers. Check the connection and retry.": "서버의 브라우저를 불러오지 못했습니다. 연결을 확인한 후 다시 시도하세요.",
   "Open a browser on the server, then retry. This view reconnects automatically.": "서버에서 브라우저를 연 후 다시 시도하세요. 이 화면은 자동으로 다시 연결됩니다.",
   // sign-in cards (components/SignInCard.tsx)
+  "Website": "웹사이트",
   "After a reboot the vault is locked. Your passphrase unlocks it for this PC's agents, without showing them any password.": "재부팅 후 금고는 잠겨 있습니다. 암호 문구로 이 PC의 에이전트를 위해 잠금을 해제하되, 비밀번호는 보여주지 않습니다.",
   "An agent needs {site} signed in. The login goes to this PC's sign-in broker and into the browser; the agent never sees it.": "에이전트가 {site} 로그인을 필요로 합니다. 로그인 정보는 이 PC의 로그인 중개자와 브라우저에만 전달되며 에이전트는 볼 수 없습니다.",
   "Asked by {who}": "요청자: {who}",

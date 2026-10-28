@@ -11,7 +11,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - **Sign-in cards.** When an agent on this PC runs `agent-login login <site>` and the sign-in
   broker needs something only the owner has (the vault passphrase after a reboot, the site's
   username and password, a one-time code), a card shows over the message box of every chat pane
-  of this PC, on the phone too. What is typed goes to the broker and into the server's browser
+  of this PC, on the phone too, naming the site and the web address the login goes to. What is typed goes to the broker and into the server's browser
   once, never through the agent, the chat or the drafts; the card then says whether the site is
   signed in. "Not now" tells the agent to leave it. Without a broker nothing is shown
   (`GET /api/sign-in`, `POST /api/sign-in/<id>`, `POST /api/sign-in/<id>/dismiss`).

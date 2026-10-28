@@ -922,7 +922,8 @@ One set for both themes: the card is island black wherever it shows.
   the pane that asked comes first, the rest follow, since one phone answers for every pane.
   Same surface as the masked-input form (`SecretInput.css`): `--bg-panel`, hairline border,
   `--radius-md`, `--space-3` padding; title row with a key (credentials) or lock (vault) glyph,
-  a dim note saying where the typed secret goes and that the agent never sees it, the fields as
+  a dim note saying where the typed secret goes and that the agent never sees it, the web address
+  the login goes to (`.sign-in-card-site`, the address in `--fw-semibold` weight), the fields as
   `.sign-in-card-field` labels over `.input`, then `.btn-primary` (Sign in / Unlock / Send code)
   and `.btn` "Not now".
 - Secret fields are DOM-only like the masked-input form: never React state, drafts or the queue,

@@ -1075,6 +1075,7 @@ export const ZH: Record<string, string> = {
   "Could not load the server's browsers. Check the connection and retry.": "无法加载服务器的浏览器。请检查连接后重试。",
   "Open a browser on the server, then retry. This view reconnects automatically.": "请在服务器上打开浏览器后重试。此视图会自动重新连接。",
   // sign-in cards (components/SignInCard.tsx)
+  "Website": "网站",
   "After a reboot the vault is locked. Your passphrase unlocks it for this PC's agents, without showing them any password.": "重启后保险库处于锁定状态。你的口令为这台电脑的代理解锁它，但不会向它们显示任何密码。",
   "An agent needs {site} signed in. The login goes to this PC's sign-in broker and into the browser; the agent never sees it.": "有代理需要登录 {site}。登录信息只交给这台电脑的登录代理和浏览器，代理永远看不到。",
   "Asked by {who}": "请求者：{who}",

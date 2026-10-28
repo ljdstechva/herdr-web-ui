@@ -72,6 +72,7 @@ function SignInCard({ request, onAnswering, onOutcome }: { request: SignInReques
   }}>
     <p className="sign-in-card-title">{kind === "credentials" ? <KeyRound size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />} {title}</p>
     <p className="sign-in-card-note">{pending ? t("Signing in…") : request.hint ?? note}</p>
+    {request.login_url !== null && <p className="sign-in-card-site">{t("Website")}: <span className="sign-in-card-url">{request.login_url}</span></p>}
     {pending ? null : <>
     {(kind === "init" || kind === "unlock") && <label className="sign-in-card-field">{t("Vault passphrase")}
       <input name="passphrase" className="input" type="password" autoComplete={kind === "init" ? "new-password" : "current-password"} autoCapitalize="none" spellCheck={false} maxLength={4096} disabled={pending} autoFocus />

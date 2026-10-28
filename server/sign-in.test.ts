@@ -59,10 +59,10 @@ describe("brokerCall", () => {
 
 describe("GET /api/sign-in", () => {
   it("lists the broker's open requests in the app's shape", async () => {
-    replies.push({ ok: true, requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, loginUrl: "https://www.canva.com/login", browser: "smartcoms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null, status: "open" }, { id: "bad" }] });
+    replies.push({ ok: true, requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, loginUrl: "https://www.canva.com/login", browser: "smarcomms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null, status: "open" }, { id: "bad" }] });
     const response = await handleSignInRequest(request("GET", "/api/sign-in?wait=1"), "/api/sign-in", new URL("http://local/api/sign-in?wait=1"), service());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ broker: "online", requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, login_url: "https://www.canva.com/login", browser: "smartcoms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null }] });
+    expect(await response.json()).toEqual({ broker: "online", requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, login_url: "https://www.canva.com/login", browser: "smarcomms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null }] });
     expect(asked[0]).toEqual({ cmd: "pending", wait: 25_000 });
   });
   it("refuses other methods", async () => {
