@@ -778,6 +778,11 @@ One set for both themes: the card is island black wherever it shows.
   actions.
   A link keeps `--accent` and a file chip reads in `--text-strong` with a dotted underline; both
   underlines are `--text-dim` at rest and both take the accent on hover and focus-visible.
+  An image file a line names (a bare or code path, a file link) shows as a thumbnail row under
+  the paragraph or item (`.markdown-images`, at most six, `--space-2` gaps), and `![alt](path)`
+  draws one in place: a fixed `min(14rem, 70vw)` × `9rem` box (`.markdown-image`, `--hairline`
+  `--border`, `--radius-lg`, `--bg-elevated`, zoom-in cursor), cropped to cover, that opens the
+  file as the chip does. A web image stays its link.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its
   first 20 behind **Show all N lines**. On touch a block has a header strip (language, copy);
   with a mouse and no touch screen the strip becomes a corner control over the block's top right,

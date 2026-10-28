@@ -1018,6 +1018,34 @@
   text-decoration: none;
 }
 
+/* an image file the answer names ("saved to /tmp/shot.png", `![after](/tmp/shot.png)`): a fixed
+   thumbnail that opens the file as a path chip does. A fixed box, as a user image's: a lazy
+   thumbnail must not grow the answer (and shift the scroll) when it loads */
+.markdown-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.markdown-image {
+  display: inline-block;
+  vertical-align: middle;
+  padding: 0;
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  cursor: zoom-in;
+}
+
+.markdown-image img {
+  display: block;
+  width: min(14rem, 70vw);
+  height: 9rem;
+  object-fit: cover;
+}
+
 .markdown-code-link {
   text-decoration: none;
 }

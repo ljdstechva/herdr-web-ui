@@ -28,7 +28,7 @@ import { ConversationRefresh } from "../lib/conversationRefresh.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
-import { OpenFileContext } from "../lib/filePaths.ts";
+import { FileUrlContext, OpenFileContext } from "../lib/filePaths.ts";
 import { patchText } from "../../shared/patch.ts";
 import { toolVerb } from "../lib/toolVerbs.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
@@ -595,7 +595,10 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   });
   const { settings } = useSettings();
   // this pane's messages on their way: drawn under the transcript until it holds them itself
-  const outboxOwner = paneStorageId(useMachineId(), paneId);
+  const chatMachineId = useMachineId();
+  const outboxOwner = paneStorageId(chatMachineId, paneId);
+  // the answer's image thumbnails read the file as the viewer does, from this pane's PC
+  const imageUrl = useCallback((path: string) => fileUrl(path, paneId, chatMachineId), [paneId, chatMachineId]);
   const outgoing = useSyncExternalStore(outbox.subscribe, () => outbox.read(outboxOwner));
   // polls pause while the page is hidden and pick up at once when it is back
   const visible = usePageVisible();
@@ -1067,7 +1070,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   // the chat left the screen (another lens): nothing is known of it until it is read again
   useLayoutEffect(() => () => onRead?.(paneId, null), [onRead, paneId]);
 
-  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
+  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><FileUrlContext.Provider value={imageUrl}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
     <div className="chat-transcript" data-conversation-source={state.conversationSource}>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -1126,5 +1129,5 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
       if (prompt.steps) setPromptPollKey((key) => key + 1);
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
-  </ChatHistoryContext.Provider></ChatPaneContext.Provider>;
+  </FileUrlContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider>;
 });

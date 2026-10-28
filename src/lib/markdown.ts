@@ -1,4 +1,5 @@
 import { fileUriPath } from "./terminalFileLinks.ts";
+import { isImagePath } from "./filePaths.ts";
 
 export type InlineNode =
   | { type: "text"; value: string }
@@ -7,7 +8,9 @@ export type InlineNode =
   | { type: "strong" | "em" | "del"; children: InlineNode[] }
   | { type: "link"; href: string; children: InlineNode[] }
   /** a link to a local file (`[report](/repo/out/REPORT.md)`): its label opens the path */
-  | { type: "file"; path: string; children: InlineNode[] };
+  | { type: "file"; path: string; children: InlineNode[] }
+  /** an image of a local file (`![after](/tmp/shot.png)`): drawn as a thumbnail that opens the path */
+  | { type: "image"; path: string; alt: string };
 
 export interface ListItem {
   content: InlineNode[];
@@ -224,9 +227,18 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
       // a label holds no `]`, so no link nests in one: only emphasis counts toward the depth
       const href = safeMarkdownHref(target) ?? webLikeHref(target);
       const file = href === null ? markdownFileTarget(target) : null;
+      // `![alt](…)`: the `!` ends the text before the mark. A local image is drawn; an image on
+      // the web stays its link, so nothing is fetched from another site until it is tapped
+      const image = index > offset && source[index - 1] === "!" && (href !== null || (file !== null && isImagePath(file)));
+      if (image) {
+        const before = source.slice(offset, index - 1);
+        nodes.pop();
+        if (before !== "") nodes.push({ type: "text", value: before });
+      }
       nodes.push(href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
-        : file !== null ? { type: "file", path: file, children: parseInline(label, false, depth) }
-        : { type: "text", value: label });
+        : file !== null && image ? { type: "image", path: file, alt: label }
+          : file !== null ? { type: "file", path: file, children: parseInline(label, false, depth) }
+            : { type: "text", value: label });
     } else if (token.startsWith("**") || token.startsWith("__")) {
       nodes.push({ type: "strong", children: parseInline(token.slice(2, -2), links, depth + 1) });
     } else if (token.startsWith("~~")) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { codeIsFilePath, splitFilePaths } from "./filePaths.ts";
+import { codeIsFilePath, isImagePath, splitFilePaths } from "./filePaths.ts";
 
 const paths = (text: string) => splitFilePaths(text).filter((part) => typeof part !== "string").map((part) => (part as { path: string }).path);
 
@@ -11,6 +11,11 @@ describe("file paths in chat text", () => {
     expect(paths("./scripts/capture.ts 에서 확인")).toEqual(["./scripts/capture.ts"]);
     // the text around a path is kept, whole
     expect(splitFilePaths("open src/a.ts now")).toEqual(["open ", { path: "src/a.ts" }, " now"]);
+  });
+
+  it("knows an image file by its extension", () => {
+    for (const path of ["/tmp/a.png", "~/x/B.JPG", "out/c.jpeg", "d.gif", "e.webp", "f.svg", "g.avif"]) expect(isImagePath(path)).toBe(true);
+    for (const path of ["/tmp/a.png.txt", "notes.md", "clip.mp4", "png"]) expect(isImagePath(path)).toBe(false);
   });
 
   it("leaves words, versions and bare names as text", () => {

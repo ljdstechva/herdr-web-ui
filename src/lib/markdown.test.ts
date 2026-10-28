@@ -1,9 +1,49 @@
 import { describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { loadKatex, Markdown } from "../components/Markdown.tsx";
+import { imagePaths, loadKatex, Markdown } from "../components/Markdown.tsx";
+import { FileUrlContext, OpenFileContext } from "./filePaths.ts";
 import { SettingsProvider } from "./settings.ts";
 import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, inlineMarks, isTableSeparator, mathNestsTooDeep, parseInline, parseMarkdown, safeMarkdownHref, trimUrl, type InlineNode, type ListBlock } from "./markdown.ts";
+
+describe("image thumbnails", () => {
+  const fileUrl = (path: string) => `/api/fs/file?path=${encodeURIComponent(path)}`;
+  // the settings read the browser's languages, which the test runtime leaves undefined
+  const render = (markdown: string, url: ((path: string) => string) | null = fileUrl): string => {
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children:
+        createElement(FileUrlContext.Provider, { value: url }, createElement(OpenFileContext.Provider, { value: () => {} }, createElement(Markdown, { children: markdown }))) }));
+    } finally {
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+
+  it("collects the image files a line names, once each, up to the strip's length", () => {
+    expect(imagePaths(parseInline("Saved /tmp/a.png and `/tmp/b.jpg`, [c](/tmp/c.webp), /tmp/a.png again, /tmp/run.log, [d](https://x.dev/d.png)"))).toEqual(["/tmp/a.png", "/tmp/b.jpg", "/tmp/c.webp"]);
+    expect(imagePaths(parseInline(Array.from({ length: 9 }, (_, n) => `/tmp/shot-${n}.png`).join(" ")))).toHaveLength(6);
+    // an `![…]` image is drawn in place, not again under the line
+    expect(imagePaths(parseInline("![after](/tmp/after.png)"))).toEqual([]);
+  });
+
+  it("draws an image the answer names as a thumbnail that opens the file", () => {
+    const html = render("Saved to /tmp/shot.png and ![after](/tmp/after.png).");
+    expect(html.match(/<img /g)?.length).toBe(2);
+    expect(html).toContain('class="markdown-image"');
+    expect(html).toContain(`src="${fileUrl("/tmp/shot.png")}"`);
+    expect(html).toContain('alt="after"');
+    // a list item names one too
+    expect(render("- the crop: /tmp/crop.jpg").match(/<img /g)?.length).toBe(1);
+  });
+
+  it("keeps images as paths where no pane serves files", () => {
+    const html = render("Saved to /tmp/shot.png and ![after](/tmp/after.png).", null);
+    expect(html).not.toContain("<img ");
+    expect(html.match(/class="markdown-file"/g)?.length).toBe(2);
+  });
+});
 
 describe("parseMarkdown", () => {
   it("renders inline and display math while leaving fenced code untouched", async () => {
@@ -99,6 +139,20 @@ describe("inline markdown", () => {
     for (const target of ["javascript:bad", "data:text/html,x", "#section"]) {
       expect(parseInline(`[label](${target})`)).toEqual([{ type: "text", value: "label" }]);
     }
+  });
+
+  it("draws a local image as a thumbnail node, and keeps a web image as its link", () => {
+    expect(parseInline("Shot: ![after](/tmp/shot.png) done")).toEqual([
+      { type: "text", value: "Shot: " },
+      { type: "image", path: "/tmp/shot.png", alt: "after" },
+      { type: "text", value: " done" },
+    ]);
+    expect(parseInline("![after](~/out/after.webp)")).toEqual([{ type: "image", path: "~/out/after.webp", alt: "after" }]);
+    // nothing is fetched from another site until the link is tapped
+    expect(parseInline("![chart](https://x.dev/c.png)")).toEqual([{ type: "link", href: "https://x.dev/c.png", children: [{ type: "text", value: "chart" }] }]);
+    // a file that is not an image, or a target nothing opens, keeps the `!` as text
+    expect(parseInline("![doc](/a/b.md)")).toMatchObject([{ type: "text", value: "!" }, { type: "file", path: "/a/b.md" }]);
+    expect(parseInline("![x](javascript:bad)")).toEqual([{ type: "text", value: "!" }, { type: "text", value: "x" }]);
   });
 
   it("links a file in a folder with spaces, however the target is written", () => {

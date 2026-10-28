@@ -55,3 +55,12 @@ export function codeIsFilePath(code: string): boolean {
 
 /** Opens a path in the file viewer; null where nothing can open one (paths stay text). */
 export const OpenFileContext = createContext<((path: string) => void) | null>(null);
+
+/** An image file the chat draws as a thumbnail, as it does an `@path` the composer attached. */
+const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg|avif)$/i;
+export function isImagePath(path: string): boolean {
+  return IMAGE_FILE.test(path);
+}
+
+/** The address an <img> reads a file from, for the pane the chat belongs to; null where no pane serves one (images stay paths). */
+export const FileUrlContext = createContext<((path: string) => string) | null>(null);

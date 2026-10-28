@@ -1,8 +1,8 @@
-import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
-import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
+import { codeIsFilePath, FileUrlContext, isImagePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
 import { fileUriPath } from "../lib/terminalFileLinks.ts";
 import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "../lib/highlight.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
@@ -57,6 +57,52 @@ function FilePath({ path, code, open }: { path: string; code: boolean; open: (pa
   return <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={t("Open {path}", { path })} onClick={() => open(path)}>{label}</button>;
 }
 
+/**
+ * An image file the answer names, drawn where the chat can read files: a fixed thumbnail that
+ * opens the file, as a path chip does. Where it cannot, the path shows as one.
+ */
+function ChatImage({ path, alt, open }: { path: string; alt: string; open: ((path: string) => void) | null }) {
+  const t = useT();
+  const url = useContext(FileUrlContext);
+  if (url === null) return open !== null ? <FilePath path={path} code={false} open={open} /> : <span>{alt} (<code>{path}</code>)</span>;
+  const src = url(path);
+  const image = <img src={src} alt={alt} loading="lazy" />;
+  return open !== null
+    ? <button type="button" className="markdown-image" title={t("Open {path}", { path })} onClick={() => open(path)}>{image}</button>
+    : <a className="markdown-image" href={src} target="_blank" rel="noopener noreferrer" title={path}>{image}</a>;
+}
+
+/** A row of thumbnails has this many at most: a listing of thirty renders stays a listing. */
+const MAX_IMAGE_STRIP = 6;
+
+/** The image files a line names as paths (bare, in code, or as a file link), in order, once each; `![…]` images are drawn in place. */
+export function imagePaths(nodes: InlineNode[]): string[] {
+  const found: string[] = [];
+  const add = (path: string): void => { if (isImagePath(path) && !found.includes(path)) found.push(path); };
+  const walk = (list: InlineNode[]): void => {
+    for (const node of list) {
+      switch (node.type) {
+        case "text": for (const part of splitFilePaths(node.value)) if (typeof part !== "string") add(part.path); break;
+        case "code": { const file = fileUriPath(node.value); if (file !== null) add(file); else if (codeIsFilePath(node.value)) add(node.value); break; }
+        case "file": add(node.path); break;
+        case "strong": case "em": case "del": walk(node.children); break;
+        default: break;
+      }
+    }
+  };
+  walk(nodes);
+  return found.slice(0, MAX_IMAGE_STRIP);
+}
+
+/** Thumbnails of the image files a paragraph or item names ("saved to /tmp/shot.png"), under it. */
+function ImageStrip({ nodes }: { nodes: InlineNode[] }) {
+  const url = useContext(FileUrlContext);
+  const open = useContext(OpenFileContext);
+  const paths = useMemo(() => (url === null ? [] : imagePaths(nodes)), [url, nodes]);
+  if (paths.length === 0) return null;
+  return <div className="markdown-images">{paths.map((path) => <ChatImage key={path} path={path} alt={path} open={open} />)}</div>;
+}
+
 /** `interactive` is false inside a link or file label: nothing clickable nests in another. */
 function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactive?: boolean }) {
   const context = useContext(OpenFileContext);
@@ -87,6 +133,7 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
           ? <button key={key} type="button" className="markdown-file" title={t("Open {path}", { path: node.path })} onClick={() => open(node.path)}>{label}</button>
           : <span key={key}>{label} (<code>{node.path}</code>)</span>;
       }
+      case "image": return <ChatImage key={key} path={node.path} alt={node.alt} open={open} />;
     }
   })}</>;
 }
@@ -106,6 +153,7 @@ function List({ block }: { block: ListBlock }) {
           {item.checked !== undefined && <span className="markdown-task-box" role="checkbox" aria-checked={item.checked} aria-disabled="true"
             aria-labelledby={item.content.length === 0 ? undefined : `${id}-${index}`} aria-label={item.content.length === 0 ? t("Empty task") : undefined}>{item.checked && <Check aria-hidden="true" />}</span>}
           {item.checked === undefined ? <Inline nodes={item.content} /> : <span id={`${id}-${index}`}><Inline nodes={item.content} /></span>}
+          <ImageStrip nodes={item.content} />
           {item.blocks !== undefined && <Blocks blocks={item.blocks} />}
         </li>
       ))}
@@ -170,7 +218,10 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
         // keeps drawing each level as it did (ChatView.css `.markdown h1`...`.markdown h6`).
         return <h3 key={key} className={`markdown-h${block.level}`}><Inline nodes={block.content} /></h3>;
       case "paragraph":
-        return <p key={key}>{block.lines.map((line, lineIndex) => <span key={lineIndex}><Inline nodes={line} />{lineIndex < block.lines.length - 1 && <br />}</span>)}</p>;
+        return <Fragment key={key}>
+          <p>{block.lines.map((line, lineIndex) => <span key={lineIndex}><Inline nodes={line} />{lineIndex < block.lines.length - 1 && <br />}</span>)}</p>
+          <ImageStrip nodes={block.lines.flat()} />
+        </Fragment>;
       case "list": return <List key={key} block={block} />;
       case "blockquote": return <blockquote key={key}><Blocks blocks={block.blocks} /></blockquote>;
       case "code": return <CodeBlock key={key} language={block.language} value={block.value} />;
