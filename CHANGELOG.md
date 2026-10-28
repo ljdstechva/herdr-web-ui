@@ -9,8 +9,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ### Added
 - **Images in the answer.** An image file an agent names in its reply ("saved the screenshot to
-  /tmp/shot.png", a path in backticks, a file link, or `![after](/tmp/shot.png)`) shows as a
-  thumbnail under that line or in its place; a tap opens it in the file viewer, as the path did.
+  /tmp/shot.png", a path in backticks, a file link, or `![after](/tmp/shot.png)`) shows whole,
+  at the answer's width, under that line or in its place; a tap opens it in the file viewer, as
+  the path did.
   It is read from the PC the pane runs on, so a screenshot an agent takes on a server shows on
   the phone without being sent anywhere else. A line names at most six; an image on the web
   stays a link, so nothing is fetched from another site until it is tapped.

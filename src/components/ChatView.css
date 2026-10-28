@@ -1018,19 +1018,20 @@
   text-decoration: none;
 }
 
-/* an image file the answer names ("saved to /tmp/shot.png", `![after](/tmp/shot.png)`): a fixed
-   thumbnail that opens the file as a path chip does. A fixed box, as a user image's: a lazy
-   thumbnail must not grow the answer (and shift the scroll) when it loads */
+/* an image file the answer names ("saved to /tmp/shot.png", `![after](/tmp/shot.png)`): the
+   whole image, the width of the answer, one under another; a tap opens the file as a path chip
+   does. Nothing is cropped (the owner reads screenshots here): a tall one keeps its height up to
+   most of the screen, so it grows the answer as it loads, unlike a user image's fixed box */
 .markdown-images {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: var(--space-2);
   margin: var(--space-2) 0;
 }
 
 .markdown-image {
-  display: inline-block;
-  vertical-align: middle;
+  display: block;
+  width: 100%;
   padding: 0;
   overflow: hidden;
   border: var(--hairline) solid var(--border);
@@ -1041,9 +1042,10 @@
 
 .markdown-image img {
   display: block;
-  width: min(14rem, 70vw);
-  height: 9rem;
-  object-fit: cover;
+  width: 100%;
+  height: auto;
+  max-height: 80vh;
+  object-fit: contain;
 }
 
 .markdown-code-link {
