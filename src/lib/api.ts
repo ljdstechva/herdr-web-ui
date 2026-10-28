@@ -64,7 +64,7 @@ import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
 import type { TelemetryStatus } from "../../shared/telemetry.ts";
-import type { SignInAnswer, SignInList, SignInOutcome } from "../../shared/sign-in.ts";
+import type { SignInAnswer, SignInList, SignInOutcome, SignInSites } from "../../shared/sign-in.ts";
 import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
@@ -79,10 +79,12 @@ export function fetchUsage(refresh = false): Promise<UsageReport> {
   return getJson<UsageReport>(refresh ? "/api/usage?refresh=1" : "/api/usage");
 }
 
-/** the sign-in broker's open requests; `wait` holds the request until one appears (about 25 s) */
-export function fetchSignIn(wait: boolean, signal?: AbortSignal): Promise<SignInList> {
+/** the sign-in broker's open requests; `wait` holds the request (about 25 s) until they differ from `seen`, the ids shown now */
+export function fetchSignIn(wait: boolean, seen: readonly string[] = [], signal?: AbortSignal): Promise<SignInList> {
   const timeout = AbortSignal.timeout(wait ? 40_000 : GET_TIMEOUT_MS);
-  return getJson<SignInList>(wait ? "/api/sign-in?wait=1" : "/api/sign-in", signal ? AbortSignal.any([signal, timeout]) : timeout);
+  const query = new URLSearchParams(); if (wait) query.set("wait", "1"); if (seen.length > 0) query.set("seen", seen.join(","));
+  const search = query.toString();
+  return getJson<SignInList>(search === "" ? "/api/sign-in" : `/api/sign-in?${search}`, signal ? AbortSignal.any([signal, timeout]) : timeout);
 }
 
 /** the owner's answer to a sign-in card; resolves once the broker has run the login */
@@ -93,6 +95,21 @@ export async function answerSignIn(id: string, answer: SignInAnswer): Promise<Si
 
 export async function dismissSignIn(id: string): Promise<void> {
   await sendJson(`/api/sign-in/${encodeURIComponent(id)}/dismiss`, "POST", {});
+}
+
+/** Settings → Website logins: the sites this PC's vault holds a login for */
+export function fetchSignInSites(): Promise<SignInSites> {
+  return getJson<SignInSites>("/api/sign-in/sites");
+}
+
+/** asks for the card that replaces one site's login; it appears over the message box of the chat */
+export async function changeSignInSite(site: string): Promise<void> {
+  await sendJson(`/api/sign-in/sites/${encodeURIComponent(site)}/change`, "POST", {});
+}
+
+/** asks for the vault's passphrase card (create or unlock) */
+export async function unlockSignIn(): Promise<void> {
+  await sendJson("/api/sign-in/unlock", "POST", {});
 }
 
 export function fetchUpdateStatus(): Promise<UpdateStatus> {

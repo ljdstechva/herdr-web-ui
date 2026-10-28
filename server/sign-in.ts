@@ -15,8 +15,8 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { badRequest, isJsonObject, jsonResponse } from "./http.ts";
 
-import type { SignInAnswer, SignInKind, SignInList, SignInOutcome, SignInRequest } from "../shared/sign-in.ts";
-export type { SignInAnswer, SignInKind, SignInList, SignInOutcome, SignInRequest };
+import type { SignInAnswer, SignInKind, SignInList, SignInOutcome, SignInRequest, SignInSite, SignInSites } from "../shared/sign-in.ts";
+export type { SignInAnswer, SignInKind, SignInList, SignInOutcome, SignInRequest, SignInSite, SignInSites };
 
 const LONG_POLL_MS = 25_000;
 const ANSWER_TIMEOUT_MS = 5 * 60_000;
@@ -66,16 +66,30 @@ function toRequest(value: unknown): SignInRequest | null {
     id, kind, site,
     username: text(value["username"]), login_url: text(value["loginUrl"]), browser: text(value["browser"]),
     requester: text(value["requester"]), pane: text(value["pane"]), created: text(value["created"]) ?? "", hint: text(value["hint"]),
+    reason: value["reason"] === "rejected" || value["reason"] === "change" ? value["reason"] : null,
   };
 }
+
+function toSite(value: unknown): SignInSite | null {
+  if (!isJsonObject(value)) return null;
+  const site = text(value["site"]); const username = text(value["username"]);
+  if (!site || username === null) return null;
+  return { site, username, browser: text(value["browser"]), login_url: text(value["loginUrl"]), last_login: text(value["lastLogin"]), updated: text(value["updated"]) };
+}
+
+/** a site name as the broker spells them */
+const SITE = /^[a-z0-9][a-z0-9._-]{0,40}$/;
 
 export class SignInService {
   constructor(private readonly socketPath: string = defaultBrokerSocket(), private readonly call: typeof brokerCall = brokerCall) {}
 
-  /** the open requests; with `wait`, holds up to LONG_POLL_MS for one to appear */
-  async list(wait: boolean): Promise<SignInList> {
+  /**
+   * the open requests; with `wait`, holds up to LONG_POLL_MS until they differ from `seen` (the
+   * ids the app shows, comma-joined), so a card's arrival and its removal both come at once
+   */
+  async list(wait: boolean, seen = ""): Promise<SignInList> {
     try {
-      const reply = await this.call(this.socketPath, { cmd: "pending", wait: wait ? LONG_POLL_MS : 0 }, LONG_POLL_MS + 5_000);
+      const reply = await this.call(this.socketPath, { cmd: "pending", wait: wait ? LONG_POLL_MS : 0, seen }, LONG_POLL_MS + 5_000);
       if (reply["ok"] !== true) return { broker: "online", requests: [] };
       const raw = Array.isArray(reply["requests"]) ? reply["requests"] : [];
       return { broker: "online", requests: raw.map(toRequest).filter((request): request is SignInRequest => request !== null) };
@@ -104,6 +118,32 @@ export class SignInService {
     };
   }
 
+  /** Settings → Website logins: the sites the vault holds, by name */
+  async sites(): Promise<SignInSites> {
+    try {
+      const reply = await this.call(this.socketPath, { cmd: "sites" }, 10_000);
+      if (reply["ok"] !== true) throw new SignInRefused(text(reply["error"]) ?? "the broker refused");
+      const raw = Array.isArray(reply["details"]) ? reply["details"] : null;
+      const known = Array.isArray(reply["known_flows"]) ? reply["known_flows"].filter((name): name is string => typeof name === "string") : [];
+      return { broker: "online", vault: reply["vault"] === true, locked: reply["locked"] === true, sites: raw === null ? null : raw.map(toSite).filter((site): site is SignInSite => site !== null), known };
+    } catch (error) {
+      if (error instanceof BrokerUnavailable) return { broker: "offline", vault: false, locked: false, sites: null, known: [] };
+      throw error;
+    }
+  }
+
+  /** asks the broker to put up a card that replaces one site's login; the card comes through `list` */
+  async change(site: string): Promise<void> {
+    const reply = await this.call(this.socketPath, { cmd: "change", site, requester: "phone" }, 10_000);
+    if (reply["ok"] !== true) throw new SignInRefused(text(reply["error"]) ?? "the broker refused");
+  }
+
+  /** asks the broker to put up the vault's passphrase card (create or unlock) */
+  async unlock(): Promise<void> {
+    const reply = await this.call(this.socketPath, { cmd: "phone-unlock", requester: "phone" }, 10_000);
+    if (reply["ok"] !== true) throw new SignInRefused(text(reply["error"]) ?? "the broker refused");
+  }
+
   async dismiss(id: string): Promise<void> {
     const reply = await this.call(this.socketPath, { cmd: "dismiss", id }, 10_000);
     if (reply["ok"] !== true) throw new SignInRefused(text(reply["error"]) ?? "the broker refused");
@@ -122,14 +162,38 @@ function field(body: Record<string, unknown>, name: string): string | undefined 
 }
 
 /**
- * GET  /api/sign-in[?wait=1]     -> SignInList
- * POST /api/sign-in/<id>         {username?, password?, totp?, passphrase?, code?, login_url?, remember?} -> SignInOutcome
- * POST /api/sign-in/<id>/dismiss -> {dismissed: id}
+ * GET  /api/sign-in[?wait=1&seen=<ids>]   -> SignInList (the ids shown, comma-joined: the wait ends when they change)
+ * GET  /api/sign-in/sites                 -> SignInSites
+ * POST /api/sign-in/sites/<site>/change   -> {asked: site}   (a card to replace that site's login)
+ * POST /api/sign-in/unlock                -> {asked: true}   (the vault's passphrase card)
+ * POST /api/sign-in/<id>                  {username?, password?, totp?, passphrase?, code?, login_url?, remember?} -> SignInOutcome
+ * POST /api/sign-in/<id>/dismiss          -> {dismissed: id}
  */
 export async function handleSignInRequest(request: Request, pathname: string, url: URL, service: SignInService): Promise<Response> {
   if (pathname === "/api/sign-in") {
     if (request.method !== "GET") return jsonResponse({ error: { code: "method_not_allowed", message: "Use GET /api/sign-in" } }, 405, { allow: "GET" });
-    return jsonResponse(await service.list(url.searchParams.get("wait") === "1"), 200, { "cache-control": "no-store" });
+    const seen = url.searchParams.get("seen") ?? "";
+    if (seen.length > 2048 || !/^[a-f0-9,]*$/.test(seen)) return badRequest("invalid_seen", "seen: request ids, comma-joined");
+    return jsonResponse(await service.list(url.searchParams.get("wait") === "1", seen), 200, { "cache-control": "no-store" });
+  }
+  if (pathname === "/api/sign-in/sites") {
+    if (request.method !== "GET") return jsonResponse({ error: { code: "method_not_allowed", message: "Use GET /api/sign-in/sites" } }, 405, { allow: "GET" });
+    return jsonResponse(await service.sites(), 200, { "cache-control": "no-store" });
+  }
+  const owner = /^\/api\/sign-in\/(?:sites\/([^/]+)\/change|(unlock))$/.exec(pathname);
+  if (owner) {
+    if (request.method !== "POST") return jsonResponse({ error: { code: "method_not_allowed", message: "Use POST" } }, 405, { allow: "POST" });
+    const site = owner[1] === undefined ? null : decodeURIComponent(owner[1]);
+    if (site !== null && !SITE.test(site)) return badRequest("invalid_site", "a site name is letters, digits, . _ - (at most 41 characters)");
+    try {
+      if (site === null) { await service.unlock(); return jsonResponse({ asked: true }, 200, { "cache-control": "no-store" }); }
+      await service.change(site);
+      return jsonResponse({ asked: site }, 200, { "cache-control": "no-store" });
+    } catch (error) {
+      if (error instanceof SignInRefused) return jsonResponse({ error: { code: "refused", message: error.message } }, 409);
+      if (error instanceof BrokerUnavailable) return jsonResponse({ error: { code: "broker_offline", message: "The sign-in broker on this PC is not running" } }, 503);
+      throw error;
+    }
   }
   const match = /^\/api\/sign-in\/([^/]+)(\/dismiss)?$/.exec(pathname);
   if (!match) return jsonResponse({ error: { code: "not_found", message: "not found" } }, 404);

@@ -62,12 +62,62 @@ describe("GET /api/sign-in", () => {
     replies.push({ ok: true, requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, loginUrl: "https://www.canva.com/login", browser: "smarcomms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null, status: "open" }, { id: "bad" }] });
     const response = await handleSignInRequest(request("GET", "/api/sign-in?wait=1"), "/api/sign-in", new URL("http://local/api/sign-in?wait=1"), service());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ broker: "online", requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, login_url: "https://www.canva.com/login", browser: "smarcomms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null }] });
-    expect(asked[0]).toEqual({ cmd: "pending", wait: 25_000 });
+    expect(await response.json()).toEqual({ broker: "online", requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: null, login_url: "https://www.canva.com/login", browser: "smarcomms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: null, reason: null }] });
+    expect(asked[0]).toEqual({ cmd: "pending", wait: 25_000, seen: "" });
+  });
+  it("tells the broker which ids the app shows, so the wait ends when they change", async () => {
+    replies.push({ ok: true, requests: [] });
+    const response = await handleSignInRequest(request("GET", "/api/sign-in?wait=1&seen=ab12cd34,ef56"), "/api/sign-in", new URL("http://local/api/sign-in?wait=1&seen=ab12cd34,ef56"), service());
+    expect(await response.json()).toEqual({ broker: "online", requests: [] });
+    expect(asked[0]).toEqual({ cmd: "pending", wait: 25_000, seen: "ab12cd34,ef56" });
+  });
+  it("refuses a seen value that is not ids", async () => {
+    const response = await handleSignInRequest(request("GET", "/api/sign-in?seen=%3Cx%3E"), "/api/sign-in", new URL("http://local/api/sign-in?seen=%3Cx%3E"), service());
+    expect(response.status).toBe(400);
+    expect(asked).toEqual([]);
   });
   it("refuses other methods", async () => {
     const response = await handleSignInRequest(request("POST", "/api/sign-in"), "/api/sign-in", new URL("http://local/api/sign-in"), service());
     expect(response.status).toBe(405);
+  });
+});
+
+describe("Settings → Website logins", () => {
+  it("lists the vault's sites by name, never a password", async () => {
+    replies.push({ ok: true, sites: ["canva"], details: [{ site: "canva", username: "me@x.ph", password: "never", browser: "smarcomms", loginUrl: "https://www.canva.com/login", totp: false, note: null, added: "2026-10-28T00:00:00Z", updated: null, lastLogin: "2026-10-28T01:00:00Z" }], locked: false, vault: true, known_flows: ["canva", "trello"] });
+    const response = await handleSignInRequest(request("GET", "/api/sign-in/sites"), "/api/sign-in/sites", new URL("http://local/api/sign-in/sites"), service());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ broker: "online", vault: true, locked: false, sites: [{ site: "canva", username: "me@x.ph", browser: "smarcomms", login_url: "https://www.canva.com/login", last_login: "2026-10-28T01:00:00Z", updated: null }], known: ["canva", "trello"] });
+    expect(asked[0]).toEqual({ cmd: "sites" });
+  });
+  it("says locked with no names while the vault is locked", async () => {
+    replies.push({ ok: true, sites: null, details: null, locked: true, vault: true, known_flows: [] });
+    const response = await handleSignInRequest(request("GET", "/api/sign-in/sites"), "/api/sign-in/sites", new URL("http://local/api/sign-in/sites"), service());
+    expect(await response.json()).toEqual({ broker: "online", vault: true, locked: true, sites: null, known: [] });
+  });
+  it("is offline without a broker", async () => {
+    const response = await handleSignInRequest(request("GET", "/api/sign-in/sites"), "/api/sign-in/sites", new URL("http://local/api/sign-in/sites"), new SignInService(join(dir, "none.sock")));
+    expect(await response.json()).toEqual({ broker: "offline", vault: false, locked: false, sites: null, known: [] });
+  });
+  it("asks the broker for a change card and for the passphrase card", async () => {
+    replies.push({ ok: true, asked: true, site: "canva" }, { ok: true, asked: true });
+    const change = await handleSignInRequest(request("POST", "/api/sign-in/sites/canva/change"), "/api/sign-in/sites/canva/change", new URL("http://local/api/sign-in/sites/canva/change"), service());
+    expect(await change.json()).toEqual({ asked: "canva" });
+    const unlock = await handleSignInRequest(request("POST", "/api/sign-in/unlock"), "/api/sign-in/unlock", new URL("http://local/api/sign-in/unlock"), service());
+    expect(await unlock.json()).toEqual({ asked: true });
+    expect(asked).toEqual([{ cmd: "change", site: "canva", requester: "phone" }, { cmd: "phone-unlock", requester: "phone" }]);
+  });
+  it("refuses a site name the broker would not take, before it sees it", async () => {
+    const response = await handleSignInRequest(request("POST", "/api/sign-in/sites/Can%20va/change"), "/api/sign-in/sites/Can%20va/change", new URL("http://local/api/sign-in/sites/Can%20va/change"), service());
+    expect(response.status).toBe(400);
+    expect(asked).toEqual([]);
+  });
+  it("carries the broker's reason for a card", async () => {
+    replies.push({ ok: true, requests: [{ id: "ab12cd34", kind: "credentials", site: "canva", username: "me@x.ph", loginUrl: "https://www.canva.com/login", browser: "smarcomms", requester: "laurenz:pid1:w1:p2", pane: "w1:p2", created: "2026-10-28T00:00:00Z", hint: "canva did not accept the username or password. Check them and enter them again.", reason: "rejected", status: "open" }] });
+    const response = await handleSignInRequest(request("GET", "/api/sign-in"), "/api/sign-in", new URL("http://local/api/sign-in"), service());
+    const list = await response.json() as { requests: Array<{ reason: string | null; username: string | null }> };
+    expect(list.requests[0]?.reason).toBe("rejected");
+    expect(list.requests[0]?.username).toBe("me@x.ph");
   });
 });
 

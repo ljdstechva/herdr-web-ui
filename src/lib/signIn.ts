@@ -17,6 +17,8 @@ export function useSignInRequests(enabled: boolean): { requests: SignInRequest[]
   const [broker, setBroker] = useState<"online" | "offline" | "unknown">("unknown");
   const visible = usePageVisible();
   const generation = useRef(0);
+  /** the ids shown, for the next poll: the server holds it until they change */
+  const shown = useRef<string[]>([]);
 
   useEffect(() => {
     if (!enabled || !visible) { generation.current++; if (!enabled) setRequests([]); return; }
@@ -27,8 +29,9 @@ export function useSignInRequests(enabled: boolean): { requests: SignInRequest[]
       if (current !== generation.current) return;
       let delay = 0;
       try {
-        const list = await fetchSignIn(wait, controller.signal);
+        const list = await fetchSignIn(wait, shown.current, controller.signal);
         if (current !== generation.current) return;
+        shown.current = list.requests.map((request) => request.id);
         setBroker(list.broker);
         setRequests((previous) => JSON.stringify(previous) === JSON.stringify(list.requests) ? previous : list.requests);
         delay = list.broker === "offline" ? OFFLINE_MS : 0;

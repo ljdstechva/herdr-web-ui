@@ -937,6 +937,20 @@ One set for both themes: the card is island black wherever it shows.
 - Shown only in the chat lens of a local pane: another PC's broker has no socket here. The list
   is a long poll of `GET /api/sign-in?wait=1` while the page is visible; with no broker on the
   PC the poll backs off to once a minute and nothing is drawn.
+- A refused login comes back as the `rejected` outcome (`.is-warn`, `--danger-text`): the site
+  showed its password form again after the broker typed the password. The broker then puts up a
+  new credentials card titled "Try <site> again", the username kept, the note in `--danger-text`
+  with the site's own words; a "change" card ("Change the login for <site>", button "Save", no
+  remember box) is the same form asked from Settings and ends in the `saved` outcome instead of
+  a login.
+
+### Website logins (Settings page, `.website-logins-row`)
+- The sites the broker's vault holds, one `.settings-item` row each: the name in `--fw-semibold`
+  with a key glyph, the username and sign-in address dim under it, and a `.btn` "Change login"
+  that asks the broker for the card and closes Settings so the card, drawn over the message box
+  of the chat, is in view. Under the rows the same form adds a site by name. While the vault is
+  locked or absent the page shows one hint and the `.btn-primary` that asks for the passphrase
+  card. No password is read or drawn anywhere on the page.
 
 ### Composer (`.composer`)
 - Chat mode is ONE surface: the stack, the transcript and the composer region all sit on `--bg`,

@@ -29,6 +29,9 @@
 .sign-in-card-url { font-weight: 600; }
 .sign-in-card-note,
 .sign-in-card-who { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+/* the site refused the login: the note says so in the warning color */
+.sign-in-card-note.is-warn,
+.sign-in-outcome.is-warn { color: var(--danger-text); }
 .sign-in-card-field {
   display: flex;
   flex-direction: column;

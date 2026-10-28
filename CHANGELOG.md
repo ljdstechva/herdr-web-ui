@@ -126,6 +126,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **A refused password asks again, and Settings → Website logins changes one.** When a site
+  does not accept the username or password the broker typed, the answered sign-in card says so
+  and a new card asks for them again with the site's own words, the username kept; the agent is
+  told `rejected` only after three refusals. A new Settings page, Website logins, lists the sites
+  the vault holds by name and username and offers "Change login" and "Add a site": each puts up
+  the card under the message box of the chat, and the next sign-in uses what is typed there
+  (`GET /api/sign-in/sites`, `POST /api/sign-in/sites/<site>/change`, `POST /api/sign-in/unlock`).
 - **The message box keeps one row of controls on phones.** When the model's name and level did
   not fit beside the buttons, the status took a row of its own under the message box, which on
   a phone is almost always, and the chat lost that height. On a phone the level is now read, not

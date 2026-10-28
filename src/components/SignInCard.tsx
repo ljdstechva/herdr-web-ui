@@ -15,6 +15,9 @@ function outcomeText(t: Translate, outcome: SignInOutcome): string {
     case "logged-in": return t("Signed in to {site}.", { site });
     case "already-logged-in": return t("{site} was already signed in.", { site });
     case "pending": return t("The sign-in to {site} is still running; the agent will report it.", { site });
+    case "rejected": return t("{site} did not accept the username or password. A new card asks for them again.", { site });
+    case "saved": return t("The login for {site} is saved; the next sign-in uses it.", { site });
+    case "unlocked": return t("The vault is open.");
     case "needs-owner": return t("{site} still needs you: {detail}", { site, detail: outcome.detail ?? "" });
     default: return t("Sign-in to {site} failed: {detail}", { site, detail: outcome.detail ?? "" });
   }
@@ -44,6 +47,8 @@ function SignInCard({ request, onAnswering, onOutcome }: { request: SignInReques
   const title = kind === "init" ? t("Create the credential vault")
     : kind === "unlock" ? t("Unlock the credential vault")
     : kind === "code" ? t("Code for {site}", { site: request.site })
+    : request.reason === "change" ? t("Change the login for {site}", { site: request.site })
+    : request.reason === "rejected" ? t("Try {site} again", { site: request.site })
     : t("Sign in to {site}", { site: request.site });
   const note = kind === "init" ? t("Choose a passphrase. You type it once after each reboot; agents never see it.")
     : kind === "unlock" ? t("After a reboot the vault is locked. Your passphrase unlocks it for this PC's agents, without showing them any password.")
@@ -71,7 +76,7 @@ function SignInCard({ request, onAnswering, onOutcome }: { request: SignInReques
     }).finally(() => { busy.current = false; if (alive.current) setPending(false); });
   }}>
     <p className="sign-in-card-title">{kind === "credentials" ? <KeyRound size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />} {title}</p>
-    <p className="sign-in-card-note">{pending ? t("Signing in…") : request.hint ?? note}</p>
+    <p className={request.reason === "rejected" && !pending ? "sign-in-card-note is-warn" : "sign-in-card-note"}>{pending ? (request.reason === "change" ? t("Saving…") : t("Signing in…")) : request.hint ?? note}</p>
     {request.login_url !== null && <p className="sign-in-card-site">{t("Website")}: <span className="sign-in-card-url">{request.login_url}</span></p>}
     {pending ? null : <>
     {(kind === "init" || kind === "unlock") && <label className="sign-in-card-field">{t("Vault passphrase")}
@@ -90,14 +95,14 @@ function SignInCard({ request, onAnswering, onOutcome }: { request: SignInReques
       <label className="sign-in-card-field">{t("Authenticator secret (optional)")}
         <input name="totp" className="input" type="password" autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={256} disabled={pending} />
       </label>
-      <label className="sign-in-card-check"><input type="checkbox" checked={remember} disabled={pending} onChange={(event) => setRemember(event.target.checked)} /> {t("Remember in the vault for next time")}</label>
+      {request.reason !== "change" && <label className="sign-in-card-check"><input type="checkbox" checked={remember} disabled={pending} onChange={(event) => setRemember(event.target.checked)} /> {t("Remember in the vault for next time")}</label>}
     </>}
     {kind === "code" && <label className="sign-in-card-field">{t("One-time code")}
       <input name="code" className="input" type="text" inputMode="numeric" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} maxLength={16} disabled={pending} autoFocus />
     </label>}
     {request.requester !== null && <p className="sign-in-card-who">{t("Asked by {who}", { who: request.requester })}</p>}
     <div className="sign-in-card-actions">
-      <button type="submit" className="btn btn-primary"><Send size={14} aria-hidden="true" /> {kind === "code" ? t("Send code") : kind === "credentials" ? t("Sign in") : t("Unlock")}</button>
+      <button type="submit" className="btn btn-primary"><Send size={14} aria-hidden="true" /> {kind === "code" ? t("Send code") : kind === "credentials" ? (request.reason === "change" ? t("Save") : t("Sign in")) : t("Unlock")}</button>
       <button type="button" className="btn" onClick={() => { void dismissSignIn(request.id).catch(() => { /* gone already */ }); }}>{t("Not now")}</button>
     </div>
     {error && <p className="sign-in-card-error" role="status">{error}</p>}
@@ -125,7 +130,7 @@ export function SignInCards({ paneId }: { paneId: string }) {
   const ordered = [...requests, ...held.filter((request) => !open.has(request.id))].sort((a, b) => Number(b.pane === paneId) - Number(a.pane === paneId));
   if (ordered.length === 0 && outcomes.length === 0) return null;
   return <div className="sign-in-cards">
-    {outcomes.map(({ id, outcome }) => <p key={id} className={`sign-in-outcome${outcome.result === "logged-in" || outcome.result === "already-logged-in" ? " is-ok" : ""}`} role="status">{outcomeText(t, outcome)}</p>)}
+    {outcomes.map(({ id, outcome }) => <p key={id} className={`sign-in-outcome${outcome.result === "logged-in" || outcome.result === "already-logged-in" || outcome.result === "saved" || outcome.result === "unlocked" ? " is-ok" : outcome.result === "rejected" ? " is-warn" : ""}`} role="status">{outcomeText(t, outcome)}</p>)}
     {ordered.map((request) => <SignInCard key={request.id} request={request}
       onAnswering={(answered) => setHeld((previous) => previous.some((request) => request.id === answered.id) ? previous : [...previous, answered])}
       onOutcome={(id, outcome) => {

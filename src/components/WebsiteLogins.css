@@ -1,0 +1,43 @@
+/* Settings → Website logins (components/WebsiteLogins.tsx): one row per site the vault holds,
+   name and username only, with the button that asks for the card that replaces its login. */
+.website-logins-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.website-logins-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.website-logins-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+.website-logins-user {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.website-logins-row .btn { flex: none; }
+.website-logins-actions { display: flex; gap: var(--space-2); }
+/* a new site: its name, then the card asks for the login */
+.website-logins-add {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.website-logins-add-label {
+  display: flex;
+  flex: 1 1 10rem;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.website-logins-add-label .input { width: 100%; min-width: 0; }

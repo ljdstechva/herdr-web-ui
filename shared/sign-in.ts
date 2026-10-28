@@ -19,6 +19,8 @@ export interface SignInRequest {
   pane: string | null;
   created: string;
   hint: string | null;
+  /** why a credentials card asks: the site refused the saved login, or the owner is changing it; null for a first sign-in */
+  reason: "rejected" | "change" | null;
 }
 
 export interface SignInList {
@@ -30,7 +32,7 @@ export interface SignInList {
 export interface SignInOutcome {
   kind: SignInKind;
   site: string;
-  /** logged-in | already-logged-in | needs-owner | failed | pending */
+  /** logged-in | already-logged-in | rejected | needs-owner | failed | pending; saved | unlocked for a card the owner opened from Settings */
   result: string;
   detail: string | null;
   url: string | null;
@@ -45,4 +47,28 @@ export interface SignInAnswer {
   code?: string;
   login_url?: string;
   remember?: boolean;
+}
+
+/** one site the vault holds a login for (never its password) */
+export interface SignInSite {
+  site: string;
+  username: string;
+  browser: string | null;
+  login_url: string | null;
+  /** when the login was last used successfully; null when never */
+  last_login: string | null;
+  /** when it was last replaced from a card; null when never */
+  updated: string | null;
+}
+
+/** Settings → Website logins: what the broker keeps, by name only */
+export interface SignInSites {
+  broker: "online" | "offline";
+  /** a vault exists on this PC */
+  vault: boolean;
+  /** the vault is locked (after a reboot): the names are hidden until the owner unlocks it */
+  locked: boolean;
+  sites: SignInSite[] | null;
+  /** sites the broker knows a login flow for but holds no login of yet */
+  known: string[];
 }
