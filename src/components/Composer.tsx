@@ -257,7 +257,8 @@ export function Composer({
   const { fetchPaneCommands, fetchPaneFiles, togglePaneFast } = useMachineApi();
   const { settings } = useSettings();
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
-  const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
+  // phones show it too: this fork's owner reads the limit beside the message box (upstream hides it there)
+  const usageEnabled = settings.showUsage && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
   const usage = usageEnabled && usageReport !== null ? composerUsage(usageReport.providers, agent, settings.usageOrder, settings.usageHidden) : undefined;
   const usageWindows = usage === undefined ? [] : statusWindows(usage);

@@ -119,6 +119,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **The plan's quota chip shows on phones too.** The chip beside the message box ("Claude 5h
+  62%") used to be desktop-only; with "Show usage" on it now shows at every width, next to the
+  panel in the workspace drawer.
 - Chat updates follow native transcript changes pushed through the existing WebSocket.
   Only visible Chat views subscribe; Terminal views and hidden tabs release conversation
   monitoring. Continuous pushes coalesce into at most one newest-page refresh every 2 seconds,
