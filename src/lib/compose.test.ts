@@ -176,6 +176,9 @@ describe("composer presentation helpers", () => {
     expect(composerModelDraw({ modelClipped: false, effortClipped: true })).toBe("row");
     expect(composerModelDraw({ modelClipped: true, effortClipped: true })).toBe("row");
     expect(composerModelDraw({ modelClipped: true, effortClipped: false })).toBe("row");
+    // a phone keeps the one row of controls, whatever is clipped
+    expect(composerModelDraw({ modelClipped: true, effortClipped: true, phone: true })).toBe("full");
+    expect(composerModelDraw({ modelClipped: false, effortClipped: false, phone: true })).toBe("full");
   });
 
   it("turns machine agent ids into labels", () => {

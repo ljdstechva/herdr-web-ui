@@ -126,6 +126,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **The message box keeps one row of controls on phones.** When the model's name and level did
+  not fit beside the buttons, the status took a row of its own under the message box, which on
+  a phone is almost always, and the chat lost that height. On a phone the level is now read, not
+  drawn (the model sheet shows it), the name shortens in place, and the controls stay one row.
 - **The plan's quota chip shows on phones too.** The chip beside the message box ("Claude 5h
   62%") used to be desktop-only; with "Show usage" on it now shows at every width, next to the
   panel in the workspace drawer.

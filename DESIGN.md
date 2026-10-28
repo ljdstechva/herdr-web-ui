@@ -1015,7 +1015,11 @@ One set for both themes: the card is island black wherever it shows.
   controls, the status content takes a row of its own between the message and the controls, the
   card's whole width (`data-status-row`), right-aligned over Send. Only there may a long
   identifier shorten inside the pill, and never the level; the context ring remains visible. The
-  row is measured again after fonts arrive and the context label opens or closes.
+  row is measured again after fonts arrive and the context label opens or closes. A phone
+  (`(max-width: 640px), (pointer: coarse)`, the composer's `mobile`) never takes that row: it
+  would cost the chat its height on a small screen. There the level is read, not drawn (the
+  picker's sheet shows it), the name shortens in place, and the ring and the plan chip keep
+  their width, so the controls stay one row under the message box.
 - Every agent has one primary control: Stop while working with an empty draft, Send with text,
   and Send at rest. Uploads and in-flight sends disable Send without clearing its text. There
   is no separate Queue button or send menu. The placeholder is `Message <agent>…`; message text

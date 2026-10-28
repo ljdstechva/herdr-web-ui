@@ -257,6 +257,8 @@ export function Composer({
   const { fetchPaneCommands, fetchPaneFiles, togglePaneFast } = useMachineApi();
   const { settings } = useSettings();
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
+  // read by fitStatus, which is created once
+  const mobileRef = useRef(mobile); mobileRef.current = mobile;
   // phones show it too: this fork's owner reads the limit beside the message box (upstream hides it there)
   const usageEnabled = settings.showUsage && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
@@ -486,6 +488,7 @@ export function Composer({
     const draw = composerModelDraw({
       modelClipped: clipped(".composer-model"),
       effortClipped: clipped(".composer-reasoning"),
+      phone: mobileRef.current,
     });
     // the model and its level are always drawn: where they do not fit beside the controls, the
     // status takes a row of its own over them (Composer.css), the card's whole width

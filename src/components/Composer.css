@@ -1406,3 +1406,20 @@
     padding-bottom: var(--space-4);
   }
 }
+
+/* A phone keeps the ONE row of controls (Composer.tsx asks composerModelDraw with `phone`): a row
+   of the status's own under the message box costs the chat its height on a small screen. The
+   reasoning level is read, not drawn, there (the picker's sheet shows it), and the name gives
+   way in place; the ring and the plan chip keep their width. Same query as the composer's
+   `mobile`. */
+@media (max-width: 640px), (pointer: coarse) {
+  .composer-status:not([data-model="row"]) .composer-reasoning-dot,
+  .composer-status:not([data-model="row"]) .composer-reasoning-short {
+    display: none;
+  }
+
+  .composer-pill-button {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+}

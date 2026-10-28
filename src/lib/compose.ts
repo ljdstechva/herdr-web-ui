@@ -181,10 +181,14 @@ export function composerStatusHint(state: { uploading: boolean; connected: boole
  * - "row": it does not. The name and the level are always drawn, so the status takes a row of
  *   its own over the controls, the card's whole width (Composer.css, data-status-row). A name too
  *   long even for that is ellipsized as the last resort; the level never is.
+ * - On a phone (`phone`) the row is kept whatever fits: a row of the status's own costs the chat
+ *   its height on a small screen. The level is read, not drawn, there (Composer.css), and the
+ *   name shortens in place.
  */
 export type ComposerModelDraw = "full" | "row";
 
-export function composerModelDraw(state: { modelClipped: boolean; effortClipped: boolean }): ComposerModelDraw {
+export function composerModelDraw(state: { modelClipped: boolean; effortClipped: boolean; phone?: boolean }): ComposerModelDraw {
+  if (state.phone) return "full";
   return state.modelClipped || state.effortClipped ? "row" : "full";
 }
 
