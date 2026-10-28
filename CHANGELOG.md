@@ -8,6 +8,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Sign-in cards.** When an agent on this PC runs `agent-login login <site>` and the sign-in
+  broker needs something only the owner has (the vault passphrase after a reboot, the site's
+  username and password, a one-time code), a card shows over the message box of every chat pane
+  of this PC, on the phone too. What is typed goes to the broker and into the server's browser
+  once, never through the agent, the chat or the drafts; the card then says whether the site is
+  signed in. "Not now" tells the agent to leave it. Without a broker nothing is shown
+  (`GET /api/sign-in`, `POST /api/sign-in/<id>`, `POST /api/sign-in/<id>/dismiss`).
 - **Images in the answer.** An image file an agent names in its reply ("saved the screenshot to
   /tmp/shot.png", a path in backticks, a file link, or `![after](/tmp/shot.png)`) shows whole,
   at the answer's width, under that line or in its place; a tap opens it in the file viewer, as

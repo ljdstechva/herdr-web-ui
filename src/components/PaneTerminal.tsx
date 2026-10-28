@@ -32,6 +32,7 @@ import { TerminalInput } from "./TerminalInput.tsx";
 import { FindBar } from "./FindBar.tsx";
 import { TerminalViewportTools, type TerminalSearchState } from "./TerminalViewportTools.tsx";
 import { SecretInput } from "./SecretInput.tsx";
+import { SignInCards } from "./SignInCard.tsx";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
@@ -2431,6 +2432,8 @@ export function PaneTerminal({
         onSend={(value) => socketRef.current?.sendSecret(paneId, secret.prompt, value) ?? null}
         onCancel={() => { if (socketRef.current?.connected) socketRef.current.sendInput(paneId, "\u0003"); }}
       />}
+      {/* this PC's sign-in broker asking the owner for a login (components/SignInCard.tsx) */}
+      {presented && paneId !== null && chatView && machineId === "local" && !observing && !ended && <SignInCards paneId={paneId} />}
       {presented && paneId !== null && chatView && !secretActive && !observing && !ended && (
         <Composer
           key={paneId}

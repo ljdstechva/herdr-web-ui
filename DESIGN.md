@@ -915,6 +915,28 @@ One set for both themes: the card is island black wherever it shows.
 - `POST /api/pane/prompt/answer` translates the chosen answer into the agent's navigation keys and
   sends them through herdr `pane.send_keys` / text input. The card never fabricates a chat reply.
 
+### Sign-in card (`.sign-in-card`)
+- A request of this PC's sign-in broker (`agent-login`): an agent asked for a site to be signed
+  in and the broker needs the owner's passphrase, credentials or a one-time code. One card per
+  request, stacked in `.sign-in-cards` over the message box, next to where the prompt card docks;
+  the pane that asked comes first, the rest follow, since one phone answers for every pane.
+  Same surface as the masked-input form (`SecretInput.css`): `--bg-panel`, hairline border,
+  `--radius-md`, `--space-3` padding; title row with a key (credentials) or lock (vault) glyph,
+  a dim note saying where the typed secret goes and that the agent never sees it, the fields as
+  `.sign-in-card-field` labels over `.input`, then `.btn-primary` (Sign in / Unlock / Send code)
+  and `.btn` "Not now".
+- Secret fields are DOM-only like the masked-input form: never React state, drafts or the queue,
+  cleared on submit, on page hide and on unmount. The answer is one `POST /api/sign-in/<id>` that
+  the broker holds until the login has run (up to about five minutes). The broker drops the
+  request from its list the moment it accepts the answer, so the parent holds the answered card
+  on screen, folded to its title and "Signing in…", until the outcome is back; then the outcome
+  shows as a `.sign-in-outcome` line (`.is-ok` in `--text` when signed in, else `--text-dim`)
+  for twelve seconds. One login can answer two cards (passphrase, then credentials): the same
+  outcome is shown once.
+- Shown only in the chat lens of a local pane: another PC's broker has no socket here. The list
+  is a long poll of `GET /api/sign-in?wait=1` while the page is visible; with no broker on the
+  PC the poll backs off to once a minute and nothing is drawn.
+
 ### Composer (`.composer`)
 - Chat mode is ONE surface: the stack, the transcript and the composer region all sit on `--bg`,
   and the composer column equals the transcript column (`--chat-w`, same `--space-4` gutter,

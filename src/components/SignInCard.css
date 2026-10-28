@@ -1,0 +1,50 @@
+/* Sign-in cards (components/SignInCard.tsx): a request of this PC's sign-in broker, over the
+   message box like the masked-input form (SecretInput.css), one card per request. */
+.sign-in-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3);
+  flex-shrink: 0;
+}
+.sign-in-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.sign-in-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.sign-in-card-note,
+.sign-in-card-who { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.sign-in-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--fs-sm);
+}
+.sign-in-card-field .input { min-width: 0; width: 100%; }
+.sign-in-card-check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); }
+.sign-in-card-actions { display: flex; gap: var(--space-2); }
+.sign-in-card-error { margin: 0; color: var(--danger-text); font-size: var(--fs-sm); }
+/* the outcome of an answered card, for a moment */
+.sign-in-outcome {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.sign-in-outcome.is-ok { color: var(--text); }

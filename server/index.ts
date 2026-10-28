@@ -109,6 +109,7 @@ import { handleVpsRequest, type VpsServices } from "./vps-api.ts";
 import { VpsDoctor } from "./vps-doctor.ts";
 import { VpsMonitor, vpsAlertMessage, vpsResolvedMessage } from "./vps.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
+import { handleSignInRequest, SignInService } from "./sign-in.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
@@ -579,6 +580,8 @@ export function createServer(
     return agentLaunch(paneId, { ...agent, kind: resolved.kind, ...(resolved.args === undefined ? {} : { args: resolved.args }) });
   };
   const usage = options.usage ?? new UsageService();
+  // the sign-in cards of this PC's agent-login broker (server/sign-in.ts); offline where none runs
+  const signIn = new SignInService();
   const voice = options.voice ?? new VoiceService({ stateDir: options.stateDir ?? defaultStateDir(), env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (HERDR_WEB_TAILSCALE_OWNER) */
   const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["HERDR_WEB_TAILSCALE_OWNER"]?.trim() || undefined;
@@ -1822,6 +1825,7 @@ export function createServer(
       if (pathname === "/api/telemetry") return handleTelemetryRequest(request, options.telemetry);
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
+      if (pathname === "/api/sign-in" || pathname.startsWith("/api/sign-in/")) return handleSignInRequest(request, pathname, url, signIn);
       if (pathname === "/api/vps" || pathname.startsWith("/api/vps/")) return handleVpsRequest(request, pathname, vps, (seconds) => bunServer.timeout(request, seconds));
       if (pathname === "/api/browsers" || pathname.startsWith("/api/browsers/")) {
         const streamId = browserStreamId(pathname);
