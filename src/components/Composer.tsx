@@ -65,7 +65,7 @@ export interface ComposerProps {
   agentStatus?: AgentStatus;
   /** an OmO pane's running background tasks: the status line opens their list */
   backgroundTasks?: number;
-  /** the pane's turn ended on work still running in the background: its word is BG, not DONE (lib/status.ts paneStatus) */
+  /** the pane's turn ended on work still running in the background: its word is BG, not DONE (lib/status.ts paneStatus), as with any running background task */
   backgroundWait?: boolean;
   metadata?: ConversationMetadata | null;
   /** replaces the placeholder: how a message answers the agent's waiting prompt */
@@ -897,7 +897,7 @@ export function Composer({
 
   const isWorking = agentStatus === "working";
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
-  const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
+  const shownStatus = paneStatus({ agent_status: agentStatus, background_tasks: backgroundTasks, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
   const sendShown = composerSendShown({ working: isWorking, text });
   const hint = composerStatusHint({ uploading, connected, text });

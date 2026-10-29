@@ -1,9 +1,9 @@
 import { useEffect, useId, useState } from "react";
-import { Bot, ChevronDown, ChevronUp, SquareTerminal } from "lucide-react";
+import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronUp, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
 import "./AgentActivity.css";
 
 import type { AgentStatus, OmoTask } from "../../shared/protocol.ts";
-import { agentActivity, runningTasks, type Activity } from "../lib/agentActivity.ts";
+import { agentActivity, runningTasks, taskKind, wakeupInMs, type Activity } from "../lib/agentActivity.ts";
 import { agentDisplayLabel } from "../lib/compose.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
@@ -22,11 +22,15 @@ export interface AgentActivityProps {
   waiting: boolean;
 }
 
+const TASK_ICONS: Readonly<Record<string, LucideIcon>> = { shell: SquareTerminal, monitor: MonitorIcon, workflow: Workflow, wakeup: AlarmClock };
+
 /** "2 subagents · 1 background command": what runs besides the agent, in words. */
 function whatRuns(activity: Activity, t: Translate): string | null {
   const parts = [
     activity.agents > 0 ? t(activity.agents === 1 ? "{n} subagent" : "{n} subagents", { n: activity.agents }) : null,
     activity.commands > 0 ? t(activity.commands === 1 ? "{n} background command" : "{n} background commands", { n: activity.commands }) : null,
+    activity.workflows > 0 ? t(activity.workflows === 1 ? "{n} workflow" : "{n} workflows", { n: activity.workflows }) : null,
+    activity.wakeups > 0 ? t(activity.wakeups === 1 ? "{n} scheduled wake-up" : "{n} scheduled wake-ups", { n: activity.wakeups }) : null,
     activity.other > 0 ? t(activity.other === 1 ? "{n} background task" : "{n} background tasks", { n: activity.other }) : null,
   ].filter((part) => part !== null);
   return parts.length === 0 ? null : parts.join(" · ");
@@ -79,8 +83,11 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
 
   const name = agentDisplayLabel(agent ?? null);
   const besides = whatRuns(activity, t);
+  // at rest with nothing but its next wake-up ahead, the line says when that is
+  const onlyWakeup = activity.wakeups > 0 && activity.wakesAt !== null && activity.agents + activity.commands + activity.workflows + activity.other === 0;
   const summary = activity.main
     ? besides === null ? t("{agent} is working", { agent: name }) : t("{agent} is working · {tasks}", { agent: name, tasks: besides })
+    : onlyWakeup ? t("{agent} wakes up in {time}", { agent: name, time: formatElapsed(Math.max(0, activity.wakesAt! - (now + offset))) })
     : besides === null ? t("{agent} is waiting on background work", { agent: name }) : t("{tasks} still running", { tasks: besides });
   const listable = running.length > 0;
   const content = <>
@@ -95,13 +102,16 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
         <ul id={listId} className="agent-activity-list">
           {running.map((task) => {
             const elapsed = taskElapsedMs(task, now + offset);
-            const Icon = task.category === "shell" ? SquareTerminal : Bot;
+            const due = wakeupInMs(task, now + offset);
+            const Icon = TASK_ICONS[task.category ?? ""] ?? Bot;
+            const kind = task.category === "shell" ? null : taskKind(task.category, t);
             return (
               <li key={task.id} className="agent-activity-task">
                 <Icon aria-hidden="true" />
                 <span className="agent-activity-task-title" title={task.title}>{task.title}</span>
-                {task.category && task.category !== "shell" && <span className="agent-activity-task-kind">{task.category}</span>}
-                {elapsed !== null && <span className="agent-activity-task-time">{formatElapsed(elapsed)}</span>}
+                {kind && <span className="agent-activity-task-kind">{kind}</span>}
+                {due !== null ? <span className="agent-activity-task-time">{t("in {time}", { time: formatElapsed(due) })}</span>
+                  : elapsed !== null && <span className="agent-activity-task-time">{formatElapsed(elapsed)}</span>}
               </li>
             );
           })}

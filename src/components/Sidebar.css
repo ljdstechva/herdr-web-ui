@@ -428,6 +428,19 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   to { transform: rotate(360deg); }
 }
 
+/* background work goes on: the hourglass turns over now and then, which an hourglass looks the
+   same after, so the loop has no seam. It holds still most of the time and turns in steps, as
+   the working arc does, so it asks for few frames */
+.sidebar-status[data-status="waiting"] svg {
+  animation: sidebar-waiting var(--dur-hourglass) steps(1, end) infinite;
+}
+
+@keyframes sidebar-waiting {
+  0% { transform: rotate(0deg); }
+  72% { transform: rotate(0deg); animation-timing-function: steps(16, end); }
+  100% { transform: rotate(180deg); }
+}
+
 /* background tasks still running: a number beside the state, quieter than it */
 .background-count {
   display: inline-flex;
@@ -542,7 +555,8 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
     transition: none;
   }
 
-  .sidebar-status[data-status="working"] svg { animation: none; }
+  .sidebar-status[data-status="working"] svg,
+  .sidebar-status[data-status="waiting"] svg { animation: none; }
 }
 
 /* a phone's drawer ends above the app's bar (styles.css "phone"), which takes the home-indicator inset */

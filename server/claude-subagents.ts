@@ -38,6 +38,13 @@ import type { HerdrPane, OmoTask } from "../shared/protocol.ts";
  * `<task-notification>` of its task id, in any transcript of the session, or with the answer
  * of the `TaskStop` (`KillShell` in older Claude Code) that stopped it, which no notice follows.
  * It lives in the Claude process that started it, as a running agent does.
+ *
+ * So does other work Claude goes on with after its turn, listed the same way: a `Monitor` watch
+ * (its answer's `taskId`; it ends with its notice, its `TaskStop`, or by itself when its
+ * `timeoutMs` runs out unless it is `persistent`), a background `Workflow` (`taskType`
+ * `local_workflow`, ended by its notice), and a wake-up Claude scheduled for itself
+ * (`ScheduleWakeup`, `scheduledFor`): pending until that time, when it starts the next turn. A
+ * loop has one next wake-up, so a newer one, or a call with `stop`, ends the one before.
  */
 const READ_BUDGET = 8 * 1024 * 1024;
 /** how much of a parent transcript is read the first time: older notices are not found */
@@ -166,41 +173,74 @@ export function plain(path: string, max = Infinity): { size: number; mtimeMs: nu
   } catch { return null; }
 }
 
+/** What runs in the background besides subagents; the task's category in the list. */
+export type CommandKind = "shell" | "monitor" | "workflow" | "wakeup";
+interface Launch {
+  at: number;
+  title: string;
+  kind: CommandKind;
+  /** when it ends by itself if nothing ends it first: a monitor's timeout, a wake-up's time */
+  until: number | null;
+}
 /** What one transcript says of background commands: those it started, by task id, and how those it heard of ended. */
 interface Commands {
-  /** the title of each `Bash` call not answered yet: its description, else its command */
-  calls: Map<string, string>;
-  launches: Map<string, { at: number; title: string }>;
+  /** each background-capable call not answered yet: its tool, and its title (description, else command, or a wake-up's reason) */
+  calls: Map<string, { name: string; title: string | null }>;
+  launches: Map<string, Launch>;
   ends: Map<string, { at: number; status: OmoTask["status"] }>;
 }
+const BACKGROUND_TOOLS = new Set(["Bash", "Monitor", "Workflow", "ScheduleWakeup"]);
+const DEFAULT_TITLES: Record<CommandKind, string> = { shell: "Background command", monitor: "Monitor", workflow: "Workflow", wakeup: "Scheduled wake-up" };
 const noCommands = (): Commands => ({ calls: new Map(), launches: new Map(), ends: new Map() });
 const TITLE_LENGTH = 120;
 
 /** Whether a line may say something of a background command, before it is parsed: the answers of every other call are passed over. */
-const commandLine = (line: string): boolean => line.includes('"name":"Bash"') || line.includes('"backgroundTaskId"') || line.includes('"task_id"') || line.includes('"shell_id"');
+const commandLine = (line: string): boolean => line.includes('"name":"Bash"') || line.includes('"name":"Monitor"') || line.includes('"name":"Workflow"') || line.includes('"name":"ScheduleWakeup"')
+  || line.includes('"backgroundTaskId"') || line.includes('"timeoutMs"') || line.includes('"local_workflow"') || line.includes('"scheduledFor"') || line.includes('"task_id"') || line.includes('"shell_id"');
 
 function scanCommands(commands: Commands, entry: Row, at: number | null, notices: readonly TaskNotification[]): void {
   if (at === null) return;
   const content = row(entry["message"])?.["content"];
   const blocks = (Array.isArray(content) ? content : []).flatMap((value): Row[] => { const block = row(value); return block === null ? [] : [block]; });
   for (const block of blocks) {
-    if (block["type"] !== "tool_use" || block["name"] !== "Bash" || typeof block["id"] !== "string") continue;
+    if (block["type"] !== "tool_use" || typeof block["name"] !== "string" || !BACKGROUND_TOOLS.has(block["name"]) || typeof block["id"] !== "string") continue;
     const input = row(block["input"]);
-    const title = text(input?.["description"]) ?? text(input?.["command"]);
-    if (title !== null) remember(commands.calls, block["id"], title.slice(0, TITLE_LENGTH), 512);
+    const title = text(input?.["description"]) ?? text(input?.["reason"]) ?? text(input?.["command"]);
+    remember(commands.calls, block["id"], { name: block["name"], title: title?.slice(0, TITLE_LENGTH) ?? null }, 512);
+    // the loop stopped: its answer says nothing a line can be told by, so the call ends it
+    if (block["name"] === "ScheduleWakeup" && input?.["stop"] === true) endWakeups(commands, at);
   }
   const failed = blocks.some((block) => block["type"] === "tool_result" && block["is_error"] === true);
   const result = failed ? null : row(entry["toolUseResult"]);
-  const launched = result?.["backgroundTaskId"];
-  if (typeof launched === "string" && AGENT_ID.test(launched)) {
-    const call = blocks.find((block) => block["type"] === "tool_result" && typeof block["tool_use_id"] === "string")?.["tool_use_id"] as string | undefined;
-    remember(commands.launches, launched, { at, title: (call === undefined ? undefined : commands.calls.get(call)) ?? "Background command" }, MAX_NAMES);
-    if (call !== undefined) commands.calls.delete(call);
+  const call = blocks.find((block) => block["type"] === "tool_result" && typeof block["tool_use_id"] === "string")?.["tool_use_id"] as string | undefined;
+  const made = call === undefined ? undefined : commands.calls.get(call);
+  // an answer read without its call (the read began after it) is known by its shape
+  const by = (name: string): boolean => made === undefined || made.name === name;
+  const launch = (id: unknown, kind: CommandKind, until: number | null = null, title: string | null = null): void => {
+    if (typeof id !== "string" || !AGENT_ID.test(id)) return;
+    remember(commands.launches, id, { at, title: title ?? made?.title ?? DEFAULT_TITLES[kind], kind, until }, MAX_NAMES);
+  };
+  const timeout = result?.["timeoutMs"];
+  const due = result?.["scheduledFor"];
+  if (typeof result?.["backgroundTaskId"] === "string") launch(result["backgroundTaskId"], "shell");
+  else if (typeof timeout === "number" && by("Monitor")) launch(result?.["taskId"], "monitor", result?.["persistent"] === true ? null : at + timeout);
+  else if (result?.["taskType"] === "local_workflow") launch(result["taskId"], "workflow", null, text(result["summary"]) ?? text(result["workflowName"]));
+  else if (typeof due === "number" && Number.isFinite(due) && (made?.name === "ScheduleWakeup" || (made === undefined && "clampedDelaySeconds" in result!))) {
+    endWakeups(commands, at);
+    launch(`wakeup-${call ?? at}`, "wakeup", due);
   }
+  if (call !== undefined && result !== null) commands.calls.delete(call);
   // TaskStop answers with the task it stopped, KillShell with the shell
   const stopped = typeof result?.["task_type"] === "string" ? result["task_id"] : result?.["shell_id"];
   if (typeof stopped === "string" && !commands.ends.has(stopped)) remember(commands.ends, stopped, { at, status: "cancelled" }, MAX_NAMES);
   for (const notice of notices) if (!notice.agent && !commands.ends.has(notice.taskId)) remember(commands.ends, notice.taskId, { at, status: notice.status }, MAX_NAMES);
+}
+
+/** A loop has one next wake-up: the ones still pending when another is set, or the loop stopped, end there. */
+function endWakeups(commands: Commands, at: number): void {
+  for (const [id, launch] of commands.launches) {
+    if (launch.kind === "wakeup" && !commands.ends.has(id) && (launch.until === null || launch.until > at)) remember(commands.ends, id, { at, status: "cancelled" }, MAX_NAMES);
+  }
 }
 
 /**
@@ -561,7 +601,7 @@ const time = (value: string | null): number => value === null ? 0 : Date.parse(v
 /** what each session's last read said of each agent: kept while the transcript is read in parts */
 const previous = new Map<string, Map<string, OmoTask>>();
 
-export function claudeSubagentState(parentPath: string, live: boolean, now = Date.now(), since: number | null = null): { tasks: OmoTask[]; settled: boolean; watch: string[]; running: number; turnRunning: number; promptAt: number | null } {
+export function claudeSubagentState(parentPath: string, live: boolean, now = Date.now(), since: number | null = null): { tasks: OmoTask[]; settled: boolean; watch: string[]; running: number; turnRunning: number; promptAt: number | null; expires: number | null } {
   const dir = subagentsDir(parentPath);
   const files = agentIds(parentPath).flatMap((id) => {
     const stat = plain(join(dir, `agent-${id}.jsonl`));
@@ -570,12 +610,14 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   // each has a budget of its own: a long transcript must not keep the agents from being read.
   // Read with no subagent too: the session's own background commands are in it
   const parent = scanParent(parentPath);
-  if (parent === null && files.length === 0) return { tasks: [], settled: true, watch: [], running: 0, turnRunning: 0, promptAt: null };
+  if (parent === null && files.length === 0) return { tasks: [], settled: true, watch: [], running: 0, turnRunning: 0, promptAt: null, expires: null };
   const budget = { left: READ_BUDGET };
   const running: OmoTask[] = [];
   const ended: OmoTask[] = [];
   const promptAt = parent?.promptAt ?? null;
   let turnRunning = 0;
+  /** the first time a running monitor or wake-up ends by itself: the answer changes then with no file changing */
+  let expires: number | null = null;
   const all = new Map<string, OmoTask>();
   const sources: Commands[] = parent === null ? [] : [parent.commands];
   let settled = parent !== null && !parent.behind;
@@ -638,9 +680,10 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   for (const source of sources) {
     for (const [id, launch] of source.launches) {
       if (all.has(id)) continue;
-      const end = ends.get(id);
+      const end = ends.get(id) ?? (launch.until !== null && now >= launch.until ? { at: launch.until, status: "completed" as const } : undefined);
       const lost = !live || (since !== null && launch.at < since - START_SLACK_MS);
-      keep({ id, title: launch.title, category: "shell", model: null, status: end?.status ?? (lost ? "lost" : "running"), started_at: iso(launch.at), ended_at: iso(end?.at ?? null), turns: null, tool_calls: null, tokens: null });
+      if (!end && !lost && launch.until !== null) expires = Math.min(expires ?? Infinity, launch.until);
+      keep({ id, title: launch.title, category: launch.kind, model: null, status: end?.status ?? (lost ? "lost" : "running"), started_at: iso(launch.at), ended_at: iso(end?.at ?? null), turns: null, tool_calls: null, tokens: null, ...(launch.kind === "wakeup" && launch.until !== null ? { due_at: iso(launch.until) } : {}) });
     }
   }
   remember(previous, parentPath, all, 256);
@@ -648,7 +691,7 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   // a command lost with its process has no end of its own: its start stands for it
   const last = (task: OmoTask): number => time(task.ended_at) || time(task.started_at);
   ended.sort((a, b) => last(b) - last(a));
-  return { tasks: [...running, ...ended.slice(0, RECENT_LIMIT)], settled, watch: files.map(({ id }) => id), running: running.length, turnRunning, promptAt };
+  return { tasks: [...running, ...ended.slice(0, RECENT_LIMIT)], settled, watch: files.map(({ id }) => id), running: running.length, turnRunning, promptAt, expires };
 
   function keep(task: OmoTask, dispatched = time(task.started_at)): void {
     all.set(task.id, task);
@@ -698,6 +741,8 @@ interface Tracked {
   /** when its transcript, and its process, were last looked for */
   at: number; pidAt: number;
   live: boolean; running: number; turnRunning: number; promptAt: number | null; sig: string | null;
+  /** when the answer the signature certifies runs out with no file changing (claudeSubagentState's `expires`) */
+  expires?: number | null;
   reset?: boolean;
   /** every observed agent, whose own file can end or resume its turn */
   watch: string[];
@@ -853,9 +898,10 @@ export class ClaudeSubagentStatus {
       if (tracked.path !== null && tracked.live) {
         const scanAt = this.now();
         const before = subagentsSignature(tracked.path, tracked.watch, scanAt);
-        if (`${before.sig}:${tracked.startedAt}` === tracked.sig) continue;
+        if (`${before.sig}:${tracked.startedAt}` === tracked.sig && (tracked.expires == null || scanAt < tracked.expires)) continue;
         const state = claudeSubagentState(tracked.path, true, this.now(), tracked.startedAt);
         ({ running, turnRunning, promptAt } = state);
+        tracked.expires = state.expires;
         tracked.watch = state.watch;
         const after = subagentsSignature(tracked.path, tracked.watch, this.now());
         // Certify only the versions and dependency set read, never a concurrent append's newer signature.

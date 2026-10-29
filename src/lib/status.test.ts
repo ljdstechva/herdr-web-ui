@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { paneStatus, rollupStatus, statusEdgeRead } from "./status.ts";
+import { backgroundBusy, paneStatus, rollupStatus, statusEdgeRead } from "./status.ts";
 
 describe("rollupStatus", () => {
   it("keeps a workspace working while any tab or split pane is working", () => {
@@ -28,6 +28,17 @@ describe("paneStatus", () => {
     expect(paneStatus({ agent_status: "working", background_wait: true })).toBe("working");
     expect(paneStatus({ agent_status: "blocked", background_wait: true })).toBe("blocked");
     expect(paneStatus({ agent_status: "done" })).toBe("done");
+  });
+
+  it("reads a pane at rest with anything still running in the background as BG, never DONE or READY", () => {
+    // a background command its turn started hours ago, past the turn's hold
+    expect(paneStatus({ agent_status: "done", background_tasks: 1 })).toBe("waiting");
+    expect(paneStatus({ agent_status: "idle", background_tasks: 2 })).toBe("waiting");
+    expect(paneStatus({ agent_status: "working", background_tasks: 1 })).toBe("working");
+    expect(paneStatus({ agent_status: "blocked", background_tasks: 1 })).toBe("blocked");
+    expect(paneStatus({ agent_status: "done", background_tasks: 0 })).toBe("done");
+    expect(backgroundBusy({ background_tasks: 0 })).toBe(false);
+    expect(backgroundBusy({ background_wait: true })).toBe(true);
   });
 
   it("is unknown only when no pane says more", () => {

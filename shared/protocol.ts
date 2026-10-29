@@ -450,7 +450,7 @@ export interface OmoTask {
   id: string;
   /** the task's summary, else its description or name */
   title: string;
-  /** the category or agent type it ran as */
+  /** the category or agent type it ran as; a Claude Code pane's other background work is `shell`, `monitor`, `workflow` or `wakeup` (server/claude-subagents.ts) */
   category: string | null;
   model: string | null;
   /** `lost`: OmO's process that ran it is gone, or the pane no longer runs the Claude Code session that started it */
@@ -460,6 +460,8 @@ export interface OmoTask {
   turns: number | null;
   tool_calls: number | null;
   tokens: number | null;
+  /** a scheduled wake-up's: when it starts the agent's next turn */
+  due_at?: string | null;
 }
 
 /** One step of an OmO workflow (a DAG node); `error` is why a failed one failed. */

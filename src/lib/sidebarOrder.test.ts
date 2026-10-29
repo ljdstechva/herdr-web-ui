@@ -152,6 +152,14 @@ describe("opened finishes", () => {
     expect(shownStatus(pane("a", "done"), seqs, { a: 10 })).toBe("idle");
   });
 
+  it("shows BG, not DONE or a quiet READY, while anything runs in the background past the hold", () => {
+    const running = { ...pane("a", "done"), background_tasks: 1 };
+    expect(shownStatus(running, seqs, { a: 10 })).toBe("waiting");
+    expect(shownStatus(running, seqs, null)).toBe("waiting");
+    expect(shownStatus({ ...running, agent_status: "working" }, seqs, null)).toBe("working");
+    expect(shownStatus({ ...running, background_tasks: 0 }, seqs, null)).toBe("done");
+  });
+
   it("counts a DONE as looked at while its counter is still the one recorded", () => {
     expect(isSeenDone(pane("a", "done"), seqs, { a: 10 })).toBe(true);
     expect(isSeenDone(pane("a", "done"), seqs, { a: 9 })).toBe(false);

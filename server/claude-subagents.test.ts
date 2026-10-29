@@ -1142,3 +1142,107 @@ describe("claudeSubagents, before the files are read through", () => {
     expect(ids(s.path)).toEqual(["long:completed"]);
   });
 });
+
+describe("claudeSubagents, monitors, workflows and wake-ups", () => {
+  const pane = (id: string): HerdrPane => ({ pane_id: id, agent: "claude", agent_session: { agent: "claude", kind: "id", source: "hook", value: "s1" }, cwd: "/work", agent_status: "idle", focused: false, revision: 1 }) as HerdrPane;
+  /** a tool call and its answer, as Claude Code writes them */
+  const call = (s: ReturnType<typeof session>, id: string, name: string, minute: number, input: object, result: object, content = "ok") => {
+    s.parent({ type: "assistant", timestamp: at(minute), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } });
+    s.parent({ type: "user", timestamp: at(minute), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] }, toolUseResult: result });
+  };
+  const monitor = (s: ReturnType<typeof session>, taskId: string, minute: number, timeoutMs = 600_000, persistent = false) =>
+    call(s, `toolu_${taskId}`, "Monitor", minute, { description: `watch ${taskId}`, command: "tail -f log", timeout_ms: timeoutMs }, { taskId, timeoutMs, persistent }, `Monitor started (task ${taskId})`);
+  const wakeup = (s: ReturnType<typeof session>, id: string, minute: number, due: number, reason = `check ${id}`) =>
+    call(s, id, "ScheduleWakeup", minute, { delaySeconds: 1200, reason, prompt: "/loop go" }, { scheduledFor: due, clampedDelaySeconds: 1200, wasClamped: false }, "Next wakeup scheduled");
+  const event = (s: ReturnType<typeof session>, taskId: string, minute: number, text: string) =>
+    s.parent({ type: "user", timestamp: at(minute), message: { role: "user", content: `<task-notification>\n<task-id>${taskId}</task-id>\n<summary>Monitor event: "watch ${taskId}"</summary>\n<event>${text}</event>\n</task-notification>` } });
+
+  it("counts a monitor until its stream ends, not at each event", () => {
+    const s = session();
+    s.prompt(1);
+    monitor(s, "watch1", 2);
+    event(s, "watch1", 3, "line 1");
+    expect(claudeSubagentState(s.path, true, Date.parse(at(4)))).toMatchObject({ running: 1, turnRunning: 1, tasks: [{ id: "watch1", category: "monitor", title: "watch watch1", status: "running" }] });
+    s.notify("watch1", 5, { summary: 'Monitor "watch watch1" stream ended', carriers: ["user"] });
+    expect(claudeSubagentState(s.path, true, Date.parse(at(6)))).toMatchObject({ running: 0, tasks: [{ id: "watch1", status: "completed", ended_at: at(5) }] });
+  });
+
+  it("ends a monitor by itself when its timeout runs out, keeps a persistent one, and stops one with TaskStop", () => {
+    const s = session();
+    s.prompt(1);
+    monitor(s, "short", 2, 10 * 60_000);
+    monitor(s, "kept", 2, 10 * 60_000, true);
+    monitor(s, "stopped", 2);
+    s.parent({ type: "user", timestamp: at(4), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "stop", content: "{}" }] }, toolUseResult: { task_id: "stopped", task_type: "local_bash" } });
+    const before = claudeSubagentState(s.path, true, Date.parse(at(5)));
+    expect(before.running).toBe(2);
+    expect(before.expires).toBe(Date.parse(at(12)));
+    const after = claudeSubagentState(s.path, true, Date.parse(at(13)));
+    expect(after.running).toBe(1);
+    expect(after.expires).toBeNull();
+    expect(after.tasks.map((task) => `${task.id}:${task.status}`).sort()).toEqual(["kept:running", "short:completed", "stopped:cancelled"]);
+  });
+
+  it("counts a background workflow until its notice", () => {
+    const s = session();
+    s.prompt(1);
+    call(s, "toolu_wf", "Workflow", 2, { script: "export const meta = {}" }, { status: "async_launched", taskId: "wabc123", taskType: "local_workflow", workflowName: "review", summary: "Review the change" }, "Workflow launched in background.");
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 1, turnRunning: 1, tasks: [{ id: "wabc123", category: "workflow", title: "Review the change", status: "running" }] });
+    s.notify("wabc123", 9, { summary: 'Dynamic workflow "Review the change" completed', carriers: ["queue", "user"] });
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 0, tasks: [{ id: "wabc123", status: "completed" }] });
+  });
+
+  it("holds a scheduled wake-up until it is due; a newer one or a stop ends the one before", () => {
+    const s = session();
+    s.prompt(1);
+    wakeup(s, "toolu_w1", 2, Date.parse(at(22)));
+    const pending = claudeSubagentState(s.path, true, Date.parse(at(3)));
+    expect(pending).toMatchObject({ running: 1, turnRunning: 1, expires: Date.parse(at(22)), tasks: [{ id: "wakeup-toolu_w1", category: "wakeup", title: "check toolu_w1", status: "running", due_at: at(22) }] });
+    expect(claudeSubagentState(s.path, true, Date.parse(at(23)))).toMatchObject({ running: 0, expires: null, tasks: [{ status: "completed", ended_at: at(22) }] });
+    // the loop sets its next one: the first goes, the second waits
+    wakeup(s, "toolu_w2", 5, Date.parse(at(40)));
+    forgetSubagents();
+    const next = claudeSubagentState(s.path, true, Date.parse(at(6)));
+    expect(next.running).toBe(1);
+    expect(next.tasks.map((task) => `${task.id}:${task.status}`)).toEqual(["wakeup-toolu_w2:running", "wakeup-toolu_w1:cancelled"]);
+    call(s, "toolu_stop", "ScheduleWakeup", 7, { stop: true }, { stopped: true });
+    const stopped = claudeSubagentState(s.path, true, Date.parse(at(8)));
+    expect(stopped.running).toBe(0);
+    expect(stopped.tasks[0]).toMatchObject({ id: "wakeup-toolu_w2", status: "cancelled", ended_at: at(7) });
+  });
+
+  it("does not take another tool's task id for background work", () => {
+    const s = session();
+    s.prompt(1);
+    call(s, "toolu_todo", "TaskCreate", 2, { subject: "write tests" }, { task: { id: "1", subject: "write tests" }, taskId: "1" });
+    call(s, "toolu_read", "Read", 3, { file_path: "/x" }, { type: "text", file: { filePath: "/x" } });
+    expect(claudeSubagentState(s.path, true, NOW).running).toBe(0);
+  });
+
+  it("loses a wake-up with the Claude process that scheduled it", () => {
+    const s = session();
+    s.prompt(1);
+    wakeup(s, "toolu_w1", 2, NOW + 60 * 60_000);
+    expect(claudeSubagentState(s.path, false, NOW)).toMatchObject({ running: 0, tasks: [{ status: "lost" }] });
+  });
+
+  it("recounts when a wake-up comes due though no file changed", async () => {
+    const s = session();
+    s.prompt(1);
+    // read later than the files were written, so their signature is certified and a poll that finds them unchanged reads nothing
+    let now = Date.now() + 5000;
+    wakeup(s, "toolu_w1", 2, now + 5 * 60_000);
+    const changes: number[] = [];
+    const status = new ClaudeSubagentStatus({ resolve: async () => ({ path: s.path, startedAt: null }), now: () => now, onChange: (_, running) => { changes.push(running); } });
+    await status.refresh([pane("p1")]);
+    expect(status.countOf("p1")).toBe(1);
+    now += 60_000;
+    status.poll();
+    expect(status.countOf("p1")).toBe(1);
+    now += 4 * 60_000;
+    status.poll();
+    expect(status.countOf("p1")).toBe(0);
+    expect(changes).toEqual([1, 0]);
+    status.stop();
+  });
+});

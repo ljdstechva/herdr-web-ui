@@ -22,11 +22,18 @@ export function knownStatus(status?: AgentStatus): KnownStatus {
 /**
  * What a pane reads as. One at rest while work its turn started still runs in the background
  * (`background_wait`, server/background-wait.ts) is waiting on it, and says BG in place of DONE
- * or READY: that work's end starts the next turn by itself.
+ * or READY: that work's end starts the next turn by itself. So does one with anything else still
+ * running there (`background_tasks`: a subagent, a command, a monitor, a workflow, a wake-up it
+ * scheduled), whichever turn started it and however long it runs: DONE says nothing is left.
  */
-export function paneStatus(pane: { agent_status?: AgentStatus; background_wait?: true }): KnownStatus {
+export function paneStatus(pane: { agent_status?: AgentStatus; background_wait?: true; background_tasks?: number }): KnownStatus {
   const known = knownStatus(pane.agent_status);
-  return pane.background_wait && known !== "working" && known !== "blocked" ? "waiting" : known;
+  return backgroundBusy(pane) && known !== "working" && known !== "blocked" ? "waiting" : known;
+}
+
+/** Whether work goes on in the pane besides the agent's own turn. */
+export function backgroundBusy(pane: { background_wait?: true; background_tasks?: number }): boolean {
+  return pane.background_wait === true || (pane.background_tasks ?? 0) > 0;
 }
 
 /**

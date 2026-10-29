@@ -6,6 +6,7 @@ import "./BackgroundTasks.css";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { clockOffsetMs, endedSummary, formatElapsed, runGoing, spanMs, taskElapsedMs } from "../lib/omoTasks.ts";
 import { formatTokens } from "../lib/compose.ts";
+import { taskKind, wakeupInMs } from "../lib/agentActivity.ts";
 import { useT } from "../lib/i18n.ts";
 import type { OmoRun, OmoRunNode, OmoTask } from "../../shared/protocol.ts";
 
@@ -136,8 +137,9 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
   const row = (task: OmoTask) => {
     const Icon = ICONS[task.status];
     const elapsed = taskElapsedMs(task, now + offset);
+    const due = wakeupInMs(task, now + offset);
     const meta = [
-      task.category, task.model, elapsed === null ? null : formatElapsed(elapsed),
+      taskKind(task.category, t), task.model, due !== null ? t("in {time}", { time: formatElapsed(due) }) : elapsed === null ? null : formatElapsed(elapsed),
       task.turns === null ? null : t(task.turns === 1 ? "{n} turn" : "{n} turns", { n: task.turns }),
       task.tool_calls === null ? null : t(task.tool_calls === 1 ? "{n} tool call" : "{n} tool calls", { n: task.tool_calls }),
       task.tokens === null ? null : t("{n} tokens", { n: formatTokens(task.tokens) }),

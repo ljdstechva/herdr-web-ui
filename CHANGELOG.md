@@ -126,6 +126,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **Background work never reads DONE.** An agent at rest with anything still running in the
+  background (a subagent, a background command, a monitor, a workflow, or a wake-up it scheduled
+  for itself) reads BG in the agent list, the workspace rows, the tabs and the status line, with
+  an hourglass in place of the green done dot, whichever turn started that work and however long
+  it runs. Before, only work the last turn started counted, and only for its first 30 minutes, so
+  a long background command read DONE. DONE now means nothing is left. Claude Code's monitors,
+  background workflows and scheduled wake-ups are counted and listed too ("wakes up in 12m").
 - **The screen stays on while the app is used.** Settings → Phone & devices → Keep screen on is now
   Off, 5 minutes or While open, and 5 minutes is the default: while a terminal or chat pane is
   open, the phone's screen does not turn off on its own until 5 minutes after the last touch, key,
