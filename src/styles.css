@@ -162,6 +162,7 @@
   /* motion: only real state changes move (drawer, dialogs, working/reconnecting pulse) */
   --dur-fast: 120ms;
   --dur-base: 180ms;
+  --dur-slow: 260ms;
   --dur-pulse: 1600ms;
   /* one turn of the working arc: a stepped rotation draws its steps and nothing else, so the
      step count in Sidebar.css is the frame rate and this only sets how fast it looks */
@@ -1394,6 +1395,7 @@ button {
   justify-content: center;
   padding: var(--space-4);
   background: var(--scrim);
+  animation: fade-in var(--dur-base) var(--ease-out);
 }
 
 .modal {
@@ -1405,6 +1407,43 @@ button {
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-pop);
   overflow: hidden;
+  /* a dialog settles in from slightly below and smaller; the phone's sheet slides up instead (below) */
+  animation: modal-in var(--dur-base) var(--ease-out);
+}
+
+/* ---------- motion: how things come onto the screen ----------
+   Entrances only: a thing that leaves is unmounted, and the eye follows what is new, not what is
+   gone. Every entrance is one of these four, so the whole app moves at one pace (the tokens at
+   the top), and all of them stop under prefers-reduced-motion. */
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+/* a card or a line that comes onto the chat column: rises a little as it appears */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3)) scale(0.97);
+  }
+}
+
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+}
+
+/* a popover opens from its anchor's edge */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
 }
 
 .modal-header {
@@ -1449,6 +1488,7 @@ button {
     max-height: 92%;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: sheet-in var(--dur-slow) var(--ease-spring);
   }
 }
 
@@ -1526,6 +1566,8 @@ button {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
   overflow: hidden;
+  transform-origin: top;
+  animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
 .menu-item {
@@ -1670,6 +1712,7 @@ button {
     inset: calc(var(--header-h) + env(safe-area-inset-top, 0px)) 0 0 0;
     z-index: var(--z-scrim);
     background: var(--scrim);
+    animation: fade-in var(--dur-base) var(--ease-out);
   }
 }
 
@@ -1785,6 +1828,14 @@ button {
 
   .badge-working::before,
   .conn-reconnecting .conn-dot {
+    animation: none;
+  }
+
+  .modal-scrim,
+  .modal,
+  .menu,
+  .scrim,
+  .chat-new-messages {
     animation: none;
   }
 }

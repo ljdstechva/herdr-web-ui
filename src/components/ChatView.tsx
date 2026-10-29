@@ -440,6 +440,8 @@ interface TurnProps {
   /** ...and "Needs you" while the agent is blocked */
   waiting: boolean;
   showThinking: boolean;
+  /** arrived after the transcript was first drawn: an agent's turn rises in (ChatView.css .is-entered) */
+  entered: boolean;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -482,7 +484,7 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: TurnProps) {
+const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, entered }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useState(false);
@@ -530,7 +532,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: T
   const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
-  return <article className="chat-turn chat-turn-agent">
+  return <article className={`chat-turn chat-turn-agent${entered ? " is-entered" : ""}`}>
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}
@@ -579,7 +581,7 @@ const OutgoingTurn = memo(function OutgoingTurn({ paneId, message }: { paneId: s
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
-  return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} />;
+  return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} entered={false} />;
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
@@ -659,6 +661,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   const olderGeneration = useRef(0);
   const history = useRef<string | undefined>(seed?.history_id);
   const [historyId, setHistoryId] = useState<string | undefined>(seed?.history_id);
+  const openedWith = useRef<{ scope: string; keys: Set<string> } | null>(null);
   const shownPane = useRef(paneId);
   const prepended = useRef<{ top: number; height: number } | null>(null);
   const [pollKey, setPollKey] = useState(0);
@@ -1070,6 +1073,13 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   // the chat left the screen (another lens): nothing is known of it until it is read again
   useLayoutEffect(() => () => onRead?.(paneId, null), [onRead, paneId]);
 
+  // The turns the transcript opened with stand still, however many; an answer that arrives later
+  // rises in (Turn `entered`, ChatView.css). What it opened with is taken at the first page drawn
+  // of each conversation, so a switch of pane or session draws its page still too.
+  const scope = `${paneId}:${historyId ?? ""}`;
+  const turnKey = (turn: ConversationTurn, index: number): string => `${scope}:${turn.role}:${turn.ts ?? index}`;
+  if (loaded && state.source === "conversation" && openedWith.current?.scope !== scope) openedWith.current = { scope, keys: new Set(shownTurns.map(turnKey)) };
+  const entered = (key: string): boolean => openedWith.current?.scope === scope && !openedWith.current.keys.has(key);
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><FileUrlContext.Provider value={imageUrl}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
     <div className="chat-transcript" data-conversation-source={state.conversationSource}>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
@@ -1097,8 +1107,9 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         ? shownTurns.map((turn, index) => {
             const last = index === shownTurns.length - 1;
             const live = isLiveWorkTurn(turn, last, agentStatus, finishedBeforeSend);
-            return <RenderBoundary key={`${paneId}:${historyId ?? ""}:${turn.role}:${turn.ts ?? index}`} resetKey={turnRevision(turn)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
-              <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} />
+            const key = turnKey(turn, index);
+            return <RenderBoundary key={key} resetKey={turnRevision(turn)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
+              <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} entered={entered(key)} />
             </RenderBoundary>;
           })
         : agent !== null

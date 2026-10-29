@@ -9,6 +9,8 @@
   margin: var(--space-2) auto 0;
   font-family: var(--font-chat, var(--font-ui));
   font-size: calc(var(--fs-sm) * var(--chat-scale, 1));
+  /* appears as the agent sets to work (styles.css, motion) */
+  animation: fade-in var(--dur-base) var(--ease-out);
 }
 
 /* the composer's resize grip reaches above the box: after this line it keeps that strip to itself */
@@ -128,4 +130,5 @@ button.agent-activity-bar {
 
 @media (prefers-reduced-motion: reduce) {
   .agent-activity-dot { animation: none; }
+  .agent-activity { animation: none; }
 }

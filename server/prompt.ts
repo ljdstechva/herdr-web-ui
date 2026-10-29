@@ -1921,28 +1921,45 @@ function parseClaudeModel(screen: string): ParsedPrompt | null {
  *   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel
  *
  * ▲ stands over the level the slider is on. The levels are the card's options, picked with ←/→
- * and `s`, never Enter. Ultracode is left to the terminal.
+ * and `s`, never Enter. Ultracode is left to the terminal. 2.1.312 draws a note under the names
+ * when ▲ stands over a dear level (`~2.5x the estimated cost of medium (the default)`): it
+ * follows the cursor, so it is no part of what the card asks.
  */
 const CLAUDE_EFFORT_LEVEL_RE = /\b(?:low|medium|high|xhigh|max)\b/g;
 /** how far ▲ may stand from the middle of a level's name and still be over it */
 const CLAUDE_EFFORT_ALIGN = 3;
-/** blank lines between the level names and the hint, at most */
-const CLAUDE_EFFORT_UNDER_LINES = 3;
+/**
+ * lines between the level names and the hint, at most: two blank ones as 2.1.294 draws it, and
+ * from 2.1.312 a note under them at a dear level (`~2.5x the estimated cost of medium (the
+ * default)`), which a narrow pane wraps onto two or three lines
+ */
+const CLAUDE_EFFORT_UNDER_LINES = 7;
+/** what the card says of each level: Claude Code draws only the names, Faster to Smarter */
+const CLAUDE_EFFORT_DESCRIPTIONS: Record<string, string> = {
+  low: "Fastest, the least reasoning",
+  medium: "Balanced, Claude Code's default",
+  high: "More reasoning than medium",
+  xhigh: "Deeper reasoning, just below max",
+  max: "The deepest reasoning, at the highest cost",
+};
+/** a line of level names and nothing else (the toggle's hint aside); cut or wrapped by a narrow pane, it is not one */
+function onlyEffortLevels(line: string): boolean {
+  return line.trim() !== "" && line.replace(CLAUDE_EFFORT_LEVEL_RE, "").replace(/Tab to toggle/i, "").trim() === "";
+}
 
 function parseClaudeEffort(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
   const hintIndex = findLastIndex(lines, (_, index) => CLAUDE_EFFORT_HINT_RE.test(wrapped(lines, index)));
   if (hintIndex < 0) return null;
-  let labelsIndex = hintIndex - 1;
-  while (labelsIndex > 0 && lines[labelsIndex]!.trim() === "") labelsIndex -= 1;
-  const labels = lines[labelsIndex] ?? "";
+  // the level names: the nearest line above the hint that holds them and nothing else. Between the
+  // two stand blank lines and, from 2.1.312, the cost note (its own words name a level: not read)
+  const labelsIndex = findLastIndex(lines.slice(0, hintIndex), (line, index) => index >= hintIndex - 1 - CLAUDE_EFFORT_UNDER_LINES && onlyEffortLevels(line));
+  if (labelsIndex < 1) return null;
+  const labels = lines[labelsIndex]!;
   const track = lines[labelsIndex - 1] ?? "";
   const scale = /^\s*[─▲]+/.exec(track)?.[0] ?? "";
   const titled = lines.slice(Math.max(0, labelsIndex - 4), Math.max(0, labelsIndex - 1)).some((line) => line.trim() === "Effort");
-  // a line of level names and nothing else (the toggle's hint aside), cut or wrapped by a narrow pane: not read
-  const onlyLevels = labels.replace(CLAUDE_EFFORT_LEVEL_RE, "").replace(/Tab to toggle/i, "").trim() === "";
-  // two blank lines stand between the level names and the hint as Claude draws it
-  if (hintIndex - labelsIndex > CLAUDE_EFFORT_UNDER_LINES + 1 || !titled || !onlyLevels || scale.split("▲").length !== 2) return null;
+  if (!titled || scale.split("▲").length !== 2) return null;
   const arrow = track.indexOf("▲");
   const levels = [...labels.matchAll(CLAUDE_EFFORT_LEVEL_RE)].map((match) => ({ name: match[0], middle: match.index + match[0].length / 2 }));
   if (levels.length < 2 || new Set(levels.map(({ name }) => name)).size !== levels.length) return null;
@@ -1956,7 +1973,7 @@ function parseClaudeEffort(screen: string): ParsedPrompt | null {
     title: "",
     question: "Set effort for this session",
     body: null,
-    options: names.map((label) => ({ label, description: null })),
+    options: names.map((label) => ({ label, description: CLAUDE_EFFORT_DESCRIPTIONS[label] ?? null })),
     multi_select: false,
     custom_option_index: null,
   }, {

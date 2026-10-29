@@ -2689,6 +2689,39 @@ ${"─".repeat(120)}
     for (const agent of ["codex", "omp", "pi", "omo", ""]) expect(parseInteractivePrompt(agent, captured)).toBeNull();
   });
 
+  test("reads the slider under Claude Code 2.1.312's cost note at a dear level, wrapped by a narrow pane too", () => {
+    // the capture itself (2.1.312, ▲ over xhigh), under the status line of a 120-column pane
+    const captured = `▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ You've used 90% of your weekly limit · resets 9am (UTC) · /usage-credits to keep using Claude Code ▔
+   Effort
+
+                             Faster                             Smarter
+                             ──────────────────────────────▲───────────      Ultracode  off
+                             low     medium     high     xhigh      max      Tab to toggle
+
+                                    ~2.5x the estimated cost of medium (the default)
+
+
+   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel
+`;
+    const prompt = parseInteractivePrompt("claude", captured)!;
+    expect(prompt).toMatchObject({ agent: "claude", kind: "question", question: "Set effort for this session", body: null });
+    expect(labels(prompt)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(prompt.options.map((option) => option.description)).toEqual(["Fastest, the least reasoning", "Balanced, Claude Code's default", "More reasoning than medium", "Deeper reasoning, just below max", "The deepest reasoning, at the highest cost"]);
+    // the same card as without the note, and ▲ read where it stands: one step left to high
+    expect(prompt.id).toBe(parseInteractivePrompt("claude", claudeEffort(1))!.id);
+    expect(answerKeys(prompt, { option_index: 2 })).toEqual([{ keys: ["left"] }, { text: "s" }]);
+    expect(answerKeys(prompt, { option_index: 3 })).toEqual([{ text: "s" }]);
+    // a narrow pane wraps the note onto three lines, and the hint onto two
+    const narrow = captured
+      .replace("                                    ~2.5x the estimated cost of medium (the default)", "                                    ~2.5x the estimated\n cost of medium (the\n default)")
+      .replace("   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel", "   ←/→ to adjust · Enter to confirm · s for this\n session only · Esc to cancel");
+    const wrappedPrompt = parseInteractivePrompt("claude", narrow)!;
+    expect(wrappedPrompt.id).toBe(prompt.id);
+    expect(answerKeys(wrappedPrompt, { option_index: 4 })).toEqual([{ keys: ["right"] }, { text: "s" }]);
+    // the note's own words name a level: it is never read as the names line
+    expect(parseInteractivePrompt("claude", captured.replace(/ {29}low {5}medium {5}high {5}xhigh {6}max {6}Tab to toggle\n/, ""))).toBeNull();
+  });
+
   test("moves with ←/→ from the level ▲ is over and picks with s, never with Enter", () => {
     const prompt = parseInteractivePrompt("claude", claudeEffort(2))!;
     expect(answerKeys(prompt, { option_index: 2 })).toEqual([{ text: "s" }]);

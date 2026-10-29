@@ -18,6 +18,14 @@
   border: var(--hairline) solid var(--border-strong);
   border-radius: var(--radius-xl);
   background: var(--bg-elevated);
+  /* rises onto the column as the agent asks (styles.css, motion) */
+  animation: rise-in var(--dur-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-card {
+    animation: none;
+  }
 }
 
 /* what the user answers with never shrinks: header, steps, question, hint, options, the

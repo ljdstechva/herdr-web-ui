@@ -126,6 +126,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **Things come onto the screen instead of appearing.** A dialog settles in from slightly below
+  with its scrim fading up, a phone's sheet (the model pill's menu, a row's actions) slides up
+  from the bottom edge, a popover menu opens from its anchor, an agent's question card and a
+  sign-in card rise onto the chat column, the "working" line fades in, and an answer that arrives
+  after the transcript was first drawn rises in while the turns it opened with stand still. One
+  pace for all of it (the motion tokens at the top of `styles.css`), and none of it under
+  `prefers-reduced-motion`.
 - **The reasoning level is read back where it is picked, on phones too.** The level beside the
   model name is drawn on a phone again (the name gives way first, the row stays one), the pill
   lights up for a moment when the model or the level changes, and a command's answer that Claude
@@ -157,6 +164,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **The effort card is back under Claude Code 2.1.312.** `/effort` from the chat (the model pill's
+  "Change reasoning effort") drew no card when the slider opened on xhigh or max: 2.1.312 writes a
+  cost note under the level names (`~2.5x the estimated cost of medium (the default)`), and the
+  reader took the note for the names line. The names are now read wherever they stand above the
+  hint, with the note wrapped by a narrow pane too, and each level gets a line of its own on the
+  card (Fastest, the least reasoning … The deepest reasoning, at the highest cost).
 - **Send works while a phone's keyboard holds the last word.** Gboard and dictation keyboards
   keep the word being typed in composition until a space; a tap on Send then sent nothing, as
   Enter does during a composition, and the keyboard had to be put away first. The tap now ends

@@ -71,6 +71,19 @@
   width: 100%;
 }
 
+/* an agent's answer that arrives after the transcript was first drawn (ChatView.tsx `entered`)
+   rises in; the turns the transcript opened with stand still, however many there are, and a user
+   turn takes the place its outgoing bubble already rose into (.chat-outgoing) */
+.chat-turn-agent.is-entered {
+  animation: rise-in var(--dur-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-turn-agent.is-entered {
+    animation: none;
+  }
+}
+
 .chat-terminal-fallback {
   min-width: 0;
   color: var(--text);
@@ -873,6 +886,7 @@
   min-height: var(--control-h);
   transform: translateX(-50%);
   box-shadow: var(--shadow-pop);
+  animation: fade-in var(--dur-base) var(--ease-out);
 }
 
 .chat-new-messages svg { width: var(--icon-size); height: var(--icon-size); }
