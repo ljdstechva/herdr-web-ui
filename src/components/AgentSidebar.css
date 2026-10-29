@@ -142,12 +142,6 @@
   font-size: var(--fs-xs);
 }
 
-/* the live name is what a command names the agent by: it reads in the command's face */
-.agent-name {
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-
 .agent-row-status {
   display: inline-flex;
   flex: 0 0 auto;

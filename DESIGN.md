@@ -534,22 +534,24 @@ One set for both themes: the card is island black wherever it shows.
 - **Agents** is an independent pane list: agents from each PC's `snapshot.agents`
   join the matching pane in `snapshot.panes`; pane agent metadata supplies entries missing
   from that list, including a recognized OmO pane. Each row opens that agent's pane: the agent's
-  bare brand mark, the pane's title, and one dim line naming the agent, then the PC (only when two
-  or more are registered), the workspace and the tab (only when the workspace has two or more tabs
-  or the tab was renamed, and never when it repeats the workspace). An agent with a live name
-  leads that line with it in `--font-mono` and `--text` (`.agent-name`); the kind takes the label's
-  place beside it, and the tooltip keeps the name. Its background-task count and
+  bare brand mark, the name its owner gave it, and one dim line with the folder it works in. The
+  name is the pane's own label, else the workspace's name with the tab's after it (only when the
+  workspace has two or more tabs or the tab was renamed, and never when it repeats the workspace),
+  so renaming a workspace or a tab renames the row (`agentRowTitle`, lib/sidebarAgents.ts). The
+  dim line leads with the agent's kind only when the mark does not draw it, and with the PC only
+  when it is not this one and two or more are registered. What the agent is doing (its terminal
+  title, the chat's topic) and its live name (`claude-6`) are the tooltip's. Its background-task count and
   compact status sit at the right. A pane that waits for an answer is not listed apart or moved
   up: its state shows on its workspace row and its agent row, and the alerts say the rest. Pane state is
   authoritative when the agent roster and pane status differ. The workspace and agent lists
   share the existing combined machine roster and its SSE updates; neither adds a status subscription.
   A disconnected PC's saved workspace and agent rows are dimmed, inert and draw no state until that PC reconnects.
 - Appearance's **Sidebar rows** is **Two lines** by default; on **One line** a workspace row is
-  its name. Two lines draws the row as the roster did before it was one line, on an agent row's
-  height and type: the title of the pane the row opens, and under it in `--text-dim` `--fs-xs` the place,
-  "workspace · folder" with no name said twice (`taskRowLines`, lib/paneName.ts). A shell titled
-  by its folder leads with the workspace instead; a linked worktree is placed by its branch,
-  then its own workspace name. The folder, the mark, the status cell, the menu and the fold
+  its name. Two lines draws the row on an agent row's height and type: the workspace's name, and
+  under it in `--text-dim` `--fs-xs` the folder its pane works in, not said when it is the name
+  (`taskRowLines`, lib/paneName.ts); a linked worktree's branch leads that line where its name does
+  not say it. Renaming the workspace renames the title. The pane's title (the chat's topic) is the
+  tooltip's and the header's. The folder icon, the mark, the status cell, the menu and the fold
   count stay where they are, and the menu and rename still act on the workspace. The choice
   is per device and applies at once.
 - Appearance's **Agents order** is **Workspaces** by default: the Agents list in herdr's
@@ -587,7 +589,7 @@ One set for both themes: the card is island black wherever it shows.
 - A title that is a working directory written out (`/home/me/dev/api`, `~/dev/api`, `C:\work\api`)
   shows as its last folder, here, in the header, the palette and every alert; the full path stays
   in the row's tooltip. Parent workspace names stay fixed and linked checkouts are named by branch;
-  agent rows show their pane's own title. Each row's
+  agent rows show the names their owner gave. Each row's
   place is available to screen readers, without repeating what its title already says. The
   palette, which has no header, names the workspace and folder once when they are the same.
 - A PC group header is a monitor icon in the leading cell, the name in `--text-strong` semibold, “Host” for

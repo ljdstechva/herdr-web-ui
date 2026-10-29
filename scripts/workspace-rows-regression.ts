@@ -242,10 +242,10 @@ try {
   assert.equal((await sessionSnapshot()).panes.find((pane) => pane.pane_id === split.pane.pane_id)?.label, renamedSplit);
   assert.equal((await sessionSnapshot()).workspaces.find((workspace) => workspace.workspace_id === other.workspaceId)?.label, other.label,
     "renaming a pane leaves herdr's workspace name unchanged");
-  await page.waitForFunction(({ selector, title }) => document.querySelector(selector)?.textContent === title,
-    { selector: `${otherWorkspace} .workspace-name`, title: renamedSplit });
-  assert.ok((await page.locator(`${otherWorkspace} .workspace-place`).textContent())?.includes(other.label),
-    "the task row shows its representative pane title and keeps the workspace name beneath it");
+  await page.waitForFunction(({ selector, title }) => document.querySelector(selector)?.getAttribute("title")?.includes(title) === true,
+    { selector: `${otherWorkspace} .workspace-select`, title: renamedSplit });
+  assert.equal(await page.locator(`${otherWorkspace} .workspace-name`).textContent(), other.label,
+    "the row stays titled by its workspace's name; the pane's name is its tooltip's");
   for (const width of [1280, 768, 375]) {
     await page.setViewportSize({ width, height: 900 });
     if (await page.locator(".drawer-toggle").isVisible()

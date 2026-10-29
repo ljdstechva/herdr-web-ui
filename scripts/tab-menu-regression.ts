@@ -21,6 +21,10 @@ async function until(check: () => boolean | Promise<boolean>, label: string): Pr
   }
 }
 async function rect(locator: Locator, label: string) {
+  // an entrance (a sheet rising, a menu scaling in) is measured where it ends; a spinner's endless turn is not waited for
+  await locator.evaluate((node) => Promise.all(node.ownerDocument.getAnimations()
+    .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
+    .map((animation) => animation.finished.catch(() => undefined))));
   const found = await locator.boundingBox();
   assert.ok(found, `${label} is visible`);
   return { top: found.y, bottom: found.y + found.height, left: found.x, right: found.x + found.width, width: found.width, height: found.height };

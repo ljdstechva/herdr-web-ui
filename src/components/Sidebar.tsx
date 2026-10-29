@@ -384,10 +384,16 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     setWorkspaceLabel(workspace.label);
   };
 
-  const saveWorkspaceRename = (workspaceId: string): void => {
+  // Enter keeps the typed name, and so does the field losing focus (a tap elsewhere, a phone
+  // keyboard's Next, which moves on to the message box); only Escape drops it. A blur after Enter or
+  // Escape finds the field closed, and one that left the name as it was, or empty, sends nothing
+  const saveWorkspaceRename = (workspaceId: string, blurred = false): void => {
+    if (editingRef.current.workspace !== workspaceId) return;
+    editingRef.current = { workspace: null };
     const typed = workspaceLabel;
     const label = typed.trim();
     setEditingWorkspaceId(null);
+    if (blurred && (label === "" || label === snapshotRef.current?.workspaces.find((candidate) => candidate.workspace_id === workspaceId)?.label)) return;
     void renameWorkspace(workspaceId, label).catch((reason: unknown) => {
       // as for a pane: the typed name survives a failed request, for as long as the workspace does
       if (!editorOpen() && snapshotRef.current?.workspaces.some((candidate) => candidate.workspace_id === workspaceId)) {
@@ -533,8 +539,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const statusPanes = collapsed ? [...panes, ...children.flatMap((child) => roster.filter((candidate) => candidate.workspace_id === child.workspace_id))] : panes;
     const status = online ? rollupStatus(statusPanes.map((candidate) => activity.status(machineId, candidate))) : undefined;
     const backgroundTasks = online ? statusPanes.reduce((count, candidate) => count + (candidate.background_tasks ?? 0), 0) : 0;
-    // on two lines the row says what its pane is doing, and the workspace it has named until now sits under that
-    const lines = twoLine ? taskRowLines({ paneTitle: displayPaneTitle(pane), labelled: Boolean(pane.label?.trim()), folder: cwdBasename(pane.cwd), workspace: rowTitle, alias: secondaryBranch }) : null;
+    // on two lines the row says the workspace's name, and the folder its pane works in under that
+    const lines = twoLine ? taskRowLines({ folder: cwdBasename(pane.cwd), workspace: rowTitle, alias: secondaryBranch }) : null;
     // a folded group still shows the checkout that is open; the count is of the ones put away
     const foldedCount = collapsed ? children.filter((child) => !roster.some((candidate) => candidate.workspace_id === child.workspace_id && candidate.pane_id === selectedPaneId)).length : 0;
     const editingWorkspace = editingWorkspaceId === workspace.workspace_id;
@@ -574,7 +580,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           aria-description={`${t("Reorder workspace {name}", { name: workspace.label })} · ${t("Drag to reorder · Alt+↑/↓")}`}
           data-pane={pane.pane_id}
           aria-current={selected ? "true" : undefined}
-          title={[`${pane.pane_id} — ${rowTitle}`, branchNote, ...paths, paneTitle(pane), agentsTitle(workspace)].filter(Boolean).join(" — ")}
+          // what the pane is doing (a name given to it, the chat's topic) is the tooltip's: the row says the workspace
+          title={[`${pane.pane_id} — ${rowTitle}`, branchNote, ...paths, pane.label?.trim(), paneTitle(pane), agentsTitle(workspace)].filter(Boolean).join(" — ")}
           onClick={() => actions.selectPane(pane.pane_id)}
           onKeyDown={(event) => {
             onRowKeyDown(event, workspace.workspace_id);
@@ -589,15 +596,17 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
             className="input workspace-rename-input"
             aria-label={t("Workspace name")}
             autoFocus
+            // a phone keyboard shows Done, which is Enter, rather than Next, which would leave the field
+            enterKeyHint="done"
             value={workspaceLabel}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => setWorkspaceLabel(event.target.value)}
-            onBlur={() => setEditingWorkspaceId(null)}
+            onBlur={() => saveWorkspaceRename(workspace.workspace_id, true)}
             onKeyDown={(event) => {
               event.stopPropagation();
               if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
               if (event.key === "Enter") saveWorkspaceRename(workspace.workspace_id);
-              if (event.key === "Escape") setEditingWorkspaceId(null);
+              if (event.key === "Escape") { editingRef.current = { workspace: null }; setEditingWorkspaceId(null); }
             }}
           /> : lines ? <span className="workspace-copy is-two-line">
             <span className="workspace-line">

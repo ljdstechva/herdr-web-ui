@@ -20,15 +20,13 @@ export function folderName(path: string): string {
 }
 
 /**
- * A roster row drawn on two lines: what its pane is doing, and where under it. A shell's title
- * is often just its folder, which says nothing a workspace's name does not say better, so that
- * row leads with the workspace and keeps the second line for what is left to say.
+ * A roster row drawn on two lines: the workspace by its name, and under it the folder its pane
+ * works in. The name is the one its owner gave it (or herdr made from the branch), so renaming
+ * a workspace renames the row's title. What the pane's agent is doing (its terminal title, the
+ * chat's topic) changes with every chat: it is the tooltip's and the pane header's, not the
+ * row's name, where it pushed the owner's name down to the small line.
  */
-export function taskRowLines({ paneTitle, labelled, folder, workspace, alias }: {
-  /** the pane's title as the roster shows it */
-  paneTitle: string;
-  /** the user named the pane: the name is kept as it is */
-  labelled: boolean;
+export function taskRowLines({ folder, workspace, alias }: {
   /** the last folder of the pane's working directory */
   folder: string;
   /** the workspace's row name: its label, which herdr makes from the branch until its owner names it */
@@ -36,9 +34,9 @@ export function taskRowLines({ paneTitle, labelled, folder, workspace, alias }: 
   /** a linked worktree's branch, when the label does not already say it */
   alias?: string | null;
 }): { title: string; place: string } {
-  const title = !labelled && paneTitle === folder ? workspace : paneTitle;
-  const where = [workspace === title ? "" : workspace, alias && alias !== title && alias !== workspace ? alias : ""].filter(Boolean).join(" · ");
-  const said = folder === title || folder === workspace || folder === alias;
+  const title = workspace.trim() || folder;
+  const where = alias && alias !== title ? alias : "";
+  const said = folder === title || folder === alias;
   return { title, place: placeLine(where, said ? "" : folder) };
 }
 

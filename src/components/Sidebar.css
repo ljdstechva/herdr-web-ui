@@ -218,7 +218,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
 .workspace-name { flex: 0 1 auto; }
 
-/* Settings → Sidebar rows → Two lines: a row says what its pane is doing, and where under it,
+/* Settings → Sidebar rows → Two lines: a row says its workspace's name, and the folder under it,
    on the height and in the type of an agent's row. */
 .machine-workspaces.is-two-line .workspace-header { min-height: var(--side-row-2); }
 

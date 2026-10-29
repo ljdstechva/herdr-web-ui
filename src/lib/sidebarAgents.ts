@@ -93,26 +93,39 @@ export function agentTabName(tab: TabInfo | null | undefined, workspaceTabs: rea
   return workspaceTabs.length > 1 || customTabLabel(tab, place) ? tabLabel(tab, t, place) : null;
 }
 
+/**
+ * An agent row's first line: the name its owner gave the pane, else its workspace's name, with
+ * the tab's where the agent row names one (agentTabName). These are names the owner chose, so
+ * renaming a workspace or a tab renames the row; what the agent is doing (its terminal title, the
+ * chat's topic) changes with every chat and stays in the tooltip.
+ */
+export function agentRowTitle({ paneLabel, workspaceLabel, tabName }: { paneLabel: string | null | undefined; workspaceLabel: string; tabName: string | null }): string {
+  const workspace = workspaceLabel.trim();
+  const tab = nonblank(tabName);
+  return nonblank(paneLabel) ?? (tab && tab !== workspace ? [workspace, tab].filter(Boolean).join(" · ") : workspace);
+}
+
 export interface AgentContextParts {
   agentLabel: string | null;
   /** the row's first line; an agent named like it is not said twice */
   title: string;
   /** the agent the row's mark draws, null for the generic mark: a kind the mark already says is not written again */
   markAgent: string | null;
-  /** null with a single PC: herdr does not name a lone machine either */
+  /** another PC's name; null for this one, and with a single PC: herdr does not name a lone machine either */
   machineName: string | null;
+  /** the last folder of the pane's working directory */
+  folder: string;
+  /** the workspace's name, which the title says: a folder of that name is not said again */
   workspaceLabel: string;
-  tabName: string | null;
 }
 
-/** An agent row's second line: who it is, then where it runs, without repeating a word the row already says. */
-export function agentContext({ agentLabel, title, markAgent, machineName, workspaceLabel, tabName }: AgentContextParts): string[] {
+/** An agent row's second line: a kind the mark does not draw, another PC, then the folder it works in, without repeating a word the row already says. */
+export function agentContext({ agentLabel, title, markAgent, machineName, folder, workspaceLabel }: AgentContextParts): string[] {
   const agent = nonblank(agentLabel);
-  const tab = nonblank(tabName);
+  const place = nonblank(folder);
   return [
     agent && agent !== title.trim() && agent.toLowerCase() !== markAgent?.toLowerCase() ? agent : null,
     nonblank(machineName),
-    workspaceLabel,
-    tab && tab !== workspaceLabel ? tab : null,
+    place && place !== title.trim() && place !== workspaceLabel.trim() ? place : null,
   ].filter((part): part is string => Boolean(part));
 }

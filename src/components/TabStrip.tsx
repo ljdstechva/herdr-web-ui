@@ -60,6 +60,9 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
   const strip = useRef<HTMLDivElement>(null);
   const [picker, setPicker] = useState<{ anchor: HTMLElement; tab: HerdrTab; point?: { x: number; y: number }; previousFocus: HTMLElement | null; touch: boolean } | null>(null);
   const [editing, setEditing] = useState<{ tabId: string; value: string } | null>(null);
+  // the open name field, for its blur: one that Enter or Escape already closed is not saved again
+  const editingNow = useRef(editing);
+  editingNow.current = editing;
   // the name just sent, shown until herdr's snapshot carries it
   const [sent, setSent] = useState<{ tabId: string; label: string } | null>(null);
   const [confirm, setConfirm] = useState<{ tab: HerdrTab; title: string; body: string } | null>(null);
@@ -247,10 +250,16 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     setError(null);
     setEditing({ tabId: tab.tab_id, value: sent?.tabId === tab.tab_id ? sent.label : customTabLabel(tab, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1) ?? "" });
   };
-  // an empty name is not sent: herdr would keep it, and its own tab row would show nothing
-  const saveRename = (tab: HerdrTab): void => {
-    const label = editing?.value.trim() ?? "";
-    refocus.current = tab.tab_id;
+  // an empty name is not sent: herdr would keep it, and its own tab row would show nothing.
+  // Enter keeps the typed name, and so does the field losing focus (a tap elsewhere, a phone
+  // keyboard's Next, which moved on to the message box and lost the name); only Escape drops it.
+  // A key puts the focus back on the tab; a blur leaves it where it went
+  const saveRename = (tab: HerdrTab, blurred = false): void => {
+    const current = editingNow.current;
+    if (current?.tabId !== tab.tab_id) return;
+    editingNow.current = null;
+    const label = current.value.trim();
+    if (!blurred) refocus.current = tab.tab_id;
     setEditing(null);
     if (label === "" || label === nameOf(tab)) return;
     setSent({ tabId: tab.tab_id, label });
@@ -396,17 +405,19 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
                   autoFocus
                   size={Math.max(8, editing.value.length + 1)}
                   maxLength={80}
+                  // a phone keyboard shows Done, which is Enter, rather than Next, which would leave the field
+                  enterKeyHint="done"
                   placeholder={name}
                   value={editing.value}
                   onFocus={(event) => event.currentTarget.select()}
                   onChange={(event) => setEditing({ tabId: tab.tab_id, value: event.target.value })}
-                  onBlur={() => setEditing(null)}
+                  onBlur={() => saveRename(tab, true)}
                   onKeyDown={(event) => {
                     event.stopPropagation();
                     // an IME's Enter and Escape are the composition's, not the field's
                     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
                     if (event.key === "Enter") saveRename(tab);
-                    if (event.key === "Escape") { refocus.current = tab.tab_id; setEditing(null); }
+                    if (event.key === "Escape") { editingNow.current = null; refocus.current = tab.tab_id; setEditing(null); }
                   }}
                 />
               ) : (

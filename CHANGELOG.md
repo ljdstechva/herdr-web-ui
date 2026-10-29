@@ -126,6 +126,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **The list says the names you gave.** A workspace row was titled by what its agent was doing
+  (the chat's topic, a new one with every chat) with the workspace's name small under it, and
+  renaming the workspace changed only that small line. The row is now the workspace's name, with
+  the folder it works in under it (not said twice when the folder has that name), so a rename
+  renames the title. An agent row is named the same way: the workspace, with the tab's name after
+  it when the workspace has two or more tabs or the tab was renamed (a pane's own name still goes
+  first), and the folder under it. The agent's live name (`claude-6`) and this PC's name are no
+  longer on the line; another PC is still named. The chat's topic stays in each row's tooltip and
+  over the pane.
 - **A running agent stands out in the list.** The working mark was a small gray circle going
   round; it is now a bold arc in the working colour turning on a faint ring of its own, with a
   ring of the same colour pinging out of it once a turn, so a row at work catches the eye next
@@ -183,6 +192,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **A tab's new name was lost on a phone.** The name field kept what was typed only on Enter; leaving
+  it any other way dropped it, and a phone keyboard's action key, shown as Next, left it for the
+  message box. The tab and workspace name fields now ask the keyboard for Done (Enter), and a tap
+  elsewhere keeps the typed name too; Escape still leaves the name as it was. One rename sends one
+  request.
 - **The effort card is back under Claude Code 2.1.312.** `/effort` from the chat (the model pill's
   "Change reasoning effort") drew no card when the slider opened on xhigh or max: 2.1.312 writes a
   cost note under the level names (`~2.5x the estimated cost of medium (the default)`), and the
