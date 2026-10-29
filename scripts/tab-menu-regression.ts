@@ -488,6 +488,13 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     await tabSheet.getByRole("button", { name: "Rename tab", exact: true }).tap();
     const name = page.getByRole("textbox", { name: "Tab name", exact: true });
     await name.waitFor();
+    // Android Chrome shortens the page for the keyboard the field raises. A short phone drops a
+    // lone tab's strip, but not under its name field: the keyboard would go with the field and
+    // come back with the strip, over and over
+    await page.setViewportSize({ width: viewport.width, height: 430 });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    assert.equal(await name.evaluate((field) => field === document.activeElement), true, "a lone tab's name field keeps the focus when the keyboard shortens the page");
+    await page.setViewportSize(viewport);
     await page.keyboard.press("Escape");
     await name.waitFor({ state: "detached" });
     const owner = (await sessionSnapshot()).panes.find((pane) => pane.pane_id === first)!;

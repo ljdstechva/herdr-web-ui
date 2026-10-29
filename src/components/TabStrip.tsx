@@ -72,6 +72,9 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
   const [error, setError] = useState<string | null>(null);
   // the tab whose name field just went: its button takes the focus back in the same commit, so the next key lands on it
   const refocus = useRef<string | null>(null);
+  // the tab whose name field Rename has just opened: it takes the focus once. A field drawn again
+  // (its strip left and came back) does not take it on its own, so it cannot raise a keyboard in a loop
+  const focusName = useRef<string | null>(null);
   // the worktree dialog's own close is on its way: the tab leaving the snapshot is its doing
   const worktreeClosing = useRef(false);
   // tabs whose close is on its way: a second press, or a held Delete, does not send another
@@ -90,7 +93,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     previousOwner.current = owner;
     // Native IDs can repeat on another PC. A pending dialog never changes its target PC.
     setPicker(null); setEditing(null); setConfirm(null); setWorktreeClose(null); setMerging(null); setSent(null); setError(null);
-    refocus.current = null; closed.current = null;
+    refocus.current = null; closed.current = null; focusName.current = null;
   }, [owner]);
   const panes = rosterPanes(snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id), selectedPane.pane_id);
   // The snapshot order is authoritative; number identifies a tab and does not change on a move.
@@ -212,7 +215,10 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     });
   }, [swipeHost]);
 
-  if (!shown || (cramped && tabs.length === 1)) { swipe.current = null; return null; }
+  // A short phone (a raised keyboard makes one) drops a lone tab's strip for the room, but not
+  // under its open name field: the field would go with it, the keyboard with the field, and the
+  // strip, back at full height, would raise the keyboard for it again, and again
+  if (!shown || (cramped && tabs.length === 1 && !editing)) { swipe.current = null; return null; }
 
   // a tab of another workspace (a stroke past this row's end leads there) is read from that workspace's own roster
   const panesOf = (tab: HerdrTab): HerdrPane[] => (tab.workspace_id === workspace.workspace_id ? panes
@@ -248,6 +254,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
 
   const beginRename = (tab: HerdrTab): void => {
     setError(null);
+    focusName.current = tab.tab_id;
     setEditing({ tabId: tab.tab_id, value: sent?.tabId === tab.tab_id ? sent.label : customTabLabel(tab, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1) ?? "" });
   };
   // an empty name is not sent: herdr would keep it, and its own tab row would show nothing.
@@ -402,7 +409,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
                 <input
                   className="input tab-strip-rename"
                   aria-label={t("Tab name")}
-                  autoFocus
+                  ref={(field) => { if (field && focusName.current === tab.tab_id) { focusName.current = null; field.focus(); } }}
                   size={Math.max(8, editing.value.length + 1)}
                   maxLength={80}
                   // a phone keyboard shows Done, which is Enter, rather than Next, which would leave the field

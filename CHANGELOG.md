@@ -192,6 +192,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **Renaming a tab on a phone opened and closed the keyboard without end.** In a workspace of
+  one tab, the keyboard the name field raised made the page short, and a short phone hides a lone
+  tab's strip: the field went with it, the keyboard closed, the strip came back at full height
+  and its field raised the keyboard again. The strip now stays while its name field is open, and
+  the field takes the focus only when Rename opens it, never again on its own.
 - **A tab's new name was lost on a phone.** The name field kept what was typed only on Enter; leaving
   it any other way dropped it, and a phone keyboard's action key, shown as Next, left it for the
   message box. The tab and workspace name fields now ask the keyboard for Done (Enter), and a tap
