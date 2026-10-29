@@ -33,6 +33,7 @@ import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { WebsiteLoginsPage } from "./WebsiteLogins.tsx";
+import { screenWakeLockSupported } from "../lib/wakeLock.ts";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -636,8 +637,10 @@ function DevicesPage({ auth }: { auth: HealthAuth | null }) {
     <>
       <SettingsGroup title={t("Phone")} section="phone">
         <div className="settings-item"><PhonePanel plan={plan} loading={access === undefined} onRefresh={loadAccess} /></div>
-        <SettingsRow label={t("Keep screen on")} description={t("While a terminal or chat pane is open. Requires HTTPS or localhost and a supported browser.")}>
-          <Toggle label={t("Keep screen on")} checked={settings.keepScreenOn} onChange={(keepScreenOn) => update({ keepScreenOn })} />
+        <SettingsRow label={t("Keep screen on")} description={screenWakeLockSupported()
+          ? t("While a terminal or chat pane is open, the screen does not turn off on its own: for 5 minutes after your last touch, or for as long as the app is open. Off leaves it to the phone's screen timeout.")
+          : t("This browser cannot keep the screen on: it needs HTTPS or localhost and a browser with the Screen Wake Lock API.")} wide>
+          <Segmented label={t("Keep screen on")} value={settings.screenAwake} onChange={(screenAwake) => update({ screenAwake })} options={[{ value: "off", label: t("Off") }, { value: "idle", label: t("5 minutes") }, { value: "always", label: t("While open") }]} />
         </SettingsRow>
         <SettingsRow label={t("Install")} description={installPrompt.installed ? t("Installed") : installPrompt.canInstall ? undefined : installPrompt.help}>
           {!installPrompt.installed && installPrompt.canInstall && <button type="button" className="btn btn-primary" onClick={() => void installPrompt.install()}>{t("Install app")}</button>}

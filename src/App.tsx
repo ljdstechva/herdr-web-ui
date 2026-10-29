@@ -700,7 +700,7 @@ export function App() {
       lockedRef.current === false && selectionRef.current.machineId === selectedMachineId
       && selectionRef.current.paneId === selectedPaneId && !drawerOpenRef.current && !modalOpen());
   }, [canReadPaneNotifications, selectedMachineId, selectedPaneId]);
-  useScreenWakeLock(settings.keepScreenOn && locked === false && selectedPane !== null);
+  useScreenWakeLock(settings.screenAwake, locked === false && selectedPane !== null);
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;

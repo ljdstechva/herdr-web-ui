@@ -13,11 +13,17 @@ it("keeps a tab's pane while out of use until this device turns the pause on", (
   expect(sanitizeSettings({ releasePaneAway: "true" }).releasePaneAway).toBe(false);
 });
 
-it("keeps the screen wake lock off until this device explicitly enables it", () => {
-  expect(DEFAULT_SETTINGS.keepScreenOn).toBe(false);
-  expect(sanitizeSettings({}).keepScreenOn).toBe(false);
-  expect(sanitizeSettings({ keepScreenOn: true }).keepScreenOn).toBe(true);
-  expect(sanitizeSettings({ keepScreenOn: "true" }).keepScreenOn).toBe(false);
+it("keeps the screen on for 5 minutes after the last touch unless this device chose otherwise", () => {
+  expect(DEFAULT_SETTINGS.screenAwake).toBe("idle");
+  expect(sanitizeSettings({}).screenAwake).toBe("idle");
+  for (const mode of ["off", "idle", "always"] as const) expect(sanitizeSettings({ screenAwake: mode }).screenAwake).toBe(mode);
+  expect(sanitizeSettings({ screenAwake: "5m" }).screenAwake).toBe("idle");
+  // the old toggle: its "on" held the screen for as long as the app was open, and stays that;
+  // its "off" was the default saved with every other setting, so it takes the new default
+  expect(sanitizeSettings({ keepScreenOn: true }).screenAwake).toBe("always");
+  expect(sanitizeSettings({ keepScreenOn: false }).screenAwake).toBe("idle");
+  expect(sanitizeSettings({ keepScreenOn: true, screenAwake: "off" }).screenAwake).toBe("off");
+  expect("keepScreenOn" in sanitizeSettings({ keepScreenOn: true })).toBe(false);
   // the terminal's wheel speed: one report per wheel event unless chosen, whole and bounded
   expect(sanitizeSettings({}).terminalWheelSpeed).toBe(1);
   expect(sanitizeSettings({ terminalWheelSpeed: 3 }).terminalWheelSpeed).toBe(3);

@@ -54,6 +54,10 @@ export const TERMINAL_CURSOR_STYLES: readonly TerminalCursorStyle[] = ["block", 
 
 import { sanitizeShortcutOverrides, type ShortcutOverrides } from "./shortcutBindings.ts";
 
+/** Settings → Phone → Keep screen on: never, until 5 minutes after the last touch, or while the app is open */
+export type ScreenAwake = "off" | "idle" | "always";
+export const SCREEN_AWAKE_MODES: readonly ScreenAwake[] = ["off", "idle", "always"];
+
 export interface Settings {
   terminalInputMode: "auto" | "line" | "direct";
   /** Kept for migration of the old fixed-order bar. New layouts use keyBarItems. */
@@ -100,8 +104,9 @@ export interface Settings {
   enterSends: boolean;
   /** show the agent's folded reasoning blocks in the chat view */
   showThinking: boolean;
-  /** request a screen wake lock while a pane is open in this visible tab */
-  keepScreenOn: boolean;
+  /** keep the screen on while a pane is open in this visible tab (lib/wakeLock.ts): never, for
+   * 5 minutes after the last touch, or for as long as the app is open */
+  screenAwake: ScreenAwake;
   /** UI language; `system` follows the browser (src/lib/i18n.ts) */
   language: LanguageSetting;
   /** alerts on this device at all: the bell turns them off (push subscription dropped) and on */
@@ -164,7 +169,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatWidth: "default",
   enterSends: true,
   showThinking: false,
-  keepScreenOn: false,
+  screenAwake: "idle",
   language: "system",
   alertsOn: true,
   alertInput: true,
@@ -323,7 +328,10 @@ export function sanitizeSettings(raw: unknown): Settings {
     chatWidth: CHAT_WIDTHS.includes(record["chatWidth"] as ChatWidth) ? record["chatWidth"] as ChatWidth : DEFAULT_SETTINGS.chatWidth,
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : DEFAULT_SETTINGS.enterSends,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
-    keepScreenOn: typeof record["keepScreenOn"] === "boolean" ? record["keepScreenOn"] : DEFAULT_SETTINGS.keepScreenOn,
+    // before 2026-10-29 a toggle held the screen on for as long as the app was open: its "on" stays that.
+    // The toggle was off by default and saved with the rest, so its "off" is no choice and takes the new default
+    screenAwake: SCREEN_AWAKE_MODES.includes(record["screenAwake"] as ScreenAwake) ? record["screenAwake"] as ScreenAwake
+      : record["keepScreenOn"] === true ? "always" : DEFAULT_SETTINGS.screenAwake,
     language: LANGUAGE_SETTINGS.includes(record["language"] as LanguageSetting) ? record["language"] as LanguageSetting : DEFAULT_SETTINGS.language,
     alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
     alertInput: typeof record["alertInput"] === "boolean" ? record["alertInput"] : DEFAULT_SETTINGS.alertInput,

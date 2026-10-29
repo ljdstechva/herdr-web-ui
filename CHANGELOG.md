@@ -126,6 +126,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **The screen stays on while the app is used.** Settings → Phone & devices → Keep screen on is now
+  Off, 5 minutes or While open, and 5 minutes is the default: while a terminal or chat pane is
+  open, the phone's screen does not turn off on its own until 5 minutes after the last touch, key,
+  typed word or scroll, and the next touch holds it again. While open is the old toggle's "on" (a
+  device that had it on keeps it); Off leaves the screen to the phone's own timeout. A lock the
+  browser drops (power saving) is asked for again at the next touch. Where the browser has no
+  screen wake lock the row says so.
 - **Things come onto the screen instead of appearing.** A dialog settles in from slightly below
   with its scrim fading up, a phone's sheet (the model pill's menu, a row's actions) slides up
   from the bottom edge, a popover menu opens from its anchor, an agent's question card and a
