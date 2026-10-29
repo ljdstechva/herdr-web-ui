@@ -246,6 +246,19 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  it("shows a command's answer Claude Code 2.1.30x records as a user entry (the level /effort set)", () => {
+    const user = (content: string, ts: string) => JSON.stringify({ type: "user", timestamp: ts, message: { role: "user", content } });
+    const turns = parseClaudeTranscript([
+      user("<command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args></command-args>", "2026-10-29T05:00:00.000Z"),
+      user("<local-command-stdout>Set effort level to high (this session only): Comprehensive implementation with extensive testing and documentation</local-command-stdout>", "2026-10-29T05:00:01.000Z"),
+      user("hello", "2026-10-29T05:00:02.000Z"),
+    ].join("\n"));
+    expect(turns).toEqual([
+      { role: "user", ts: "2026-10-29T05:00:01.000Z", parts: [{ kind: "notice", text: "Set effort level to high (this session only): Comprehensive implementation with extensive testing and documentation", source: "local-command" }] },
+      { role: "user", ts: "2026-10-29T05:00:02.000Z", parts: [{ kind: "text", text: "hello" }] },
+    ]);
+  });
+
   it("shows Claude Code's own notices, an unknown command's lines joined as one", () => {
     // Claude Code 2.1.294: an unknown command and its dropped arguments, 1ms apart, and no user turn
     const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, level: "warning", timestamp: ts });

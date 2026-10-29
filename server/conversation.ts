@@ -326,10 +326,13 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
     // A slash command answers in the terminal, not through the model: a refused /goal says why
     // only here. It is the runtime speaking in the user's seat, so it reads as a notice.
-    if (entry.type === "system" && entry.subtype === "local_command") {
-      const output = localCommandOutput(entry.content);
+    const localNotice = (raw: unknown): void => {
+      const output = localCommandOutput(raw);
       const at = noticeAt();
       if (output.length > 0 && !saidByOtherKind(turns[at - 1], output, entry.timestamp ?? null, "local-command")) turns.splice(at, 0, { role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "notice", text: output, source: "local-command" }] });
+    };
+    if (entry.type === "system" && entry.subtype === "local_command") {
+      localNotice(entry.content);
       continue;
     }
 
@@ -356,6 +359,9 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
     if (entry.type === "user" && typeof content === "string") {
       if (notified(content, entry.timestamp ?? null)) continue;
+      // Claude Code 2.1.30x writes a command's answer here, as a user entry ("Set effort level to
+      // high (this session only): …" after /effort, /model's line): the same notice as before
+      if (content.trimStart().startsWith("<local-command-std")) { localNotice(content); continue; }
       if (isCommandEntry(content)) continue;
       pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: unwrapPastes(content) }] }, entry);
       continue;

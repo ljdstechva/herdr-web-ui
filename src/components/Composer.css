@@ -1409,17 +1409,34 @@
 
 /* A phone keeps the ONE row of controls (Composer.tsx asks composerModelDraw with `phone`): a row
    of the status's own under the message box costs the chat its height on a small screen. The
-   reasoning level is read, not drawn, there (the picker's sheet shows it), and the name gives
-   way in place; the ring and the plan chip keep their width. Same query as the composer's
-   `mobile`. */
+   level is drawn there too (this fork's owner picks it from the chat and reads it back here): it
+   keeps its width, and the name gives way in place, letters to an ellipsis; the ring and the plan
+   chip keep their width. Same query as the composer's `mobile`. */
 @media (max-width: 640px), (pointer: coarse) {
-  .composer-status:not([data-model="row"]) .composer-reasoning-dot,
-  .composer-status:not([data-model="row"]) .composer-reasoning-short {
-    display: none;
+  .composer-status:not([data-model="row"]) .composer-reasoning {
+    flex: 0 0 auto;
+    overflow: visible;
   }
 
   .composer-pill-button {
     flex: 0 1 auto;
     min-width: 0;
+  }
+}
+
+/* The model or the level just changed (a pick answered, or the pane's own report): the pill
+   lights up for a moment, so the change is seen where it is read, without a line in the chat */
+.composer-pill[data-changed] {
+  animation: composer-pill-changed 1.4s ease-out;
+}
+
+@keyframes composer-pill-changed {
+  0% { background: color-mix(in srgb, var(--accent) 45%, var(--bg-hover)); }
+  100% { background: var(--bg-hover); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-pill[data-changed] {
+    animation: none;
   }
 }

@@ -903,6 +903,23 @@ export function Composer({
   const hint = composerStatusHint({ uploading, connected, text });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
+  // the pill lights up when the model or the level changes under it (a pick answered in the
+  // card, or the pane reporting a change): the pane's first report on mount is not a change
+  const [pillChanged, setPillChanged] = useState(0);
+  const pillSeen = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const now = `${metadata?.model ?? ""}\u0000${metadata?.reasoning_effort ?? ""}`;
+    if (pillSeen.current === undefined) { pillSeen.current = now; return; }
+    if (pillSeen.current === now) return;
+    pillSeen.current = now;
+    if (!metadata?.model && !metadata?.reasoning_effort) return;
+    setPillChanged((count) => count + 1);
+  }, [metadata?.model, metadata?.reasoning_effort]);
+  useEffect(() => {
+    if (pillChanged === 0) return;
+    const timer = window.setTimeout(() => setPillChanged(0), 1600);
+    return () => window.clearTimeout(timer);
+  }, [pillChanged]);
   // the name and the level open the agent's own picker, answered as a card (lib/modelPicker.ts)
   const modelCommand = pickerCommand(agent, "model");
   const pickable = connected && !sending && !delivering && pickerReady(agentStatus);
@@ -1157,7 +1174,7 @@ export function Composer({
                 model draws no pill (.is-bare): the mark, a level if it has one, and the ring stand in the row
                 as they are. For Claude Code and Codex the label is one button, mark and caret included, that
                 lists what can be changed (lib/modelPicker.ts); the ring beside it keeps its own press */}
-            <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
+            <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`} {...(pillChanged > 0 ? { "data-changed": "" } : {})}>
               {(() => {
                 const label = <>
                   {agent && <AgentMark agent={agent} size={14} />}

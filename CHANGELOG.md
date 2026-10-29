@@ -126,6 +126,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **The reasoning level is read back where it is picked, on phones too.** The level beside the
+  model name is drawn on a phone again (the name gives way first, the row stays one), the pill
+  lights up for a moment when the model or the level changes, and a command's answer that Claude
+  Code 2.1.30x records as a user entry ("Set effort level to high …" after `/effort`) is a notice
+  in the chat as it was when Claude Code recorded it as a system entry.
 - **A refused password asks again, and Settings → Website logins changes one.** When a site
   does not accept the username or password the broker typed, the answered sign-in card says so
   and a new card asks for them again with the site's own words, the username kept; the agent is
