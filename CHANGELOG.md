@@ -126,6 +126,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **A running agent stands out in the list.** The working mark was a small gray circle going
+  round; it is now a bold arc in the working colour turning on a faint ring of its own, with a
+  ring of the same colour pinging out of it once a turn, so a row at work catches the eye next
+  to the red question mark and the green dot. Reduce motion keeps the coloured arc still and
+  drops the ping.
 - **Background work never reads DONE.** An agent at rest with anything still running in the
   background (a subagent, a background command, a monitor, a workflow, or a wake-up it scheduled
   for itself) reads BG in the agent list, the workspace rows, the tabs and the status line, with

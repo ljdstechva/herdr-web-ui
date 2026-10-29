@@ -380,6 +380,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 /* Compact states keep the label and tooltip the badges have on the other surfaces. The cell is
    a box for every state, also when ready or unknown draw nothing in it. */
 .sidebar-status {
+  position: relative;
   justify-content: center;
   flex: 0 0 var(--side-box);
   width: var(--side-box);
@@ -397,17 +398,44 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--space-4);
 }
 
-/* a stepped rotation draws its steps and nothing else, so the count is the frame rate: at this
-   arc's 6px radius, 48 steps over --dur-spin move it under a pixel every 33ms, which the eye
-   reads as a turn rather than a tick */
+/* Working is the state to watch, so it is drawn to be seen: a bold arc in the working colour goes
+   round a faint ring of its own, and a ring of the same colour pings out from it and fades, once
+   a turn. A stepped rotation draws its steps and nothing else, so the count is the frame rate: at
+   this arc's 6px radius, 48 steps over --dur-spin move it under a pixel every 33ms, which the eye
+   reads as a turn rather than a tick. The ping keeps the same steps over the same time, so it
+   adds no frame of its own. */
+.sidebar-status[data-status="working"] { color: var(--status-working); }
+
 .sidebar-status[data-status="working"] svg {
+  position: relative;
+  z-index: 1;
   animation: sidebar-working var(--dur-spin) steps(48, end) infinite;
 }
 
+.sidebar-working-track { stroke-opacity: 0.25; }
+
+.sidebar-status[data-status="working"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: calc(var(--space-4) / -2) 0 0 calc(var(--space-4) / -2);
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-radius: var(--radius-pill);
+  opacity: 0;
+  animation: sidebar-ripple var(--dur-spin) steps(48, end) infinite;
+}
+
+@keyframes sidebar-ripple {
+  from { transform: scale(0.9); opacity: 0.75; }
+  to { transform: scale(1.8); opacity: 0; }
+}
+
 /* A question mark asks for an answer; a dot, as an unread mark is, has finished and was not
-   looked at; running moves, so it needs no color. Waiting and done keep the colors they have
-   on every other surface. */
-.sidebar-status[data-status="working"] { color: var(--text-dim); }
+   looked at. Waiting and done keep the colors they have on every other surface. */
 
 .sidebar-status-mark {
   font-size: var(--fs-sm);
@@ -557,6 +585,8 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
   .sidebar-status[data-status="working"] svg,
   .sidebar-status[data-status="waiting"] svg { animation: none; }
+  /* still, the coloured arc on its ring says working on its own */
+  .sidebar-status[data-status="working"]::after { display: none; }
 }
 
 /* a phone's drawer ends above the app's bar (styles.css "phone"), which takes the home-indicator inset */

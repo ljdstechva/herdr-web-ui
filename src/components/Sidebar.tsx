@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, GitMerge, Hourglass, Layers, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, GitMerge, Hourglass, Layers, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -74,11 +74,11 @@ export function StatusBadge({ status, compact = false }: { status?: AgentStatus;
   const label = t(STATUS_WORD[value]);
   const description = value === "waiting" ? t("Agent waiting on background work") : t("Agent {status}", { status: label });
   // a compact cell draws only the states that ask for a look: a red question mark while the agent
-  // waits for an answer, a green dot once it has finished and was not looked at, a dim arc while
-  // it runs, an hourglass in the working colour while it rests with work still going on in the
-  // background (never the green dot: that says nothing is left). Ready and unknown keep the cell,
-  // its label and its tooltip
-  const Icon = { idle: null, working: LoaderCircle, blocked: null, done: null, waiting: Hourglass, unknown: null }[value];
+  // waits for an answer, a green dot once it has finished and was not looked at, an arc going
+  // round in the working colour with a ring pinging out of it while it runs, an hourglass in the
+  // working colour while it rests with work still going on in the background (never the green
+  // dot: that says nothing is left). Ready and unknown keep the cell, its label and its tooltip
+  const Icon = { idle: null, working: null, blocked: null, done: null, waiting: Hourglass, unknown: null }[value];
   return (
     <span
       className={`badge badge-${value}${compact ? " sidebar-status" : ""}`}
@@ -88,10 +88,21 @@ export function StatusBadge({ status, compact = false }: { status?: AgentStatus;
       title={description}
     >
       {compact && Icon && <Icon aria-hidden="true" />}
+      {compact && value === "working" && <WorkingMark />}
       {compact && value === "blocked" && <span className="sidebar-status-mark" aria-hidden="true">?</span>}
       {compact && value === "done" && <span className="sidebar-status-dot" aria-hidden="true" />}
       <span className={compact ? "visually-hidden" : undefined}>{label}</span>
     </span>
+  );
+}
+
+/** The working cell's mark: a third of a circle that goes round its own faint ring (Sidebar.css turns it and draws the ping). */
+function WorkingMark() {
+  return (
+    <svg className="sidebar-working" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+      <circle className="sidebar-working-track" cx="12" cy="12" r="8.5" />
+      <path d="M12 3.5a8.5 8.5 0 0 1 7.36 12.75" />
+    </svg>
   );
 }
 
