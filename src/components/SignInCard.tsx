@@ -47,7 +47,7 @@ function SignInCard({ request, onAnswering, onOutcome }: { request: SignInReques
   const title = kind === "init" ? t("Create the credential vault")
     : kind === "unlock" ? t("Unlock the credential vault")
     : kind === "code" ? t("Code for {site}", { site: request.site })
-    : request.reason === "change" ? t("Change the login for {site}", { site: request.site })
+    : request.reason === "change" ? (request.username ? t("Change the login for {site}", { site: request.site }) : t("Save the login for {site}", { site: request.site }))
     : request.reason === "rejected" ? t("Try {site} again", { site: request.site })
     : t("Sign in to {site}", { site: request.site });
   const note = kind === "init" ? t("Choose a passphrase. You type it once after each reboot; agents never see it.")

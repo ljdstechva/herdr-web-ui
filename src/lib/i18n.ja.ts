@@ -1107,6 +1107,7 @@ export const JA: Record<string, string> = {
   "The login for {site} is saved; the next sign-in uses it.": "{site} のログイン情報を保存しました。次回のサインインから使われます。",
   "The vault is open.": "保管庫を開きました。",
   "Change the login for {site}": "{site} のログイン情報を変更",
+  "Save the login for {site}": "{site} のログイン情報を保存",
   "Try {site} again": "{site} にもう一度",
   "Saving…": "保存しています…",
   "Website logins": "ウェブサイトのログイン",

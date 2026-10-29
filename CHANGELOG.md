@@ -152,6 +152,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **Send works while a phone's keyboard holds the last word.** Gboard and dictation keyboards
+  keep the word being typed in composition until a space; a tap on Send then sent nothing, as
+  Enter does during a composition, and the keyboard had to be put away first. The tap now ends
+  the composition itself (focus leaves the box and comes back inside the tap) and sends what the
+  box holds. A sign-in card that first saves a site's login is titled "Save the login for …",
+  not "Change".
 - **A Codex chat shows its conversation again.** Since Codex 0.157 one shared app-server holds
   every conversation file open, so a pane's Codex had no open file to tell which one was its own,
   and a new Codex pane showed only terminal output in the chat. The thread name Codex puts in its

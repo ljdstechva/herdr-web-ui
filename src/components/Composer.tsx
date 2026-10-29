@@ -753,10 +753,23 @@ export function Composer({
    * sent comes back to the box with the reason.
    * `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over
    */
-  const send = useCallback((clearDraft?: string) => {
-    if (composingRef.current) return;
-    if (!connected || uploading || sending || text.trim().length === 0) return;
-    const sent = text;
+  /**
+   * `commit`: the user tapped Send. A phone's keyboard (Gboard, dictation keyboards) keeps the word
+   * being typed in composition until a space, so with Enter's own rule (a composing Enter is the
+   * IME's key, not a send) a tap on Send sent nothing until the keyboard was put away. The tap
+   * ends the composition instead: focus leaving the box commits it (compositionend), and the box
+   * takes focus back in the same tap, so the keyboard stays up.
+   */
+  const send = useCallback((clearDraft?: string, commit = false) => {
+    if (composingRef.current) {
+      if (!commit) return;
+      const element = textareaRef.current;
+      if (element) { element.blur(); element.focus({ preventScroll: true }); }
+      composingRef.current = false;
+    }
+    // the committed text is read from the box: the state may still hold the composing word
+    const sent = commit ? textareaRef.current?.value ?? text : text;
+    if (!connected || uploading || sending || sent.trim().length === 0) return;
     // a polish landing after this would be typed into the next message
     dictation.forget();
     for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
@@ -1209,7 +1222,7 @@ export function Composer({
               disabled={!connected || uploading || sending || text.trim().length === 0}
               // Keep the keyboard open so the viewport cannot move Send before the tap completes.
               onPointerDown={(event) => event.preventDefault()}
-              onClick={() => send()}
+              onClick={() => send(undefined, true)}
             >
               <ArrowUp aria-hidden="true" />
             </button>
@@ -1222,7 +1235,7 @@ export function Composer({
           <span>{note.note}</span>
           {/* the draft named above, never what has replaced it since: the server checks */}
           <button type="button" className="composer-note-action" disabled={!connected || uploading || sending || text.trim().length === 0}
-            onClick={() => send(note.draft)}>{t("Clear it and send")}</button>
+            onClick={() => send(note.draft, true)}>{t("Clear it and send")}</button>
         </div>
       )}
       {/* said while typing, before the send: after it the browser is already open and the reader is

@@ -1105,6 +1105,7 @@ export const KO: Record<string, string> = {
   "The login for {site} is saved; the next sign-in uses it.": "{site} 로그인 정보를 저장했습니다. 다음 로그인부터 사용됩니다.",
   "The vault is open.": "금고가 열렸습니다.",
   "Change the login for {site}": "{site} 로그인 정보 변경",
+  "Save the login for {site}": "{site} 로그인 정보 저장",
   "Try {site} again": "{site} 다시 시도",
   "Saving…": "저장하는 중…",
   "Website logins": "웹사이트 로그인",

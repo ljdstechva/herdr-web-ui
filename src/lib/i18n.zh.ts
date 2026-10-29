@@ -1109,6 +1109,7 @@ export const ZH: Record<string, string> = {
   "The login for {site} is saved; the next sign-in uses it.": "{site} 的登录信息已保存，下次登录时使用。",
   "The vault is open.": "保管库已打开。",
   "Change the login for {site}": "更改 {site} 的登录信息",
+  "Save the login for {site}": "保存 {site} 的登录信息",
   "Try {site} again": "再试一次 {site}",
   "Saving…": "正在保存…",
   "Website logins": "网站登录",
