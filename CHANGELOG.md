@@ -211,7 +211,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - **The VPS alert covered an open dialog.** On a phone it sits at the top of the screen, over
   the header of a file opened full screen, so Close and Download could not be tapped. It now
   steps aside while any dialog is open and is back when the dialog closes; the VPS chip keeps
-  showing the status meanwhile.
+  showing the status meanwhile. On a phone it also starts below the tab strip and the pane's ⋯,
+  which it covered (and took their taps) until it was dismissed.
 - **Swiping between tabs stopped in a one-tab workspace.** With the keyboard up (or on a phone
   short of room) a workspace of one tab hides its tab strip, and the sideways stroke went with
   it, so the stroke to the workspace beside did nothing. It works strip or no strip now.

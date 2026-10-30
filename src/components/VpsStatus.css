@@ -743,10 +743,12 @@ summary.vps-heading {
 }
 
 /* a phone keeps its controls at the bottom (styles.css "phone"): the alert drops in at the top,
-   as the agents' alerts do, and steps aside while the drawer is open (its VPS row says the same) */
+   as the agents' alerts do, and steps aside while the drawer is open (its VPS row says the same).
+   It stays under the top's two touch rows, the tab strip and the pane's ⋯ (on touch the one way
+   to pane actions): it stays until dismissed, and over them it took their taps */
 @media (max-width: 640px) {
   .vps-toast {
-    top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
+    top: calc(env(safe-area-inset-top, 0px) + 2 * var(--touch-target) + var(--hairline) + var(--space-2));
     bottom: auto;
   }
 }

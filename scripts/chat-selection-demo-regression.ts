@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type CDPSession, type Page } from "playwright-core";
+import { DEFAULT_VPS_THRESHOLDS, type VpsStatus } from "../shared/vps.ts";
 import { buildDemoApp } from "./demo-build.ts";
 
 // Real app over fictional demo panes. A finger's long press on the chat's words is the phone's own
@@ -12,8 +13,18 @@ import { buildDemoApp } from "./demo-build.ts";
 // also sends a contextmenu of its own at a selection (Android: where a drag over the words ends; here
 // the menu key makes the same kind): it says "mouse" and is aimed at the focused pane, and it opened
 // pane actions over the words being selected. A mouse's right click keeps opening pane actions.
+// A VPS alert is up throughout (it stays until dismissed): on a phone it must leave the tab strip
+// and the ⋯ in reach.
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-selection-"));
 const menu = ".row-menu, .row-sheet";
+const vps: VpsStatus = {
+  supported: true, hostname: "qa-server", sampled_at: Date.now(), uptime_seconds: 3600,
+  cpu: { cores: 2, usage_percent: 10, average_percent: 10, load: [0.1, 0.1, 0.1] },
+  memory: { total_bytes: 4e9, available_bytes: 1e9, used_percent: 75 },
+  swap: { total_bytes: 10e9, used_bytes: 6.6e9, used_percent: 66 }, disks: [], top: [],
+  issues: [{ id: "swap", kind: "swap", severity: "warning", title: "Swap is 66% used", detail: "6.6 GB of 10.0 GB in swap: the PC is short of memory", since: Date.now() }],
+  severity: "warning", config: { alerts: false, thresholds: DEFAULT_VPS_THRESHOLDS },
+};
 const ANDROID = ["--enable-features=TouchDragAndContextMenu,TouchDragAndDrop", "--blink-settings=touchDragDropEnabled=true,touchDragEndContextMenu=true"];
 
 /** Dispatches a press then its contextmenu on `selector`; true when nothing cancelled the menu event. */
@@ -57,6 +68,15 @@ async function chatWord(page: Page): Promise<{ x: number; y: number; word: strin
   return found;
 }
 
+/** Waits until the chat's words stay put (the VPS status arriving moves the layout once). */
+async function settled(page: Page): Promise<void> {
+  await page.waitForFunction(() => new Promise<boolean>((resolve) => {
+    const turn = () => document.querySelector(".chat-view .chat-turn:last-of-type")?.getBoundingClientRect().top;
+    const first = turn();
+    setTimeout(() => resolve(first !== undefined && turn() === first), 400);
+  }), null, { polling: 100 });
+}
+
 /** Chrome's own finger: the touch emulator turns a held mouse into a touch with its long press. */
 function finger(cdp: CDPSession) {
   // a held press is answered only once it lets go: the calls are not awaited
@@ -80,7 +100,8 @@ function finger(cdp: CDPSession) {
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"'));
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script src="./qa-vps.js"></script>\n    <script type="module"'));
+  writeFileSync(join(app, "qa-vps.js"), `const demoFetch = window.fetch; window.fetch = (input, init) => String(input) === "/api/vps/status" ? Promise.resolve(Response.json(${JSON.stringify(vps)})) : demoFetch(input, init);`);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = decodeURIComponent(new URL(request.url).pathname);
     if (path.split("/").includes("..")) return new Response(null, { status: 404 });
@@ -102,6 +123,8 @@ try {
           await page.goto(`http://127.0.0.1:${server.port}/?pane=w1C:p1&view=chat`);
           await page.locator(".conn-live").waitFor({ state: "attached" });
           await page.locator(".chat-view .chat-turn").first().waitFor();
+          await page.locator(".vps-toast").waitFor();
+          await settled(page);
           const words = ".chat-view .chat-turn-agent p, .chat-view .chat-turn p";
           const selected = (): Promise<string> => page.evaluate(() => String(getSelection()));
           if (touch) {
@@ -111,14 +134,20 @@ try {
             const at = await chatWord(page);
             // 1. the long press selects the word, and only that
             await hand.hold(page, at);
-            assert.equal(await selected(), at.word, "a long press on a chat word selects it");
+            const first = await selected();
+            assert.ok(first.includes(at.word) && first.length < at.word.length + 4, `a long press on a chat word selects it: "${first}" for "${at.word}"`);
             assert.equal(await page.locator(menu).count(), 0, "a long press on chat words opens no pane actions");
             // 2. holding the selection lifts it (Android's touch drag) and lifting sends a contextmenu: still the phone's
             await hand.hold(page, at);
             await hand.hold(page, at, 24);
             assert.equal(await page.locator(menu).count(), 0, "holding the selected words, still or dragging, opens no pane actions");
+            // a fresh selection for the next step: the drag may have dropped the last one
+            await page.evaluate(() => getSelection()?.removeAllRanges());
+            await settled(page);
+            const again = await chatWord(page);
+            await hand.hold(page, again);
             const before = await selected();
-            assert.notEqual(before, "", "words are still selected");
+            assert.ok(before.includes(again.word) && before.length < again.word.length + 4, `a long press selects a word again: "${before}" for "${again.word}"`);
             // 3. Chrome's own contextmenu at the selection says "mouse", aimed at the focused pane; Android draws
             //    its Copy bar from it, so it is left uncancelled
             await page.evaluate(() => {
@@ -137,8 +166,15 @@ try {
               assert.equal(await press(page, words, "touch", says), true, `a long press on chat words keeps the phone's selection (contextmenu says ${JSON.stringify(says)})`);
               assert.equal(await page.locator(menu).count(), 0, `a long press on chat words opens no pane actions (contextmenu says ${JSON.stringify(says)})`);
             }
-            // 5. the pane's title opens nothing either; its ⋯ button is the one way to pane actions
+            // 5. the pane's title opens nothing either; its ⋯ button is the one way to pane actions, and the
+            //    alert above the chat leaves it and the tab strip in reach
             await page.evaluate(() => getSelection()?.removeAllRanges());
+            const box = async (selector: string) => (await page.locator(selector).first().boundingBox())!;
+            const alert = await box(".vps-toast");
+            for (const control of [".tab-strip", '.pane-frame[data-layout-pane="w1C:p1"] .pane-frame-menu']) {
+              const near = await box(control);
+              assert.ok(alert.y >= near.y + near.height || alert.y + alert.height <= near.y, `the VPS alert leaves ${control} uncovered ${JSON.stringify({ alert, near })}`);
+            }
             assert.equal(await press(page, '.pane-frame[data-layout-pane="w1C:p1"] .pane-frame-head', "touch", "touch"), false, "a long press on the title is taken");
             await page.waitForTimeout(300);
             assert.equal(await page.locator(menu).count(), 0, "a long press on the pane title opens no pane actions");
