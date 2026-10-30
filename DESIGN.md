@@ -448,7 +448,8 @@ One set for both themes: the card is island black wherever it shows.
 - Tab and pane menus follow herdr's target scopes. A tab's menu contains New tab, Rename tab
   and Close tab, plus Move tab left/right when a neighbouring position exists and no move is pending.
   The pane's own context menu carries pane actions; it opens at the pointer
-  without changing which pane is focused. The pane header's ellipsis opens the same menu on touch.
+  without changing which pane is focused. On touch the pane header's ellipsis is the only way to
+  them: a finger's long press anywhere on a pane opens no pane actions.
 - **Move pane to…** (header More) opens a menu under the header button
   (`MovePaneMenu`): a dim uppercase MOVE TO micro label with the pane's name under it
   (`.move-pane-head`), then New tab and the workspace's other tabs, every other workspace under
@@ -798,8 +799,12 @@ One set for both themes: the card is island black wherever it shows.
   (`touch-action: none`: the browser's own touch scroll would keep to one axis) and a flick glides
   on, its speed halving about every 225 ms; a double tap or a mouse's double click goes to 250%
   around the point and back. A finger's long press there opens no image menu.
-  A finger's long press on the transcript's words is the phone's own selection (handles, Copy):
-  pane actions are on the title's long press, its ⋯ and a mouse's right click.
+  A finger's long press on the transcript's words is the phone's own selection (handles, Copy),
+  and nothing a finger does by holding opens pane actions: on a touch screen they are on the ⋯
+  only, and a mouse's right click keeps them. Chrome's own contextmenu at a selection (Android
+  sends one where a drag over the words ends) says "mouse" and is aimed at the focused pane: a
+  touch screen, or a finger's press before it, counts as the finger, and while the chat's words
+  are selected that menu event is left to the phone, which draws its Copy bar from it.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its
   first 20 behind **Show all N lines**. On touch a block has a header strip (language, copy);
   with a mouse and no touch screen the strip becomes a corner control over the block's top right,

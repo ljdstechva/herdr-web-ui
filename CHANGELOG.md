@@ -204,8 +204,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ### Fixed
 - **Holding a finger on the chat's words opened the pane menu instead of selecting them.** The
   long press is now the phone's own: it selects the word, with handles and the Copy bar, so a
-  part of an answer can be copied and pasted. Pane actions stay on the pane title's long press
-  and its ⋯ button, and a mouse's right click on the chat still opens them.
+  part of an answer can be copied and pasted. Dragging over the words to pick more opened the
+  pane menu again: Chrome's own contextmenu at the selection says it came from a mouse. On a
+  touch screen holding a finger now opens pane actions nowhere; they are on the ⋯ button only,
+  and a mouse's right click still opens them.
 - **The VPS alert covered an open dialog.** On a phone it sits at the top of the screen, over
   the header of a file opened full screen, so Close and Download could not be tapped. It now
   steps aside while any dialog is open and is back when the dialog closes; the VPS chip keeps

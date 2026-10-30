@@ -21,8 +21,16 @@ type PaneLayoutSplit = PaneLayoutSnapshot["splits"][number];
 
 // Chat and terminal input boxes keep the browser's selection, copy and paste menu, including on long press.
 const isTextInput = (target: EventTarget): boolean => target instanceof Element && target.matches(".composer-text, .terminal-input-text");
-// A finger's long press on the chat transcript selects its words (handles, Copy); pane actions stay on the title's ⋯ and a mouse's right click.
+// A finger's long press on the chat transcript selects its words (handles, Copy). A finger never opens pane actions by holding:
+// on a touch screen they are on the ⋯ button only; a mouse's right click keeps them.
 const isChatText = (target: EventTarget): boolean => target instanceof Element && target.closest(".chat-view") !== null;
+// Chrome's own contextmenu at a selection is aimed at the focused element, not the words: Android draws Copy from it.
+const selectsChat = (pane: Element): boolean => {
+  const selection = document.getSelection();
+  const node = selection && !selection.isCollapsed ? selection.anchorNode : null;
+  const chat = (node instanceof Element ? node : node?.parentElement)?.closest(".chat-view");
+  return chat != null && pane.contains(chat);
+};
 
 interface Props {
   snapshot: SessionSnapshot | null;
@@ -63,6 +71,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   // Survives workspace/tab switches, but the PC-keyed canvas owns this memory exclusively.
   const awayReleased = useRef(false);
   // the pointer that pressed last: Android's long-press contextmenu does not always say it came from a finger
+  // (no pointerType, or "mouse" for the one that ends a drag over the words being selected)
   const lastPointer = useRef("");
   const [submits] = useState(() => new PaneSubmitRetention());
   const retainedIds = useSyncExternalStore(submits.subscribe, submits.snapshot, submits.snapshot);
@@ -132,16 +141,18 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const sendsRightClick = (target: HerdrPane, event: MouseEvent<HTMLElement>): boolean =>
     passthrough.has(target.pane_id) && isTerminal(target) && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
       && event.target instanceof Element && !!event.target.closest('.pane-terminal[data-mouse-reporting]');
+  // a phone's screen, the event or the press before it: any of them saying finger (or pen) is enough
   const fingerPress = (event: MouseEvent<HTMLElement>): boolean => {
     const native = event.nativeEvent;
-    const type = ("pointerType" in native ? String(native.pointerType) : "") || lastPointer.current;
-    return type === "touch" || type === "pen";
+    const type = "pointerType" in native ? String(native.pointerType) : "";
+    return coarse || [type, lastPointer.current].some((kind) => kind === "touch" || kind === "pen");
   };
   const context = (event: MouseEvent<HTMLElement>, target: HerdrPane): void => {
-    if (isTextInput(event.target) || (isChatText(event.target) && fingerPress(event))) return;
+    const finger = fingerPress(event);
+    if (isTextInput(event.target) || (finger && (isChatText(event.target) || selectsChat(event.currentTarget)))) return;
     event.preventDefault();
     event.stopPropagation();
-    if (sendsRightClick(target, event)) return;
+    if (sendsRightClick(target, event) || finger) return;
     const rect = event.currentTarget.getBoundingClientRect();
     showMenu(target, event.currentTarget, { x: event.clientX || rect.left + 8, y: event.clientY || rect.top + 8 });
   };

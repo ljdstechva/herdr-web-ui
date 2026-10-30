@@ -50,12 +50,25 @@ try {
             await page.keyboard.insertText("replace");
             assert.equal(await input.inputValue(), longDraft.replace("select", "replace"), "typing replaces only the selected word in a long draft");
             if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${view}-selection-${width}.png`) });
-            // Keep both the ordinary pane menu and xterm's hidden textarea under pane ownership.
+            // Keep both the ordinary pane menu and xterm's hidden textarea under pane ownership. A touch
+            // screen's long press opens nothing there: its pane actions are on the ⋯ button only.
+            const menu = page.locator(".row-menu, .row-sheet");
             for (const selector of [".pane-frame-head", ".xterm-helper-textarea"]) {
               assert.equal(await pane.locator(selector).evaluate((node) => node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }))), false);
-              const menu = page.locator(".row-menu, .row-sheet");
+              if (width === 390) {
+                await page.waitForTimeout(200);
+                assert.equal(await menu.count(), 0, "a phone's long press outside the input boxes opens no pane actions");
+                continue;
+              }
               await menu.waitFor({ state: "visible" });
               assert.ok((await menu.textContent())?.includes("Rename pane"), "pane actions remain available outside the input boxes");
+              await page.keyboard.press("Escape");
+              await menu.waitFor({ state: "detached" });
+            }
+            if (width === 390) {
+              await pane.locator(".pane-frame-menu").tap();
+              await menu.waitFor({ state: "visible" });
+              assert.ok((await menu.textContent())?.includes("Rename pane"), "a phone's ⋯ button opens pane actions");
               await page.keyboard.press("Escape");
               await menu.waitFor({ state: "detached" });
             }
