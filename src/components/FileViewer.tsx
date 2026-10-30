@@ -3,6 +3,7 @@ import { Download, ExternalLink, FileText, Table2, X } from "lucide-react";
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 import { DocumentPreview } from "./DocumentPreview.tsx";
+import { ImageView } from "./ImageView.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -101,8 +102,9 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const url = fileUrl(info?.path ?? path, paneId);
   const kind = info === null ? null : viewerKind(info);
   const opening = <p className="file-viewer-note">{t("Opening…")}</p>;
-  // a document view fills the viewer and scrolls itself, so the viewer takes its full height
-  const fill = directory === null && error === null && candidates === null && (kind === "pdf" || kind === "document" || kind === "presentation" || kind === "spreadsheet");
+  // a document or image view fills the viewer and scrolls itself, so the viewer takes its full height
+  const fill = directory === null && error === null && candidates === null && (kind === "pdf" || kind === "document" || kind === "presentation" || kind === "spreadsheet"
+    || (kind === "image" && info !== null && info.size <= MAX_INLINE_IMAGE_BYTES));
   const body = (() => {
     if (directory !== null) return <DirectoryBrowser key={directory} start={directory} onOpenFile={onOpen ?? setPath} />;
     if (error !== null) return <p className="file-viewer-note" role="alert">{error}</p>;
@@ -115,7 +117,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       case "image":
         return info.size > MAX_INLINE_IMAGE_BYTES
           ? <p className="file-viewer-note">This image is {formatBytes(info.size)}; download it to view.</p>
-          : <img className="file-viewer-media" src={url} alt={info.name} />;
+          : <ImageView url={url} name={info.name} />;
       case "video":
         return <video className="file-viewer-media" src={url} controls playsInline preload="metadata" />;
       case "audio":

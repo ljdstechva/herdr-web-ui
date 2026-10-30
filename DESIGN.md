@@ -790,7 +790,16 @@ One set for both themes: the card is island black wherever it shows.
   `![alt](path)` draws one in place: the whole image at the answer's width, never cropped, its
   height its own up to `80vh` (`.markdown-image`, `--hairline` `--border`, `--radius-lg`,
   `--bg-elevated`, zoom-in cursor); a tap opens the file as the chip does. A web image stays
-  its link.
+  its link. In the file viewer an image fills the body (`ImageView`): fitted whole at 100%, never
+  past its own pixels, with the document views' zoom pill floating at the bottom (`.image-toolbar`,
+  − / level / +, the level fits it again, "Fit to screen"); the fitted image keeps clear of it.
+  It zooms to 4× or until each image pixel is two screen pixels (at most 10×). Two fingers pinch
+  around the point between them (`lib/zoomGestures.ts`), one finger drags a zoomed image any way
+  (`touch-action: none`: the browser's own touch scroll would keep to one axis) and a flick glides
+  on, its speed halving about every 225 ms; a double tap or a mouse's double click goes to 250%
+  around the point and back. A finger's long press there opens no image menu.
+  A finger's long press on the transcript's words is the phone's own selection (handles, Copy):
+  pane actions are on the title's long press, its ⋯ and a mouse's right click.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its
   first 20 behind **Show all N lines**. On touch a block has a header strip (language, copy);
   with a mouse and no touch screen the strip becomes a corner control over the block's top right,

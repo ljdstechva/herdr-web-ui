@@ -126,6 +126,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **An image opened from the chat zooms.** In the file viewer an image opens whole, fitted to the
+  screen; two fingers pinch it bigger around the point between them, one finger then drags it
+  about in any direction (a flick glides on), and a double tap zooms in on the tapped point and
+  back to fit. The − / % / + buttons, Ctrl+wheel, a mouse's drag and double click, and the + - 0
+  keys do the same on a computer. A finger's long press on the image opens no save-image menu
+  (Download is in the viewer's header).
 - **A swipe turns the page.** The pane follows the finger further and dims a little as it goes,
   the pill naming where the stroke leads lights up once letting go will open it, and on letting
   go the pane slides on out the way it was pulled while the next one slides in from the other
@@ -196,6 +202,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **Holding a finger on the chat's words opened the pane menu instead of selecting them.** The
+  long press is now the phone's own: it selects the word, with handles and the Copy bar, so a
+  part of an answer can be copied and pasted. Pane actions stay on the pane title's long press
+  and its ⋯ button, and a mouse's right click on the chat still opens them.
 - **Swiping between tabs stopped in a one-tab workspace.** With the keyboard up (or on a phone
   short of room) a workspace of one tab hides its tab strip, and the sideways stroke went with
   it, so the stroke to the workspace beside did nothing. It works strip or no strip now.

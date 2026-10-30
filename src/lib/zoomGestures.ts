@@ -15,6 +15,45 @@ export function anchoredScroll(left: number, top: number, anchor: ZoomAnchor, ra
   return { left: Math.max(0, (left + anchor.x) * ratio - anchor.x), top: Math.max(0, (top + anchor.y) * ratio - anchor.y) };
 }
 
+/** How an image of `natural` size is drawn to fit `room` at zoom 1: whole, and never past its own pixels. */
+export function imageFit(natural: { width: number; height: number }, room: { width: number; height: number }): number {
+  if (natural.width <= 0 || natural.height <= 0 || room.width <= 0 || room.height <= 0) return 1;
+  return Math.min(1, room.width / natural.width, room.height / natural.height);
+}
+
+/** How far an image fitted at `fit` zooms: four times, or until each of its pixels is two of the screen's (at most ten times). */
+export function imageZoomMax(fit: number): number {
+  return Math.min(10, Math.max(4, 2 / fit));
+}
+
+/** The point of an image under `anchor` (a point of the view at this scroll), as a part of the image's width and height. */
+export function imagePoint(image: { left: number; top: number; width: number; height: number }, left: number, top: number, anchor: ZoomAnchor): ZoomAnchor {
+  return { x: (left + anchor.x - image.left) / Math.max(1, image.width), y: (top + anchor.y - image.top) / Math.max(1, image.height) };
+}
+
+/** Where to scroll so that `point` of the image (laid out anew at `image`) is under `anchor` again. */
+export function scrollToPoint(image: { left: number; top: number; width: number; height: number }, point: ZoomAnchor, anchor: ZoomAnchor): { left: number; top: number } {
+  return { left: Math.max(0, image.left + point.x * image.width - anchor.x), top: Math.max(0, image.top + point.y * image.height - anchor.y) };
+}
+
+/** A flicked image glides on and slows as a phone's own scroll does: its speed halves about every 225 ms. */
+const GLIDE_MS = 325;
+
+/** How far something moving at `speed` (px/ms) glides in the next `ms`, and how fast it then goes. */
+export function glide(speed: number, ms: number): { speed: number; distance: number } {
+  const factor = Math.exp(-ms / GLIDE_MS);
+  return { speed: speed * factor, distance: speed * GLIDE_MS * (1 - factor) };
+}
+
+/** A finger's speed (px/ms) as it lifts at `now`, from where it was over the last 100 ms; one that rested first has none. */
+export function flickSpeed(trail: { at: number; x: number; y: number }[], now: number): ZoomAnchor {
+  const recent = trail.filter((point) => now - point.at <= 100);
+  const first = recent[0];
+  const last = recent[recent.length - 1];
+  if (first === undefined || last === undefined || now - last.at > 50 || last.at - first.at < 1) return { x: 0, y: 0 };
+  return { x: (last.x - first.x) / (last.at - first.at), y: (last.y - first.y) / (last.at - first.at) };
+}
+
 /** The step of one zoom button press, and of a key press. */
 export const ZOOM_STEP = 1.25;
 /** Two taps this close in time and place are a double tap. */

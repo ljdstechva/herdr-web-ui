@@ -1,0 +1,76 @@
+/* fills the file viewer's body (.file-viewer-body-fill): the view scrolls, the zoom buttons float over it */
+.image-view {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+}
+
+.image-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* ImageView moves it: one finger drags a zoomed image any way (the browser's own scroll keeps to
+     one axis), two pinch it (lib/zoomGestures.ts), not the whole app */
+  touch-action: none;
+  outline: none;
+  cursor: zoom-in;
+}
+
+.image-scroll[data-zoomed] { cursor: zoom-out; }
+.image-scroll[data-pannable] { cursor: grab; }
+.image-scroll[data-dragging] { cursor: grabbing; }
+
+.image-scroll:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* as big as the view, or as the zoomed image: a smaller image sits in the middle. The bottom keeps
+   the image clear of the zoom buttons. */
+.image-stage {
+  position: relative;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: var(--space-3) var(--space-3) calc(var(--space-3) + var(--touch-target) + var(--space-4));
+  transform-origin: 0 0;
+}
+
+.image-view-img {
+  display: block;
+  max-width: none;
+  border-radius: var(--radius-md);
+  user-select: none;
+  -webkit-user-select: none;
+  /* a finger that rests before it drags moves the image; no save-image menu comes up (ImageView) */
+  -webkit-touch-callout: none;
+}
+
+.image-view-note {
+  margin: 0;
+}
+
+.image-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  padding: var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+@media (pointer: coarse) {
+  .image-stage {
+    padding-bottom: calc(var(--space-3) + max(44px, var(--touch-target)) + var(--space-4));
+  }
+}

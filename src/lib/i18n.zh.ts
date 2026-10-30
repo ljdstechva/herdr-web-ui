@@ -448,6 +448,7 @@ export const ZH: Record<string, string> = {
   "Zoom out": "缩小",
   "Zoom in": "放大",
   "Fit to width": "适合宽度",
+  "Fit to screen": "适合屏幕",
   "This workbook is password protected. Download it to open it.": "此工作簿受密码保护。请下载后打开。",
   "This workbook is {size}; download it to view.": "此工作簿大小为 {size}，请下载后查看。",
   "This workbook could not be read. It may be damaged.": "无法读取此工作簿。文件可能已损坏。",

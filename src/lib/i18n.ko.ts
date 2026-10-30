@@ -444,6 +444,7 @@ export const KO: Record<string, string> = {
   "Zoom out": "축소",
   "Zoom in": "확대",
   "Fit to width": "너비에 맞추기",
+  "Fit to screen": "화면에 맞추기",
   "This workbook is password protected. Download it to open it.": "이 통합 문서는 암호로 보호되어 있습니다. 다운로드해서 여세요.",
   "This workbook is {size}; download it to view.": "이 통합 문서는 {size}입니다. 다운로드해서 보세요.",
   "This workbook could not be read. It may be damaged.": "이 통합 문서를 읽을 수 없습니다. 파일이 손상되었을 수 있습니다.",

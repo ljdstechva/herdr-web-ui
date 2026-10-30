@@ -446,6 +446,7 @@ export const JA: Record<string, string> = {
   "Zoom out": "縮小",
   "Zoom in": "拡大",
   "Fit to width": "幅に合わせる",
+  "Fit to screen": "画面に合わせる",
   "This workbook is password protected. Download it to open it.": "このブックはパスワードで保護されています。ダウンロードして開いてください。",
   "This workbook is {size}; download it to view.": "このブックは {size} あります。ダウンロードして表示してください。",
   "This workbook could not be read. It may be damaged.": "このブックを読み込めませんでした。破損している可能性があります。",

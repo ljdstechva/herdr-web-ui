@@ -9,17 +9,20 @@ export interface ZoomControlsProps {
   max: number;
   /** a zoom from the buttons, around the middle of the view */
   onZoom: (next: number) => void;
+  /** what the level's press does, said: a document fits its width, an image the screen */
+  fitLabel?: string;
 }
 
-/** Zoom out, the level (a press fits the width again) and zoom in, for the document views. */
-export function ZoomControls({ zoom, min, max, onZoom }: ZoomControlsProps) {
+/** Zoom out, the level (a press fits the width again) and zoom in, for the document and image views. */
+export function ZoomControls({ zoom, min, max, onZoom, fitLabel }: ZoomControlsProps) {
   const t = useT();
+  const fit = fitLabel ?? t("Fit to width");
   return (
     <div className="zoom-controls">
       <button type="button" className="icon-button" onClick={() => onZoom(zoom / ZOOM_STEP)} disabled={zoom <= min + 1e-6} aria-label={t("Zoom out")} title={t("Zoom out")}>
         <Minus aria-hidden="true" />
       </button>
-      <button type="button" className="zoom-controls-level" onClick={() => onZoom(1)} aria-label={t("Fit to width")} title={t("Fit to width")}>
+      <button type="button" className="zoom-controls-level" onClick={() => onZoom(1)} aria-label={fit} title={fit}>
         {Math.round(zoom * 100)}%
       </button>
       <button type="button" className="icon-button" onClick={() => onZoom(zoom * ZOOM_STEP)} disabled={zoom >= max - 1e-6} aria-label={t("Zoom in")} title={t("Zoom in")}>
