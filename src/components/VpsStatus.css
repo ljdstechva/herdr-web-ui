@@ -757,3 +757,9 @@ summary.vps-heading {
     display: none;
   }
 }
+
+/* it is above the dialogs too (a phone's file viewer fills the screen, header and Close under the
+   alert): it steps aside while one is open and is back when it closes; the VPS chip keeps the status */
+body:has([aria-modal="true"]) .vps-toast {
+  display: none;
+}
