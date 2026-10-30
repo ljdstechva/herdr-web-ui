@@ -81,6 +81,7 @@ run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/restored-draft-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts
 run_script scripts/composer-selection-demo-regression.ts
+run_script scripts/chat-selection-demo-regression.ts
 run_script scripts/held-rows-demo-regression.ts
 run_script scripts/instant-send-demo-regression.ts
 run_script scripts/browser-view-demo-regression.ts

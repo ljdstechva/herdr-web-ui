@@ -21,6 +21,8 @@ type PaneLayoutSplit = PaneLayoutSnapshot["splits"][number];
 
 // Chat and terminal input boxes keep the browser's selection, copy and paste menu, including on long press.
 const isTextInput = (target: EventTarget): boolean => target instanceof Element && target.matches(".composer-text, .terminal-input-text");
+// A finger's long press on the chat transcript selects its words (handles, Copy); pane actions stay on the title's ⋯ and a mouse's right click.
+const isChatText = (target: EventTarget): boolean => target instanceof Element && target.closest(".chat-view") !== null;
 
 interface Props {
   snapshot: SessionSnapshot | null;
@@ -60,6 +62,8 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const canvas = useRef<HTMLDivElement>(null);
   // Survives workspace/tab switches, but the PC-keyed canvas owns this memory exclusively.
   const awayReleased = useRef(false);
+  // the pointer that pressed last: Android's long-press contextmenu does not always say it came from a finger
+  const lastPointer = useRef("");
   const [submits] = useState(() => new PaneSubmitRetention());
   const retainedIds = useSyncExternalStore(submits.subscribe, submits.snapshot, submits.snapshot);
   const lastCells = useRef(new Map<string, ReturnType<typeof layoutCells>[number]>());
@@ -128,8 +132,13 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const sendsRightClick = (target: HerdrPane, event: MouseEvent<HTMLElement>): boolean =>
     passthrough.has(target.pane_id) && isTerminal(target) && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
       && event.target instanceof Element && !!event.target.closest('.pane-terminal[data-mouse-reporting]');
+  const fingerPress = (event: MouseEvent<HTMLElement>): boolean => {
+    const native = event.nativeEvent;
+    const type = ("pointerType" in native ? String(native.pointerType) : "") || lastPointer.current;
+    return type === "touch" || type === "pen";
+  };
   const context = (event: MouseEvent<HTMLElement>, target: HerdrPane): void => {
-    if (isTextInput(event.target)) return;
+    if (isTextInput(event.target) || (isChatText(event.target) && fingerPress(event))) return;
     event.preventDefault();
     event.stopPropagation();
     if (sendsRightClick(target, event)) return;
@@ -232,6 +241,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         style={zoomed === item.pane_id ? { left: 0, top: 0, width: "100%", height: "100%" }
           : { left: `${cell.left}%`, top: `${cell.top}%`, width: `${cell.width}%`, height: `${cell.height}%` }}
         onPointerDownCapture={(event) => {
+          lastPointer.current = event.pointerType;
           // A right press must not change focus before the menu's Swap with focused pane.
           if (event.button === 0 && !paneContextPress(event, apple) && !active) {
             onSelect(item.pane_id, false);
