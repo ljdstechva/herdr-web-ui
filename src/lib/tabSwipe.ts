@@ -12,6 +12,9 @@
  * finger asks (a code block, a table, the strip's own overflow, a grid panned at another
  * screen's size): it scrolls. Once that is at its end, a stroke the same way is the tabs' again,
  * as scrolling passes from an inner list to the page.
+ *
+ * Letting go past the mark turns the page: the pane goes on out the way the finger sent it, and
+ * the tab it named comes in from the other side.
  */
 import { EDGE_PX } from "./edgeSwipe.ts";
 
@@ -24,8 +27,18 @@ export const TAB_FLICK_SPEED = 0.45;
 /** Movement below this is not a direction yet. */
 const SLOP_PX = 10;
 /** How much of the finger's travel the pane follows toward a tab, and where there is none that way. */
-const FOLLOW = 0.4;
+const FOLLOW = 0.55;
 const RESIST = 0.12;
+
+/** How long the pane takes to go on out once letting go opens the tab beside (TabStrip.css's leave). */
+const LEAVE_MS = 120;
+/**
+ * ...and the next to come in, or the pane to go back (TabStrip.css's enter and back). Each ends
+ * the stroke's attributes when it ends; this, a few times over, is only for one that never runs
+ * (reduced motion) or never ends (its canvas went): a new pane's first render can hold the page
+ * long enough that a fixed wait would cut the entrance short.
+ */
+const SETTLE_MS = 260 * 3;
 
 export type TabStroke = "pending" | "sideways" | "other";
 
@@ -125,6 +138,8 @@ export function watchTabSwipe(surface: HTMLElement, host: HTMLElement, options: 
   let tracking = false;
   let hint: HTMLElement | null = null;
   let settle = 0;
+  // the page turn under way: the pane is still going out, and this brings the next one in
+  let leaving: (() => void) | null = null;
 
   const draw = (dx: number): void => {
     const step: -1 | 1 = dx < 0 ? 1 : -1;
@@ -146,6 +161,7 @@ export function watchTabSwipe(surface: HTMLElement, host: HTMLElement, options: 
 
   const clear = (): void => {
     window.clearTimeout(settle);
+    leaving = null;
     delete host.dataset["tabSwipe"];
     host.style.removeProperty("--tab-swipe-x");
     host.style.removeProperty("--tab-swipe-progress");
@@ -153,28 +169,46 @@ export function watchTabSwipe(surface: HTMLElement, host: HTMLElement, options: 
     hint = null;
   };
 
-  /** The pane goes back to its place, or the next tab's comes in from the side it was pulled from. */
+  /**
+   * Short of the mark the pane goes back to its place. Past it the pane goes on out the way it
+   * was pulled, the tab beside opens, and its pane comes in from the other side; under reduced
+   * motion it opens at once.
+   */
   const finish = (step: -1 | 0 | 1): void => {
-    hint?.remove();
-    hint = null;
-    host.style.removeProperty("--tab-swipe-progress");
+    window.clearTimeout(settle);
     if (step === 0) {
+      hint?.remove();
+      hint = null;
+      host.style.removeProperty("--tab-swipe-progress");
       host.dataset["tabSwipe"] = "back";
       host.style.setProperty("--tab-swipe-x", "0px");
-    } else {
-      host.dataset["tabSwipe"] = step === 1 ? "enter-end" : "enter-start";
-      host.style.removeProperty("--tab-swipe-x");
-      options.open(step);
+      settle = window.setTimeout(clear, SETTLE_MS);
+      return;
     }
-    window.clearTimeout(settle);
-    // longer than either animation (TabStrip.css): the attribute only ever outlives them
-    settle = window.setTimeout(clear, 260);
+    const enter = (): void => {
+      leaving = null;
+      hint?.remove();
+      hint = null;
+      host.style.removeProperty("--tab-swipe-progress");
+      host.style.removeProperty("--tab-swipe-x");
+      host.dataset["tabSwipe"] = step === 1 ? "enter-end" : "enter-start";
+      options.open(step);
+      window.clearTimeout(settle);
+      settle = window.setTimeout(clear, SETTLE_MS);
+    };
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) { enter(); return; }
+    // the pill stays, lit, until the tab it names is in
+    host.dataset["tabSwipe"] = step === 1 ? "leave-end" : "leave-start";
+    leaving = enter;
+    settle = window.setTimeout(enter, LEAVE_MS);
   };
 
   const onStart = (event: TouchEvent): void => {
     const touch = event.touches[0];
     tracking = false;
     start = null;
+    // a finger down while the last turn is still going out: that tab opens now
+    if (leaving) { window.clearTimeout(settle); leaving(); }
     if (event.touches.length !== 1 || !touch || !options.enabled()) return;
     if (document.querySelector(MODAL) !== null || selecting()) return;
     const target = event.target as HTMLElement | null;
@@ -225,11 +259,23 @@ export function watchTabSwipe(surface: HTMLElement, host: HTMLElement, options: 
     if (wasTracking) finish(0);
   };
 
+  // the canvas is back in its place, or the next one is in: the stroke is over
+  const onSettled = (event: Event): void => {
+    const state = host.dataset["tabSwipe"];
+    if (!(event.target instanceof Element) || !event.target.classList.contains("pane-canvas")) return;
+    if (event instanceof AnimationEvent ? event.animationName.startsWith("tab-swipe-in") && state?.startsWith("enter-")
+      : event instanceof TransitionEvent && event.propertyName === "transform" && state === "back") clear();
+  };
+
+  host.addEventListener("animationend", onSettled);
+  host.addEventListener("transitionend", onSettled);
   surface.addEventListener("touchstart", onStart, { capture: true, passive: true });
   surface.addEventListener("touchmove", onMove, { capture: true, passive: false });
   surface.addEventListener("touchend", onEnd, { capture: true, passive: true });
   surface.addEventListener("touchcancel", onEnd, { capture: true, passive: true });
   return () => {
+    host.removeEventListener("animationend", onSettled);
+    host.removeEventListener("transitionend", onSettled);
     surface.removeEventListener("touchstart", onStart, { capture: true });
     surface.removeEventListener("touchmove", onMove, { capture: true });
     surface.removeEventListener("touchend", onEnd, { capture: true });

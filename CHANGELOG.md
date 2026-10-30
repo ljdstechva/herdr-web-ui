@@ -126,6 +126,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- **A swipe turns the page.** The pane follows the finger further and dims a little as it goes,
+  the pill naming where the stroke leads lights up once letting go will open it, and on letting
+  go the pane slides on out the way it was pulled while the next one slides in from the other
+  side. Reduced motion opens the tab at once, as before.
 - **The list says the names you gave.** A workspace row was titled by what its agent was doing
   (the chat's topic, a new one with every chat) with the workspace's name small under it, and
   renaming the workspace changed only that small line. The row is now the workspace's name, with
@@ -192,6 +196,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
 
 ### Fixed
+- **Swiping between tabs stopped in a one-tab workspace.** With the keyboard up (or on a phone
+  short of room) a workspace of one tab hides its tab strip, and the sideways stroke went with
+  it, so the stroke to the workspace beside did nothing. It works strip or no strip now.
 - **Renaming a tab on a phone opened and closed the keyboard without end.** In a workspace of
   one tab, the keyboard the name field raised made the page short, and a short phone hides a lone
   tab's strip: the field went with it, the keyboard closed, the strip came back at full height

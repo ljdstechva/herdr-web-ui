@@ -215,10 +215,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     });
   }, [swipeHost]);
 
-  // A short phone (a raised keyboard makes one) drops a lone tab's strip for the room, but not
-  // under its open name field: the field would go with it, the keyboard with the field, and the
-  // strip, back at full height, would raise the keyboard for it again, and again
-  if (!shown || (cramped && tabs.length === 1 && !editing)) { swipe.current = null; return null; }
+  if (!shown) { swipe.current = null; return null; }
 
   // a tab of another workspace (a stroke past this row's end leads there) is read from that workspace's own roster
   const panesOf = (tab: HerdrTab): HerdrPane[] => (tab.workspace_id === workspace.workspace_id ? panes
@@ -247,6 +244,11 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     },
     open: (step) => { const target = besideOpen(step); const pane = target ? paneFor(target.tab) : undefined; if (pane) onSelectPane(pane.pane_id); },
   };
+  // A short phone (a raised keyboard makes one) drops a lone tab's strip for the room, but not
+  // under its open name field: the field would go with it, the keyboard with the field, and the
+  // strip, back at full height, would raise the keyboard for it again, and again. The stroke
+  // stays: it leads on to the workspaces beside this one, strip or no strip
+  if (cramped && tabs.length === 1 && !editing) return null;
 
   const focusTab = (tabId: string): void => {
     window.requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>(`[role="tab"][data-tab-id="${CSS.escape(tabId)}"]`)?.focus());

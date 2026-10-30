@@ -199,35 +199,49 @@
 
 /* A sideways stroke over the pane opens the tab beside (lib/tabSwipe.ts, which sets these
    attributes and the two properties on the pane region). The canvas follows the finger part of
-   the way, less where no tab lies that way; the name of the tab it is going to comes in from
-   the edge that tab comes from, and takes the accent once letting go will open it. */
+   the way, less where no tab lies that way, and dims a little as it goes; the name of the tab it
+   is going to comes in from the edge that tab comes from, and lights up once letting go will open
+   it. Letting go then turns the page: the canvas goes on out the way it was pulled (leave), the
+   tab opens, and its canvas comes in from the other side (enter). */
 .terminal-host[data-tab-swipe] .pane-canvas {
   transform: translateX(var(--tab-swipe-x, 0));
 }
 
-.terminal-host[data-tab-swipe="back"] .pane-canvas {
-  transition: transform var(--dur-base) var(--ease-out);
+.terminal-host:is([data-tab-swipe="tracking"], [data-tab-swipe="armed"]) .pane-canvas {
+  opacity: calc(1 - 0.18 * var(--tab-swipe-progress, 0));
 }
 
+.terminal-host[data-tab-swipe="back"] .pane-canvas {
+  transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+
+.terminal-host:is([data-tab-swipe="leave-end"], [data-tab-swipe="leave-start"]) .pane-canvas {
+  opacity: 0;
+  transition: transform var(--dur-fast) linear, opacity var(--dur-fast) linear;
+}
+
+.terminal-host[data-tab-swipe="leave-end"] .pane-canvas { transform: translateX(-30%); }
+.terminal-host[data-tab-swipe="leave-start"] .pane-canvas { transform: translateX(30%); }
+
 .terminal-host[data-tab-swipe="enter-end"] .pane-canvas {
-  animation: tab-swipe-in-end var(--dur-base) var(--ease-out);
+  animation: tab-swipe-in-end var(--dur-slow) var(--ease-out);
 }
 
 .terminal-host[data-tab-swipe="enter-start"] .pane-canvas {
-  animation: tab-swipe-in-start var(--dur-base) var(--ease-out);
+  animation: tab-swipe-in-start var(--dur-slow) var(--ease-out);
 }
 
 @keyframes tab-swipe-in-end {
   from {
-    transform: translateX(var(--space-6));
-    opacity: 0.4;
+    transform: translateX(30%);
+    opacity: 0;
   }
 }
 
 @keyframes tab-swipe-in-start {
   from {
-    transform: translateX(calc(-1 * var(--space-6)));
-    opacity: 0.4;
+    transform: translateX(-30%);
+    opacity: 0;
   }
 }
 
@@ -249,6 +263,8 @@
   text-overflow: ellipsis;
   pointer-events: none;
   opacity: var(--tab-swipe-progress, 0);
+  transition: scale var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 
 .tab-swipe-hint[data-side="end"] {
@@ -264,8 +280,11 @@
 .tab-swipe-hint[data-side="end"]::after { content: " ›"; }
 .tab-swipe-hint[data-side="start"]::before { content: "‹ "; }
 
-.terminal-host[data-tab-swipe="armed"] .tab-swipe-hint {
+/* lit from the mark on, and while the page turns to it */
+.terminal-host:is([data-tab-swipe="armed"], [data-tab-swipe^="leave-"]) .tab-swipe-hint {
+  scale: 1.06;
   border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-tint), var(--bg-elevated));
   color: var(--text-strong);
 }
 
@@ -276,7 +295,9 @@
     animation: none;
   }
 
-  .tab-swipe-hint[data-side] {
+  .terminal-host .tab-swipe-hint[data-side] {
     transform: translateY(-50%);
+    scale: none;
+    transition: none;
   }
 }

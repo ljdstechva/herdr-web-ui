@@ -223,6 +223,39 @@ try {
           console.log("PASS a stroke over the terminal opens the tab beside");
         } finally { await close(); }
       }
+
+      {
+        // A phone short of room (a raised keyboard makes one) gives a lone tab's strip's room away;
+        // the stroke still leads on to the workspaces beside, as it does with the strip in sight
+        const context = await browser.newContext({ viewport: { width: 390, height: 560 }, isMobile: true, hasTouch: true, locale: "en-US" });
+        await context.addInitScript(() => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })); });
+        try {
+          const page = await context.newPage();
+          const errors: string[] = [];
+          page.on("pageerror", (error) => errors.push(error.message));
+          await page.goto(url(panes.docs, "chat"));
+          await page.locator(".conn-live").waitFor({ state: "attached" });
+          await page.locator(".composer-text").waitFor();
+          await appFaces(page);
+          assert.equal(await page.locator(".tab-strip").count(), 0, "a short phone hides a lone tab's strip");
+          const cdp = await context.newCDPSession(page);
+          const paneOf = (): Promise<string | null> => page.evaluate(() => new URLSearchParams(location.search).get("pane"));
+          const middle = { x: 300, y: 240 };
+          const onward = await stroke(cdp, middle, { x: -130, y: 0 }, { hold: true });
+          const armed = await stripOf(page);
+          assert.equal(armed.swipe, "armed", "the stroke is still the tabs'");
+          assert.equal(armed.hint, "release", "it names the workspace it leads to");
+          await onward();
+          await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, panes.shell, { timeout: 5_000 });
+          await atRest(page);
+          await stroke(cdp, { x: 90, y: middle.y }, { x: 130, y: 0 });
+          await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, panes.docs, { timeout: 5_000 });
+          await atRest(page);
+          assert.equal(await paneOf(), panes.docs);
+          assert.deepEqual(errors, []);
+          console.log("PASS on a phone short of room a lone tab's stroke still opens the workspace beside, and back");
+        } finally { await context.close(); }
+      }
     } finally { await browser.close(); }
   } finally { server.stop(true); }
 } finally {

@@ -652,14 +652,19 @@ One set for both themes: the card is island black wherever it shows.
   with a `--status-blocked` hairline (`.worktree-alert`); file names and folders are mono
   `--fs-xs`. Merge is the primary button; a delete is `.btn-danger`.
 - On a touch screen a sideways stroke over the pane opens the tab beside the open one
-  (`src/lib/tabSwipe.ts`). The canvas follows the finger 40% of the way (12% where no tab lies
-  that way) and a pill (`--bg-elevated`, hairline, `--radius-pill`, `--fs-sm`) names the tab it is
-  going to at the edge that tab comes from, coming in with the stroke; from 64px, or a quick
-  flick, the pill takes `--accent` on its edge and `--text-strong`, and letting go opens the tab,
-  which comes in over `--dur-base` from that edge. Short of it the canvas goes back over
-  `--dur-base`. Reduced motion keeps the pill and drops the movement.
+  (`src/lib/tabSwipe.ts`). The canvas follows the finger 55% of the way (12% where no tab lies
+  that way), dimming to 82% opacity by the mark, and a pill (`--bg-elevated`, hairline,
+  `--radius-pill`, `--fs-sm`) names the tab it is going to at the edge that tab comes from,
+  coming in with the stroke; from 64px, or a quick flick, the pill lights up (`--accent` edge,
+  `--accent-tint` over its fill, `--text-strong`, scale 1.06 over `--dur-fast`). Letting go then
+  turns the page: the canvas goes on out 30% of its width the way it was pulled and fades
+  (`--dur-fast`, linear), the tab opens, and its canvas comes in from 30% on the other side, from
+  transparent, over `--dur-slow` `--ease-out`; the stroke ends when that entrance ends. Short of
+  the mark the canvas goes back over `--dur-base`. Reduced motion keeps the pill and drops the
+  movement: the tab opens at once.
   Past the row's first or last tab the stroke leads to the workspace before or after this one,
-  and the pill names that workspace (and its tab, where it has several).
+  and the pill names that workspace (and its tab, where it has several). A phone short of room
+  (a raised keyboard makes one) hides a lone tab's strip, but not the stroke.
 - Mouse dragging previews an accent insertion line, with edge scrolling for an overflowing strip.
   The snapshot's tab order is authoritative: a tab's stable `number` is not its place. A drop calls
   `tab.move` with an insertion boundary before removal, within that workspace and PC. The visible
