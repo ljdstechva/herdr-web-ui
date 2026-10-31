@@ -469,10 +469,10 @@ describe("ClaudeSubagentStatus", () => {
     const told: [string, number][] = [];
     const status = new ClaudeSubagentStatus({ resolve: async () => ({ path: s.path, startedAt: null }), onChange: (paneId, running) => told.push([paneId, running]), now: () => NOW });
     await status.refresh([pane("p1", "claude")]);
-    expect(status.sessionOf("p1")).toEqual({ path: s.path, live: true, startedAt: null });
+    expect(status.sessionOf("p1")).toEqual({ path: s.path, live: true, startedAt: null, pid: null });
     await status.refresh([pane("p1", null)]);
     expect(told).toEqual([["p1", 1], ["p1", 0]]);
-    expect(status.sessionOf("p1")).toEqual({ path: s.path, live: false, startedAt: null });
+    expect(status.sessionOf("p1")).toEqual({ path: s.path, live: false, startedAt: null, pid: null });
     // gone with the pane
     await status.refresh([]);
     expect(status.sessionOf("p1")).toBeNull();
@@ -707,7 +707,7 @@ describe("ClaudeSubagentStatus upkeep", () => {
     const told: number[] = [];
     const status = new ClaudeSubagentStatus({ resolve: async () => ({ path: s.path, startedAt: 42 }), onChange: (_, running) => told.push(running), now: () => now });
     await status.refresh([pane("claude")]);
-    expect(status.sessionOf("p1")).toEqual({ path: s.path, live: true, startedAt: 42 });
+    expect(status.sessionOf("p1")).toEqual({ path: s.path, live: true, startedAt: 42, pid: null });
     status.poll();
     expect(told).toEqual([]);
     // a message to it was written before, and the session is idle: only its own file moves
@@ -1291,5 +1291,28 @@ describe("claudeSubagents, monitors, workflows and wake-ups", () => {
     expect(status.countOf("p1")).toBe(0);
     expect(changes).toEqual([1, 0]);
     status.stop();
+  });
+});
+
+describe("commands that stopped", () => {
+  it("a shell no process writes to any more is not running, and an output is found in another session folder", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-task-stopped-"));
+    roots.push(root);
+    const parent = join(root, "projects", "-opt-work", "44444444-4444-4444-8444-444444444444.jsonl");
+    mkdirSync(join(root, "projects", "-opt-work"), { recursive: true });
+    const call = (id: string, ts: string) => json({ type: "assistant", timestamp: ts, message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command: "sleep 999", description: `wait ${id}`, run_in_background: true } }] } });
+    const answer = (id: string, task: string, ts: string) => json({ type: "user", timestamp: ts, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "started" }] }, toolUseResult: { backgroundTaskId: task } });
+    writeFileSync(parent, call("t1", at(10)) + answer("t1", "bdead01", at(10)) + call("t2", at(20)) + answer("t2", "blive02", at(20)));
+    const before = claudeSubagents(parent, true, NOW, null);
+    expect(before.filter((task) => task.status === "running").map((task) => task.id).sort()).toEqual(["bdead01", "blive02"]);
+    forgetSubagents();
+    const after = claudeSubagents(parent, true, NOW, null, new Set(["blive02"]));
+    expect(after.find((task) => task.id === "bdead01")?.status).toBe("lost");
+    expect(after.find((task) => task.id === "blive02")?.status).toBe("running");
+    // a resumed session runs under another id: its commands' folder is a sibling of the transcript's
+    const other = join(root, "tmp", "claude-1000", "-opt-work", "55555555-5555-4555-8555-555555555555", "tasks");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "blive02.output"), "x\n");
+    expect(taskOutputFile(parent, "blive02", join(root, "tmp"), 1000)).toBe(join(other, "blive02.output"));
   });
 });

@@ -1141,4 +1141,9 @@ export const KO: Record<string, string> = {
   "See inside": "내용 보기",
   "The last 64 KB of the output": "출력의 마지막 64KB",
   "There is nothing to show inside this task": "이 작업에는 보여 줄 내용이 없습니다",
+  "command": "명령",
+  "idle": "유휴",
+  "main agent": "메인 에이전트",
+  "subagent": "하위 에이전트",
+  "working": "작업 중",
 };

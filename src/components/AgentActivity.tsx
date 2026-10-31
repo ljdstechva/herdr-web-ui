@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
-import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronRight, ChevronUp, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
+import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleDot, Hourglass, MessageCircleQuestion, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
+import { AgentMark } from "./AgentMark.tsx";
 import "./AgentActivity.css";
 
 import type { AgentStatus, OmoTask } from "../../shared/protocol.ts";
@@ -24,6 +25,23 @@ export interface AgentActivityProps {
 }
 
 const TASK_ICONS: Readonly<Record<string, LucideIcon>> = { shell: SquareTerminal, monitor: MonitorIcon, workflow: Workflow, wakeup: AlarmClock };
+
+/** How a row of the list is doing, shown by an icon and a word: the main agent's state, or a task's. */
+type RowState = "working" | "needs-you" | "waiting" | "idle" | "running";
+const STATE_ICONS: Readonly<Record<RowState, LucideIcon>> = { working: CircleDot, "needs-you": MessageCircleQuestion, waiting: Hourglass, idle: CircleCheck, running: CircleDot };
+
+function StateChip({ state, t }: { state: RowState; t: Translate }) {
+  const Icon = STATE_ICONS[state];
+  const words: Record<RowState, string> = { working: t("working"), "needs-you": t("Needs you"), waiting: t("waiting"), idle: t("idle"), running: t("running") };
+  return <span className={`agent-activity-state is-${state}`}><Icon aria-hidden="true" />{words[state]}</span>;
+}
+
+/** The main agent's state: at work, asking the person, waiting on what it started, or at rest. */
+export function mainState(status: AgentStatus | undefined, background: number, waiting: boolean): RowState {
+  if (status === "working") return "working";
+  if (status === "blocked") return "needs-you";
+  return waiting || background > 0 ? "waiting" : "idle";
+}
 
 /** "2 subagents · 1 background command": what runs besides the agent, in words. */
 function whatRuns(activity: Activity, t: Translate): string | null {
@@ -104,17 +122,26 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
     <div className="agent-activity" data-main={activity.main ? "" : undefined}>
       {open && listable && (
         <ul id={listId} className="agent-activity-list">
+          <li className="agent-activity-task is-main">
+            <AgentMark agent={agent ?? "agent"} size={16} />
+            <span className="agent-activity-task-title">{name}</span>
+            <span className="agent-activity-role">{t("main agent")}</span>
+            <StateChip state={mainState(status, background, waiting)} t={t} />
+          </li>
           {running.map((task) => {
             const elapsed = taskElapsedMs(task, now + offset);
             const due = wakeupInMs(task, now + offset);
             const Icon = TASK_ICONS[task.category ?? ""] ?? Bot;
             const kind = task.category === "shell" ? null : taskKind(task.category, t);
+            const command = task.category === "shell" || task.category === "monitor";
             const row = <>
               <Icon aria-hidden="true" />
               <span className="agent-activity-task-title" title={task.title}>{task.title}</span>
-              {kind && <span className="agent-activity-task-kind">{kind}</span>}
+              <span className="agent-activity-role">{command ? t("command") : task.category === "workflow" || task.category === "wakeup" ? kind : t("subagent")}</span>
+              {kind && !command && task.category !== "workflow" && task.category !== "wakeup" && <span className="agent-activity-task-kind">{kind}</span>}
               {due !== null ? <span className="agent-activity-task-time">{t("in {time}", { time: formatElapsed(due) })}</span>
                 : elapsed !== null && <span className="agent-activity-task-time">{formatElapsed(elapsed)}</span>}
+              <StateChip state={due !== null ? "waiting" : "running"} t={t} />
             </>;
             // a Claude subagent opens on its conversation, a command on what it printed so far
             const opens = agent === "claude" && taskViewKind(task) !== null;

@@ -37,8 +37,8 @@ try {
   try {
     const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
     try {
-      for (const width of [390, 1280]) {
-        const touch = width === 390;
+      for (const width of [360, 390, 1280]) {
+        const touch = width < 1000;
         const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: touch, hasTouch: touch, locale: "en-US" });
         try {
           await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
@@ -51,6 +51,18 @@ try {
 
           // 1. the "what is running" line: its rows open the subagent and the command
           await page.locator("button.agent-activity-bar").click();
+          // who is who: the main agent first with its state, then each subagent and command with theirs
+          const main = page.locator(".agent-activity-task.is-main");
+          await main.waitFor();
+          assert.match(await main.innerText(), /main agent[\s\S]*working/i);
+          assert.match(await page.locator(".agent-activity-task-open", { hasText: "Find every caller" }).innerText(), /subagent[\s\S]*running/i);
+          assert.match(await page.locator(".agent-activity-task-open", { hasText: "bun test" }).innerText(), /command[\s\S]*running/i);
+          for (const row of await page.locator(".agent-activity-task").all()) {
+            const box = (await row.boundingBox())!;
+            assert.ok(box.x >= 0 && box.x + box.width <= width + 0.5, `${width}px: a list row fits the screen`);
+            if (touch) assert.ok(box.height >= 40, `${width}px: a list row is a finger's height (${box.height})`);
+          }
+          await noSideways(page, `${width}px working list`);
           const subagent = page.locator(".agent-activity-task-open", { hasText: "Find every caller" });
           await subagent.click();
           const view = page.locator(".task-view[role='dialog'][aria-modal='true']");
@@ -62,7 +74,10 @@ try {
           if (touch) {
             const box = (await view.boundingBox())!;
             assert.ok(box.x >= 0 && box.x + box.width <= width + 0.5, "the sheet fits the phone's width");
+            const close = (await view.locator("[aria-label='Close']").boundingBox())!;
+            assert.ok(close.width >= 40 && close.height >= 40, `${width}px: the sheet's close button is a finger's size (${close.width}x${close.height})`);
           }
+          assert.match(await view.locator(".task-view-meta").innerText(), /subagent/);
           await closeView(page, "escape");
 
           if (!(await page.locator(".agent-activity-list").isVisible())) await page.locator("button.agent-activity-bar").click();

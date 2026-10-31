@@ -28,7 +28,8 @@ import { ConversationMonitor } from "./conversation-monitor.ts";
 import { omoPanes } from "./omo.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
-import { ClaudeSubagentStatus, claudeSubagents, fileTail, runningOutputFile, subagentTranscript, taskOutputFile, within } from "./claude-subagents.ts";
+import { ClaudeSubagentStatus, claudeSubagents, fileTail, plain, runningOutputFile, subagentTranscript, taskOutputFile, within } from "./claude-subagents.ts";
+import { foregroundOutput, runningTaskIds } from "./task-files.ts";
 import { BackgroundWait } from "./background-wait.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
@@ -1070,6 +1071,7 @@ export function createServer(
       claudeAgentsChanged(paneId, 0, 0, null, held);
     },
     onChange: (paneId, running, turnRunning, promptAt) => claudeAgentsChanged(paneId, running, turnRunning, promptAt),
+    runningIds: () => runningTaskIds(),
   });
   /**
    * Codex panes count the subagents their session spawned as background tasks (server/codex-subagents.ts).
@@ -2472,7 +2474,7 @@ export function createServer(
             })());
           }
           const claude = claudeAgents.sessionOf(paneId);
-          if (claude !== null) return jsonResponse({ tasks: claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
+          if (claude !== null) return jsonResponse({ tasks: claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt, runningTaskIds()), runs: [], server_time });
           // a Codex pane's subagents, kept by its poll; found here if the background lookup has not got to it yet
           if (!codexAgents.known(paneId)) {
             await within(1000, (async () => {
@@ -2502,8 +2504,9 @@ export function createServer(
           if (claude === null) return missing();
           // what the call running in the foreground has printed so far: its own task file while it runs
           if (pathname === "/api/pane/task/running") {
-            const background = new Set(claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt).map((task) => task.id));
-            const file = runningOutputFile(claude.path, background);
+            const background = new Set(claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt, runningTaskIds()).filter((task) => task.status === "running").map((task) => task.id));
+            // the file a process under the pane's Claude holds; without /proc, the newest of the session's own folder
+            const file = claude.pid !== null ? foregroundOutput(claude.pid, background, undefined, (path) => plain(path)?.mtimeMs ?? 0) : runningOutputFile(claude.path, background);
             const tail = file === null ? null : fileTail(file, 16 * 1024);
             if (tail === null) return jsonResponse({ error: { code: "nothing_running", message: "no command runs in the foreground of this pane's session" } }, 404);
             return jsonResponse({ text: tail.text, size: tail.size, cut: tail.cut }, 200, { "cache-control": "no-store" });

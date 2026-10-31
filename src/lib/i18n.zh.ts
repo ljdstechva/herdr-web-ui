@@ -1145,4 +1145,9 @@ export const ZH: Record<string, string> = {
   "See inside": "查看内容",
   "The last 64 KB of the output": "输出的最后 64 KB",
   "There is nothing to show inside this task": "此任务没有可显示的内容",
+  "command": "命令",
+  "idle": "空闲",
+  "main agent": "主代理",
+  "subagent": "子代理",
+  "working": "工作中",
 };

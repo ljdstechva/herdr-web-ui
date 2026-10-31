@@ -546,7 +546,18 @@ export function taskOutputFile(parentPath: string, id: string, tmp = process.env
   const dir = tasksDir(parentPath, tmp, uid);
   if (!AGENT_ID.test(id) || dir === null) return null;
   const path = join(dir, `${id}.output`);
-  return plain(path) === null ? null : path;
+  if (plain(path) !== null) return path;
+  // The folder is named by the session id the Claude process had when the command started: a
+  // session resumed or restarted keeps its transcript's name but runs under a new id, so its
+  // commands are in a sibling folder of the same project. Task ids are random: one is one command.
+  const project = dirname(dirname(dir));
+  let sessions: string[];
+  try { sessions = readdirSync(project); } catch { return null; }
+  for (const session of sessions) {
+    const other = join(project, session, "tasks", `${id}.output`);
+    if (plain(other) !== null) return other;
+  }
+  return null;
 }
 
 function tasksDir(parentPath: string, tmp: string, uid: number | null): string | null {
@@ -663,7 +674,7 @@ const time = (value: string | null): number => value === null ? 0 : Date.parse(v
 /** what each session's last read said of each agent: kept while the transcript is read in parts */
 const previous = new Map<string, Map<string, OmoTask>>();
 
-export function claudeSubagentState(parentPath: string, live: boolean, now = Date.now(), since: number | null = null): { tasks: OmoTask[]; settled: boolean; watch: string[]; running: number; turnRunning: number; promptAt: number | null; expires: number | null } {
+export function claudeSubagentState(parentPath: string, live: boolean, now = Date.now(), since: number | null = null, running_ids: ReadonlySet<string> | null = null): { tasks: OmoTask[]; settled: boolean; watch: string[]; running: number; turnRunning: number; promptAt: number | null; expires: number | null } {
   const dir = subagentsDir(parentPath);
   const files = agentIds(parentPath).flatMap((id) => {
     const stat = plain(join(dir, `agent-${id}.jsonl`));
@@ -743,7 +754,11 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
     for (const [id, launch] of source.launches) {
       if (all.has(id)) continue;
       const end = ends.get(id) ?? (launch.until !== null && now >= launch.until ? { at: launch.until, status: "completed" as const } : undefined);
-      const lost = !live || (since !== null && launch.at < since - START_SLACK_MS);
+      // a command writes its output file for as long as it runs: a shell whose file no process
+      // holds has stopped (server/task-files.ts), whatever the transcript was told. A process
+      // restarted in place (Claude Code's /restart) keeps its start time and its old ids
+      const stopped = launch.kind === "shell" && running_ids !== null && !running_ids.has(id) && now - launch.at > START_SLACK_MS;
+      const lost = !live || stopped || (since !== null && launch.at < since - START_SLACK_MS);
       if (!end && !lost && launch.until !== null) expires = Math.min(expires ?? Infinity, launch.until);
       keep({ id, title: launch.title, category: launch.kind, model: null, status: end?.status ?? (lost ? "lost" : "running"), started_at: iso(launch.at), ended_at: iso(end?.at ?? null), turns: null, tool_calls: null, tokens: null, ...(launch.kind === "wakeup" && launch.until !== null ? { due_at: iso(launch.until) } : {}) });
     }
@@ -768,7 +783,7 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   }
 }
 
-export const claudeSubagents = (parentPath: string, live: boolean, now = Date.now(), since: number | null = null): OmoTask[] => claudeSubagentState(parentPath, live, now, since).tasks;
+export const claudeSubagents = (parentPath: string, live: boolean, now = Date.now(), since: number | null = null, running_ids: ReadonlySet<string> | null = null): OmoTask[] => claudeSubagentState(parentPath, live, now, since, running_ids).tasks;
 
 /** Forget every read kept between calls (tests compare against a cold read). */
 export function forgetSubagents(): void {
@@ -792,6 +807,8 @@ export interface ClaudeSubagentDeps {
    * started (`turnRunning`, server/background-wait.ts): no turn started or ended.
    */
   onChange: (paneId: string, running: number, turnRunning: number, promptAt: number | null) => void;
+  /** the ids of the commands running now on this PC (server/task-files.ts runningTaskIds); unset or null: not known */
+  runningIds?: () => ReadonlySet<string> | null;
   pollMs?: number;
   refreshMs?: number;
   now?: () => number;
@@ -854,9 +871,9 @@ export class ClaudeSubagentStatus {
   }
 
   /** The transcript of the Claude session the pane holds, or last held, whether it still runs Claude, and when that process started. */
-  sessionOf(paneId: string): { path: string; live: boolean; startedAt: number | null } | null {
+  sessionOf(paneId: string): { path: string; live: boolean; startedAt: number | null; pid: number | null } | null {
     const tracked = this.panes.get(paneId);
-    return tracked?.path ? { path: tracked.path, live: tracked.live, startedAt: tracked.startedAt } : null;
+    return tracked?.path ? { path: tracked.path, live: tracked.live, startedAt: tracked.startedAt, pid: tracked.pid ?? null } : null;
   }
 
   /** Finds the Claude panes of a snapshot and their transcripts; a lookup costs process calls, so a known one is not repeated. */
@@ -960,8 +977,11 @@ export class ClaudeSubagentStatus {
       if (tracked.path !== null && tracked.live) {
         const scanAt = this.now();
         const before = subagentsSignature(tracked.path, tracked.watch, scanAt);
-        if (`${before.sig}:${tracked.startedAt}` === tracked.sig && (tracked.expires == null || scanAt < tracked.expires)) continue;
-        const state = claudeSubagentState(tracked.path, true, this.now(), tracked.startedAt);
+        // a command that stops changes no file the signature reads: what runs on the PC is part of it
+        const ids = this.deps.runningIds?.() ?? null;
+        const runningNow = ids === null ? "" : [...ids].sort().join(",");
+        if (`${before.sig}:${tracked.startedAt}:${runningNow}` === tracked.sig && (tracked.expires == null || scanAt < tracked.expires)) continue;
+        const state = claudeSubagentState(tracked.path, true, this.now(), tracked.startedAt, ids);
         ({ running, turnRunning, promptAt } = state);
         tracked.expires = state.expires;
         tracked.watch = state.watch;
@@ -969,7 +989,7 @@ export class ClaudeSubagentStatus {
         // Certify only the versions and dependency set read, never a concurrent append's newer signature.
         // Coarse file clocks require every input to have been quiet before the scan began.
         tracked.sig = state.settled && before.sig === after.sig && scanAt - before.latestMs >= 1000
-          ? `${after.sig}:${tracked.startedAt}` : null;
+          ? `${after.sig}:${tracked.startedAt}:${runningNow}` : null;
       }
       if (!tracked.reset && running === tracked.running && turnRunning === tracked.turnRunning && promptAt === tracked.promptAt) continue;
       tracked.reset = false;

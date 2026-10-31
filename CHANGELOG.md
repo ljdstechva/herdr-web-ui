@@ -8,6 +8,20 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Who is who in the working list.** The list over the message box starts with the main agent
+  (its mark, "main agent" and its state: working, needs you, waiting, idle), then each subagent
+  and command with its role and state; the look inside a task names it a subagent or a command.
+  On a phone every row is a finger's height and the agent type and time give way first.
+
+### Fixed
+- **A command's output could not be opened after Claude restarted.** Claude Code files a
+  command's output under the session id its process had when the command started; a resumed or
+  restarted session keeps its transcript's name but runs under a new id, so the look inside read
+  "Couldn't read this task". The output is now found in any session folder of the project.
+- **Commands that died with a restart stayed "running" for days.** A background command writes
+  its output file for as long as it runs; one that no process writes any more is now shown as
+  stopped, and no longer keeps the pane at BG. "Running now" finds the foreground command through
+  the pane's own Claude process.
 - **Look inside a subagent.** A Claude pane's running subagents and background commands in
   the "what is still working" line over the message box, and in the status line's background
   list, open when tapped: a subagent shows its own conversation (its prompt, the tools it ran and

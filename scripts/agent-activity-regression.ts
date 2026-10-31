@@ -83,7 +83,9 @@ try {
   await report("idle");
   await strip.filter({ hasText: "2 subagents still running" }).waitFor();
   await page.locator("button.agent-activity-bar").tap();
-  const rows = page.locator(".agent-activity-task-title");
+  // the main agent heads the list; the rows under it are what runs beside it
+  assert.match(await page.locator(".agent-activity-task.is-main").innerText(), /main agent/);
+  const rows = page.locator(".agent-activity-task:not(.is-main) .agent-activity-task-title");
   await rows.first().waitFor();
   assert.deepEqual((await rows.allTextContents()).sort(), ["Ada · data import", "Grace · report check"]);
   assert.match(await page.locator(".agent-activity-task-time").first().textContent() ?? "", /^\d+s$/);

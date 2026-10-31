@@ -1143,4 +1143,9 @@ export const JA: Record<string, string> = {
   "See inside": "中身を見る",
   "The last 64 KB of the output": "出力の最後の 64 KB",
   "There is nothing to show inside this task": "このタスクには表示できる内容がありません",
+  "command": "コマンド",
+  "idle": "待機中",
+  "main agent": "メインエージェント",
+  "subagent": "サブエージェント",
+  "working": "作業中",
 };

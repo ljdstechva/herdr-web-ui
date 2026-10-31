@@ -71,3 +71,19 @@
 @media (max-width: 640px) {
   .task-view { height: 92%; }
 }
+
+.task-view-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--status-working);
+}
+
+/* a phone: the sheet takes the height, and the close button a finger's room */
+@media (pointer: coarse) {
+  .task-view-header .icon-button {
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
+  }
+}

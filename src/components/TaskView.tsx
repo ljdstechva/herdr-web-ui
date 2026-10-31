@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { Bot, SquareTerminal, X } from "lucide-react";
 
 import "./TaskView.css";
 
@@ -115,9 +115,10 @@ export function TaskView({ paneId, task, onClose }: { paneId: string; task: OmoT
     <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="modal task-view" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`}>
         <header className="modal-header task-view-header">
+          {kind === "output" ? <SquareTerminal className="task-view-icon" aria-hidden="true" /> : <Bot className="task-view-icon" aria-hidden="true" />}
           <span className="task-view-heading">
             <h2 className="modal-title task-view-title" id={`${id}-title`}>{task.title}</h2>
-            <span className={`task-view-meta is-${task.status}`}>{[words[task.status], meta].filter((item) => item !== "").join(" · ")}</span>
+            <span className={`task-view-meta is-${task.status}`}>{[kind === "output" ? t("command") : t("subagent"), words[task.status], meta].filter((item) => item !== "").join(" · ")}</span>
           </span>
           <button ref={close} type="button" className="icon-button" aria-label={t("Close")} title={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>

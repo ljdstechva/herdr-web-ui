@@ -167,3 +167,56 @@ button.agent-activity-bar {
 @media (pointer: coarse) {
   .agent-activity-task-open { min-height: var(--touch-target); }
 }
+
+/* Who each row is (the main agent, a subagent, a command) and how it is doing */
+.agent-activity-task.is-main {
+  border-bottom: var(--hairline) solid var(--border);
+  margin-bottom: var(--space-1);
+  /* its state lines up with the rows under it, which end in a › */
+  padding-inline-end: calc(2 * var(--space-2) + var(--icon-size));
+}
+
+.agent-activity-task.is-main > svg:first-child {
+  color: inherit;
+}
+
+.agent-activity-role {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  line-height: 16px;
+}
+
+.agent-activity-task .agent-activity-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.agent-activity-task .agent-activity-state svg {
+  width: 12px;
+  height: 12px;
+  color: inherit;
+}
+
+.agent-activity-state.is-working,
+.agent-activity-state.is-running { color: var(--status-working); }
+.agent-activity-state.is-needs-you { color: var(--status-blocked); }
+.agent-activity-state.is-waiting { color: var(--text); }
+.agent-activity-state.is-idle { color: var(--status-done); }
+
+/* a phone's row keeps who and how; the agent type and the time give way */
+@media (max-width: 480px) {
+  .agent-activity-task-kind,
+  .agent-activity-task-time { display: none; }
+}
+
+@media (pointer: coarse) {
+  .agent-activity-task { min-height: var(--touch-target); }
+}
