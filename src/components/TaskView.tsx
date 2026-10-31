@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bot, SquareTerminal } from "lucide-react";
 
 import "./TaskView.css";
@@ -10,6 +10,7 @@ import { useT } from "../lib/i18n.ts";
 import { formatElapsed, taskElapsedMs } from "../lib/omoTasks.ts";
 import { taskKind } from "../lib/agentActivity.ts";
 import { outputTail } from "../lib/liveTerminal.ts";
+import { handbackAsAnswer } from "../lib/subagentTurns.ts";
 import type { ConversationTurn, OmoTask } from "../../shared/protocol.ts";
 
 const POLL_MS = 2500;
@@ -119,7 +120,8 @@ export function TaskView({ paneId, task: opened, agentName, onClose }: { paneId:
   };
   const elapsed = taskElapsedMs(task, Date.now());
   const meta = [taskKind(task.category, t), task.model, elapsed === null ? null : formatElapsed(elapsed)].filter((item) => item !== null).join(" · ");
-  const shown = [...older, ...(turns ?? [])];
+  // the report a subagent handed back reads as its answer, not as a folded call (lib/subagentTurns.ts)
+  const shown = useMemo(() => handbackAsAnswer([...older, ...(turns ?? [])]), [older, turns]);
   const moreBefore = olderCursor === undefined ? cursor !== null : olderCursor !== null;
   const loading = kind === "conversation" ? turns === null : kind === "output" ? output === null : false;
 

@@ -110,7 +110,8 @@ const claudeTaskTurns = () => [
   { role: "user", ts: ago(2), parts: [{ kind: "text", text: "Find every caller of charge() in server/ and say which ones pass an idempotency key." }] },
   { role: "assistant", ts: ago(1.5), parts: [
     { kind: "tool", name: "Grep", summary: "charge\\(", input: "charge\\(", output: "server/payments.ts:41\nserver/refunds.ts:88\nserver/jobs/retry.ts:17" },
-    { kind: "text", text: "Three callers so far. `payments.ts` and `retry.ts` pass a key; `refunds.ts` does not." },
+    // Claude Code 2.1.31x: a subagent hands its report back through a call, which the look inside shows as its answer
+    { kind: "tool", name: "SubagentHandback", summary: "SubagentHandback", input: JSON.stringify({ message: "Three callers so far. `payments.ts` and `retry.ts` pass a key; `refunds.ts` does not." }, null, 2), output: "{\"success\":true,\"message\":\"Report delivered to your caller.\"}" },
   ] },
 ];
 const step = (id: string, state: string, error: string | null = null) => ({ id, label: id, state, error });

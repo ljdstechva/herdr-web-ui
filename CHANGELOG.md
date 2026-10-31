@@ -20,6 +20,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   On a phone every row is a finger's height and the agent type and time give way first.
 
 ### Fixed
+- **A subagent's final report was hidden.** Claude Code 2.1.31x has a subagent hand its report
+  back through a `SubagentHandback` call instead of a reply, so the look inside showed only
+  "Worked for 43s · 1 other tool". The report now reads as the subagent's answer.
 - **A command's output could not be opened after Claude restarted.** Claude Code files a
   command's output under the session id its process had when the command started; a resumed or
   restarted session keeps its transcript's name but runs under a new id, so the look inside read
