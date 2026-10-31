@@ -1592,6 +1592,12 @@
   height: 12px;
 }
 
+/* the words stay on one line; the call gives way */
+.chat-live-terminal-label > span:first-of-type {
+  flex: none;
+  white-space: nowrap;
+}
+
 .chat-live-terminal-call {
   min-width: 0;
   overflow: hidden;

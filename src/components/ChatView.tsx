@@ -1149,6 +1149,11 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   };
   const runningCall = state.source === "conversation" && agentStatus === "working" && !ended ? runningTool(shownTurns) : null;
   useEffect(() => setScreenWanted(runningCall !== null), [runningCall]);
+  // the running output grows under the last turn: a reader at the end stays there, as for a new turn
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (node !== null && stickToBottom.current) node.scrollTop = node.scrollHeight;
+  }, [liveScreen]);
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><FileUrlContext.Provider value={imageUrl}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
     <div className="chat-transcript" data-conversation-source={state.conversationSource}>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
