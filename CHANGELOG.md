@@ -15,9 +15,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   command shows what it has printed so far (the last 64 KB), as the terminal would. Read-only,
   from the session's own files (`GET /api/pane/task/conversation`, `/api/pane/task/output`,
   `/api/pane/task/tool-output`).
-- **Running output in the chat.** While a call runs, its output is on the agent's screen but not
-  in its transcript yet: the chat now shows the end of the screen under the running call ("Running
-  now"), read every 1.5 s, and drops it once the call's result arrives.
+- **Running output in the chat.** While a call runs, its output is not in the transcript yet,
+  and Claude Code's screen shows only how many lines it printed: the chat now shows the last lines
+  the command printed under the running call ("Running now"), read every 1.5 s from the output
+  file Claude Code keeps while the call runs (`GET /api/pane/task/running`), else from the end of
+  the agent's screen, and drops it once the call's result arrives.
 - **Answers list.** A button at the chat's top right lists the agent's answers, newest first,
   each by a very short summary (its first heading or first sentence) and its time; answers that
   end in a question and background results that came back are marked. A pick scrolls back to the

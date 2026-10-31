@@ -543,10 +543,37 @@ export function subagentTranscript(parentPath: string, id: string): string | nul
  * system's. Null for an id that is not a plain word, a missing file or one that is not plain.
  */
 export function taskOutputFile(parentPath: string, id: string, tmp = process.env["CLAUDE_CODE_TMPDIR"] || tmpdir(), uid = process.getuid?.() ?? null): string | null {
-  if (!AGENT_ID.test(id) || uid === null) return null;
-  const session = basename(parentPath).replace(/\.jsonl$/, "");
-  const path = join(tmp, `claude-${uid}`, basename(dirname(parentPath)), session, "tasks", `${id}.output`);
+  const dir = tasksDir(parentPath, tmp, uid);
+  if (!AGENT_ID.test(id) || dir === null) return null;
+  const path = join(dir, `${id}.output`);
   return plain(path) === null ? null : path;
+}
+
+function tasksDir(parentPath: string, tmp: string, uid: number | null): string | null {
+  if (uid === null) return null;
+  return join(tmp, `claude-${uid}`, basename(dirname(parentPath)), basename(parentPath).replace(/\.jsonl$/, ""), "tasks");
+}
+
+/**
+ * The output of the command the session runs in the foreground now. Claude Code writes a
+ * foreground `Bash` call's output to a task file of its own while it runs, as it does a
+ * background one's, and removes it when the call ends: the newest plain output file that is no
+ * background command's (`background`: their ids) is it. Null when there is none.
+ */
+export function runningOutputFile(parentPath: string, background: ReadonlySet<string>, tmp = process.env["CLAUDE_CODE_TMPDIR"] || tmpdir(), uid = process.getuid?.() ?? null): string | null {
+  const dir = tasksDir(parentPath, tmp, uid);
+  if (dir === null) return null;
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return null; }
+  let best: { path: string; mtimeMs: number } | null = null;
+  for (const name of names) {
+    const id = name.endsWith(".output") ? name.slice(0, -".output".length) : "";
+    if (!AGENT_ID.test(id) || background.has(id)) continue;
+    const path = join(dir, name);
+    const stat = plain(path);
+    if (stat !== null && (best === null || stat.mtimeMs > best.mtimeMs)) best = { path, mtimeMs: stat.mtimeMs };
+  }
+  return best?.path ?? null;
 }
 
 /** The last `max` bytes of a plain file as text, cut at a line start when it was cut; null when it cannot be read. */

@@ -10,11 +10,10 @@ import { useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
 import { formatElapsed, taskElapsedMs } from "../lib/omoTasks.ts";
 import { taskKind } from "../lib/agentActivity.ts";
+import { outputTail } from "../lib/liveTerminal.ts";
 import type { ConversationTurn, OmoTask } from "../../shared/protocol.ts";
 
 const POLL_MS = 2500;
-/** a terminal's colours and cursor moves: an output file holds what the command printed, as printed */
-const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
 
 /** What a look inside a task shows: a subagent's conversation, a command's output, or nothing to look at. */
 export function taskViewKind(task: Pick<OmoTask, "category">): "conversation" | "output" | null {
@@ -69,7 +68,7 @@ export function TaskView({ paneId, task, onClose }: { paneId: string; task: OmoT
         } else {
           const next = await fetchTaskOutput(paneId, task.id);
           if (!alive) return;
-          setOutput({ text: next.text.replace(ANSI, ""), cut: next.cut });
+          setOutput({ text: outputTail(next.text, Infinity), cut: next.cut });
         }
         setFailed(false);
       } catch {

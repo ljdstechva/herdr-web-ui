@@ -40,7 +40,7 @@ import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { chatOutline, type OutlineEntry } from "../lib/chatOutline.ts";
-import { runningTool, screenTail } from "../lib/liveTerminal.ts";
+import { outputTail, runningTool, screenTail } from "../lib/liveTerminal.ts";
 
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 export const ChatPaneContext = createContext<string | null>(null);
@@ -601,7 +601,7 @@ function FallbackTurn({ paneId, message }: { paneId: string; message: Transcript
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
 export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, onFast, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
-  const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript, peekPaneConversation } = useMachineApi();
+  const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript, fetchRunningOutput, peekPaneConversation } = useMachineApi();
   // The conversation as this page last read it (lib/api.ts keeps the answer for its 304s): a chat
   // opened again, from another pane or back from the terminal lens, draws it at once and reads
   // behind it, where it used to stand empty on a loading line until the first answer came.
@@ -1036,8 +1036,12 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async (): Promise<void> => {
       try {
-        const screen = await fetchPaneTranscript(paneId, 80);
-        if (alive) setLiveScreen(screenTail(screen.text));
+        // Claude Code writes a running command's output to a file of its own (server
+        // runningOutputFile); its screen shows only a line count. Others: the end of the screen
+        let shown: string | null = null;
+        if (agent === "claude") shown = await fetchRunningOutput(paneId).then((output) => outputTail(output.text), () => null);
+        if (shown === null) shown = screenTail((await fetchPaneTranscript(paneId, 80)).text);
+        if (alive) setLiveScreen(shown);
       } catch {
         // the next read tries again; what was shown stays until the call ends
       }
@@ -1045,7 +1049,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     };
     void read();
     return () => { alive = false; clearTimeout(timer); };
-  }, [screenWanted, visible, paneId, fetchPaneTranscript]);
+  }, [screenWanted, visible, paneId, agent, fetchPaneTranscript, fetchRunningOutput]);
 
   const onScroll = (): void => {
     const node = scroller.current;

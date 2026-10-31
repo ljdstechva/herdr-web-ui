@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { HerdrPane } from "../shared/protocol.ts";
 import { BackgroundWait, WAIT_LIMIT_MS } from "./background-wait.ts";
-import { ClaudeSubagentStatus, claudeSubagentState, claudeSubagents, forgetSubagents, lineNotifications, readLines, remember, subagentDetails, subagentTranscript, taskNotification, taskOutputFile, fileTail, within } from "./claude-subagents.ts";
+import { ClaudeSubagentStatus, claudeSubagentState, claudeSubagents, forgetSubagents, lineNotifications, readLines, remember, subagentDetails, subagentTranscript, taskNotification, taskOutputFile, fileTail, runningOutputFile, within } from "./claude-subagents.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -233,6 +233,22 @@ describe("a look inside a task", () => {
     expect(taskOutputFile(parent, "bx9", join(root, "tmp"), 1000)).toBe(join(tasks, "bx9.output"));
     expect(taskOutputFile(parent, "bx9", join(root, "tmp"), 1001)).toBeNull();
     expect(taskOutputFile(parent, "b/x9", join(root, "tmp"), 1000)).toBeNull();
+  });
+
+  it("finds the foreground command's output: the newest output that is no background command's", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-task-running-"));
+    roots.push(root);
+    const parent = join(root, "projects", "-opt-work", "33333333-3333-4333-8333-333333333333.jsonl");
+    const tasks = join(root, "tmp", "claude-1000", "-opt-work", "33333333-3333-4333-8333-333333333333", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    expect(runningOutputFile(parent, new Set(), join(root, "tmp"), 1000)).toBeNull();
+    writeFileSync(join(tasks, "bgcmd1.output"), "background\n");
+    writeFileSync(join(tasks, "fgcmd2.output"), "tick-1\n");
+    writeFileSync(join(tasks, "older3.output"), "old\n");
+    utimesSync(join(tasks, "older3.output"), new Date(NOW - 60_000), new Date(NOW - 60_000));
+    utimesSync(join(tasks, "fgcmd2.output"), new Date(NOW - 1_000), new Date(NOW - 1_000));
+    utimesSync(join(tasks, "bgcmd1.output"), new Date(NOW), new Date(NOW));
+    expect(runningOutputFile(parent, new Set(["bgcmd1"]), join(root, "tmp"), 1000)).toBe(join(tasks, "fgcmd2.output"));
   });
 
   it("reads the end of an output, from a line's start once it is cut", () => {

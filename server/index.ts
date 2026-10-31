@@ -28,7 +28,7 @@ import { ConversationMonitor } from "./conversation-monitor.ts";
 import { omoPanes } from "./omo.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
-import { ClaudeSubagentStatus, claudeSubagents, fileTail, subagentTranscript, taskOutputFile, within } from "./claude-subagents.ts";
+import { ClaudeSubagentStatus, claudeSubagents, fileTail, runningOutputFile, subagentTranscript, taskOutputFile, within } from "./claude-subagents.ts";
 import { BackgroundWait } from "./background-wait.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
@@ -2488,10 +2488,10 @@ export function createServer(
       // A look inside one of a Claude pane's background tasks, from the status line's list: a
       // subagent's own conversation (paged like the pane's), or what a background command has
       // printed so far (the end of its output file). Read-only, the session's own files only.
-      if (pathname === "/api/pane/task/conversation" || pathname === "/api/pane/task/output" || pathname === "/api/pane/task/tool-output") {
+      if (pathname === "/api/pane/task/conversation" || pathname === "/api/pane/task/output" || pathname === "/api/pane/task/tool-output" || pathname === "/api/pane/task/running") {
         if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
         const paneId = url.searchParams.get("pane_id");
-        const taskId = url.searchParams.get("task_id");
+        const taskId = pathname === "/api/pane/task/running" ? "running" : url.searchParams.get("task_id");
         if (!paneId || !taskId) return badRequest("missing_parameter", "pane_id and task_id query parameters are required");
         const missing = (): Response => jsonResponse({ error: { code: "task_not_found", message: "no such subagent or background command in this pane's session" } }, 404);
         try {
@@ -2500,6 +2500,14 @@ export function createServer(
           }
           const claude = claudeAgents.sessionOf(paneId);
           if (claude === null) return missing();
+          // what the call running in the foreground has printed so far: its own task file while it runs
+          if (pathname === "/api/pane/task/running") {
+            const background = new Set(claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt).map((task) => task.id));
+            const file = runningOutputFile(claude.path, background);
+            const tail = file === null ? null : fileTail(file, 16 * 1024);
+            if (tail === null) return jsonResponse({ error: { code: "nothing_running", message: "no command runs in the foreground of this pane's session" } }, 404);
+            return jsonResponse({ text: tail.text, size: tail.size, cut: tail.cut }, 200, { "cache-control": "no-store" });
+          }
           if (pathname === "/api/pane/task/output") {
             const file = taskOutputFile(claude.path, taskId);
             const tail = file === null ? null : fileTail(file);

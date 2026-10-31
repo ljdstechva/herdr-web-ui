@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ConversationTurn } from "../../shared/protocol.ts";
-import { runningTool, screenTail } from "./liveTerminal.ts";
+import { outputTail, runningTool, screenTail } from "./liveTerminal.ts";
 
 const tool = (output: string, error?: boolean): ConversationTurn => ({ role: "assistant", ts: null, parts: [{ kind: "text", text: "On it." }, { kind: "tool", name: "Bash", summary: "bun test", input: "bun test", output, ...(error ? { error } : {}) }] });
 
@@ -21,4 +21,9 @@ test("the screen's end is what is above Claude Code's input box", () => {
 test("an older boxed input and a screen with no box", () => {
   expect(screenTail(["out 1", "out 2", "╭──────────╮", "│ >        │", "╰──────────╯"].join("\n"))).toBe("out 1\nout 2");
   expect(screenTail("\n\na\nb\n\n")).toBe("a\nb");
+});
+
+test("a command's output ends as plain lines: colours gone, a progress line's last state kept", () => {
+  expect(outputTail("\u001b[32mok\u001b[0m 1\nbuild 10%\rbuild 100%\n\n")).toBe("ok 1\nbuild 100%");
+  expect(outputTail(Array.from({ length: 30 }, (_, i) => `tick-${i + 1}`).join("\n"), 3)).toBe("tick-28\ntick-29\ntick-30");
 });

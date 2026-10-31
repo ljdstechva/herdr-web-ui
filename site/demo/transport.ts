@@ -832,6 +832,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json(result);
   }
   if (path === "/api/pane/omo-tasks") return json(keyOfPane.get(paneId) === OMO_TASKS_PANE ? { tasks: omoTasks(), runs: omoRuns() } : claudeTasksShown && keyOfPane.get(paneId) === CLAUDE_TASKS_PANE ? { tasks: claudeTasks(), runs: [] } : { tasks: [], runs: [] });
+  // no demo command runs in the foreground: the chat falls back to the screen's end
+  if (path === "/api/pane/task/running") return error("nothing_running", "no command runs in the foreground of this pane's session", 404);
   if (path === "/api/pane/task/conversation" || path === "/api/pane/task/output" || path === "/api/pane/task/tool-output") {
     const task = query.get("task_id");
     if (keyOfPane.get(paneId) !== CLAUDE_TASKS_PANE || (task !== "a0demo1" && task !== "b0demo2")) return error("task_not_found", "no such subagent or background command in this pane's session", 404);

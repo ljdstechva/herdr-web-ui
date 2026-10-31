@@ -35,3 +35,13 @@ export function screenTail(screen: string, lines = 14): string {
   while (rows.length > 0 && rows[0] === "") rows.shift();
   return rows.join("\n");
 }
+
+/** A terminal's colours and cursor moves: an output file holds what the command printed, as printed. */
+const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
+
+/** The end of a command's output as plain text: at most `lines` lines, a carriage return's overwritten start dropped. */
+export function outputTail(output: string, lines = 14): string {
+  const rows = output.replace(ANSI, "").split("\n").map((row) => row.slice(row.lastIndexOf("\r") + 1).trimEnd());
+  while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
+  return rows.slice(-lines).join("\n");
+}

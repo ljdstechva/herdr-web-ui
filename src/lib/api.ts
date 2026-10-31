@@ -749,6 +749,11 @@ export async function fetchTaskOutput(paneId: string, taskId: string, machineId 
   return await getJson<{ text: string; size: number; cut: boolean }>(machinePath(machineId, `pane/task/output?${query.toString()}`));
 }
 
+/** GET /api/pane/task/running: what the command a Claude pane runs in the foreground has printed so far (its last 16 KB); 404 when none runs. */
+export async function fetchRunningOutput(paneId: string, machineId = "local"): Promise<{ text: string; size: number; cut: boolean }> {
+  return await getJson<{ text: string; size: number; cut: boolean }>(machinePath(machineId, `pane/task/running?pane_id=${encodeURIComponent(paneId)}`));
+}
+
 /** GET /api/pane/files: paths under the pane's cwd matching `query`, for @-mentions. */
 export async function fetchPaneFiles(paneId: string, query: string, limit = 20, machineId = "local"): Promise<string[]> {
   const params = new URLSearchParams({ pane_id: paneId, q: query, limit: String(limit) });
