@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useContext, useEffect, useId, useState } from "react";
 import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleDot, Hourglass, MessageCircleQuestion, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
 import { AgentMark } from "./AgentMark.tsx";
 import "./AgentActivity.css";
@@ -7,7 +7,8 @@ import type { AgentStatus, OmoTask } from "../../shared/protocol.ts";
 import { agentActivity, runningTasks, taskKind, wakeupInMs, type Activity } from "../lib/agentActivity.ts";
 import { agentDisplayLabel } from "../lib/compose.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
-import { TaskView, taskViewKind } from "./TaskView.tsx";
+import { taskViewKind } from "./TaskView.tsx";
+import { TaskViewContext } from "../lib/taskViewContext.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { clockOffsetMs, formatElapsed, taskElapsedMs } from "../lib/omoTasks.ts";
 
@@ -67,8 +68,8 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
   const [offset, setOffset] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
-  /** the task looked inside (TaskView): it stays open after the task ends and the line goes */
-  const [viewing, setViewing] = useState<OmoTask | null>(null);
+  /** the look inside a task, in the chat's place (PaneTerminal) */
+  const taskView = useContext(TaskViewContext);
   const listId = useId();
   const watching = background > 0 || waiting;
 
@@ -100,8 +101,7 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
   const activity = agentActivity(status, background, waiting, tasks);
   const running = background > 0 ? runningTasks(tasks) : [];
   useEffect(() => { if (activity === null || running.length === 0) setOpen(false); }, [activity === null, running.length]);
-  const view = viewing !== null && <TaskView paneId={paneId} task={tasks?.find((task) => task.id === viewing.id) ?? viewing} onClose={() => setViewing(null)} />;
-  if (activity === null) return view || null;
+  if (activity === null) return null;
 
   const name = agentDisplayLabel(agent ?? null);
   const besides = whatRuns(activity, t);
@@ -122,12 +122,19 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
     <div className="agent-activity" data-main={activity.main ? "" : undefined}>
       {open && listable && (
         <ul id={listId} className="agent-activity-list">
-          <li className="agent-activity-task is-main">
-            <AgentMark agent={agent ?? "agent"} size={16} />
-            <span className="agent-activity-task-title">{name}</span>
-            <span className="agent-activity-role">{t("main agent")}</span>
-            <StateChip state={mainState(status, background, waiting)} t={t} />
-          </li>
+          {(() => {
+            // while a task is shown in the chat's place, the main agent's row goes back to its chat
+            const main = <>
+              <AgentMark agent={agent ?? "agent"} size={16} />
+              <span className="agent-activity-task-title">{name}</span>
+              <span className="agent-activity-role">{t("main agent")}</span>
+              <StateChip state={mainState(status, background, waiting)} t={t} />
+            </>;
+            const back = taskView !== null && taskView.viewing !== null;
+            return <li className={`agent-activity-task is-main${back ? " is-openable" : " is-shown"}`}>
+              {back ? <button type="button" className="agent-activity-task-open" title={t("Back to {agent}", { agent: name })} onClick={() => { taskView.close(); setOpen(false); }}>{main}<ChevronRight className="agent-activity-task-go" aria-hidden="true" /></button> : main}
+            </li>;
+          })()}
           {running.map((task) => {
             const elapsed = taskElapsedMs(task, now + offset);
             const due = wakeupInMs(task, now + offset);
@@ -144,10 +151,11 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
               <StateChip state={due !== null ? "waiting" : "running"} t={t} />
             </>;
             // a Claude subagent opens on its conversation, a command on what it printed so far
-            const opens = agent === "claude" && taskViewKind(task) !== null;
+            const opens = agent === "claude" && taskView !== null && taskViewKind(task) !== null;
+            const shown = taskView?.viewing === task.id;
             return (
-              <li key={task.id} className={`agent-activity-task${opens ? " is-openable" : ""}`}>
-                {opens ? <button type="button" className="agent-activity-task-open" title={t("See inside")} onClick={() => setViewing(task)}>{row}<ChevronRight className="agent-activity-task-go" aria-hidden="true" /></button> : row}
+              <li key={task.id} className={`agent-activity-task${opens ? " is-openable" : ""}${shown ? " is-shown" : ""}`}>
+                {opens ? <button type="button" className="agent-activity-task-open" title={t("See inside")} aria-current={shown ? "true" : undefined} onClick={() => { taskView.open(task); setOpen(false); }}>{row}<ChevronRight className="agent-activity-task-go" aria-hidden="true" /></button> : row}
               </li>
             );
           })}
@@ -157,7 +165,6 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
         ? <button type="button" className="agent-activity-bar" aria-expanded={open} aria-controls={open ? listId : undefined}
             title={open ? t("Hide what is running") : t("Show what is running")} onClick={() => setOpen((shown) => !shown)}>{content}</button>
         : <div className="agent-activity-bar">{content}</div>}
-      {view}
     </div>
   );
 }

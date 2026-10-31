@@ -18,10 +18,11 @@ async function noSideways(page: Page, what: string): Promise<void> {
   assert.ok(wide <= 0, `${what}: nothing runs off the screen sideways (${wide}px)`);
 }
 
-async function closeView(page: Page, how: "escape" | "button"): Promise<void> {
+async function goBack(page: Page, how: "escape" | "button"): Promise<void> {
   if (how === "escape") await page.keyboard.press("Escape");
-  else await page.locator(".task-view [aria-label='Close']").click();
+  else await page.locator(".task-view-back").click();
   await page.locator(".task-view").waitFor({ state: "detached" });
+  await page.locator(".chat-view .chat-turn").first().waitFor();
 }
 
 try {
@@ -63,34 +64,65 @@ try {
             if (touch) assert.ok(box.height >= 40, `${width}px: a list row is a finger's height (${box.height})`);
           }
           await noSideways(page, `${width}px working list`);
+          // the reader's place in the main chat, which Back must find again
+          await page.locator(".chat-view").evaluate((node) => { node.scrollTop = Math.max(0, node.scrollHeight / 3); });
           const subagent = page.locator(".agent-activity-task-open", { hasText: "Find every caller" });
           await subagent.click();
-          const view = page.locator(".task-view[role='dialog'][aria-modal='true']");
+          const view = page.locator(".task-view");
           await view.waitFor();
+          // it takes the chat's place: the same box, no dialog over the page, the composer still below
+          assert.equal(await page.locator("[aria-modal='true']").count(), 0, "no dialog: the view is in the chat's place");
+          const chatBox = (await page.locator(".chat-view").boundingBox())!;
+          const viewBox = (await view.boundingBox())!;
+          for (const side of ["x", "y", "width", "height"] as const) assert.ok(Math.abs(chatBox[side] - viewBox[side]) <= 1, `${width}px: the view covers the chat exactly (${side} ${viewBox[side]} vs ${chatBox[side]})`);
+          assert.ok(await page.locator(".composer-text").isVisible(), "the message box stays under it");
+          // measured once the list folded: a shorter list makes the chat taller, which moves no reader
+          const chatScroll = await page.locator(".chat-view").evaluate((node) => node.scrollTop);
+          assert.equal(await page.locator(".agent-activity-list").count(), 0, "the list folds away after a pick: the view has the room");
+          await page.locator("button.agent-activity-bar").click();
+          assert.equal(await subagent.getAttribute("aria-current"), "true", "its row says it is the one shown");
+          await page.locator("button.agent-activity-bar").click();
+          assert.match(await page.locator(".task-view-back").innerText(), /Back to Claude/);
           await view.locator(".chat-turn-user", { hasText: "idempotency key" }).waitFor();
           await view.locator(".chat-turn-agent", { hasText: "Three callers so far" }).waitFor();
           assert.match(await view.locator(".task-view-title").innerText(), /Find every caller of charge\(\)/);
           await noSideways(page, `${width}px subagent view`);
           if (touch) {
-            const box = (await view.boundingBox())!;
-            assert.ok(box.x >= 0 && box.x + box.width <= width + 0.5, "the sheet fits the phone's width");
-            const close = (await view.locator("[aria-label='Close']").boundingBox())!;
-            assert.ok(close.width >= 40 && close.height >= 40, `${width}px: the sheet's close button is a finger's size (${close.width}x${close.height})`);
+            const back = (await page.locator(".task-view-back").boundingBox())!;
+            assert.ok(back.height >= 40, `${width}px: Back is a finger's height (${back.height})`);
+            const menu = await page.locator(`.pane-frame[data-layout-pane="${PANE}"] .pane-frame-menu`).boundingBox();
+            if (menu !== null) assert.ok(back.x + back.width <= menu.x || back.y >= menu.y + menu.height, `${width}px: Back stays clear of the pane's ⋯`);
           }
           assert.match(await view.locator(".task-view-meta").innerText(), /subagent/);
-          await closeView(page, "escape");
-
+          // another row switches the view in place, from subagent to command
           if (!(await page.locator(".agent-activity-list").isVisible())) await page.locator("button.agent-activity-bar").click();
           await page.locator(".agent-activity-task-open", { hasText: "bun test server/payments" }).click();
           await page.locator(".task-view .task-view-output", { hasText: "charges once per key" }).waitFor();
-          await closeView(page, "button");
+          assert.equal(await page.locator(".task-view .chat-turn").count(), 0, "the command's view holds no subagent turns");
+          assert.equal(await page.locator(".task-view").count(), 1, "one view at a time");
+          await goBack(page, "button");
+          const back = await page.locator(".chat-view").evaluate((node) => node.scrollTop);
+          assert.ok(Math.abs(back - chatScroll) <= 2, `${width}px: Back returns to the chat where it was read (${back} vs ${chatScroll})`);
+
+          if (!(await page.locator(".agent-activity-list").isVisible())) await page.locator("button.agent-activity-bar").click();
+          await page.locator(".agent-activity-task-open", { hasText: "Find every caller" }).click();
+          await page.locator(".task-view .chat-turn-agent", { hasText: "Three callers so far" }).waitFor();
+          // the main agent's row is the other way back
+          await page.locator("button.agent-activity-bar").click();
+          await page.locator(".agent-activity-task.is-main button").click();
+          await page.locator(".task-view").waitFor({ state: "detached" });
+          await page.locator(".agent-activity-list").waitFor({ state: "detached" });
+          if (!(await page.locator(".agent-activity-list").isVisible())) await page.locator("button.agent-activity-bar").click();
+          await page.locator(".agent-activity-task-open", { hasText: "Find every caller" }).click();
+          await page.locator(".task-view .chat-turn-agent", { hasText: "Three callers so far" }).waitFor();
+          await goBack(page, "escape");
 
           // 2. the status line's background list opens the same look inside
           await page.locator(".bg-tasks-toggle").click();
           await page.locator(".bg-task-open", { hasText: "Find every caller" }).click();
           await page.locator(".task-view .chat-turn-agent", { hasText: "Three callers so far" }).waitFor();
           assert.equal(await page.locator(".bg-tasks-menu").count(), 0, "the list makes way for the look inside");
-          await closeView(page, "escape");
+          await goBack(page, "button");
 
           // 3. the answers list: a pick scrolls to the answer and marks it, and the list closes
           const toggle = page.locator(".chat-outline-toggle");
@@ -125,7 +157,7 @@ try {
           await page.keyboard.press("Escape");
           await page.locator(".chat-outline").waitFor({ state: "detached" });
           assert.deepEqual(errors, [], "no page errors");
-          console.log(`ok ${width}px: subagent and command open from both lists; the answers list jumps`);
+          console.log(`ok ${width}px: subagent and command open in the chat's place from both lists, Back returns; the answers list jumps`);
         } finally {
           await context.close();
         }

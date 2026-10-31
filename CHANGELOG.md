@@ -8,6 +8,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **A subagent opens in the chat's place.** Tapping a subagent or a command in the working list,
+  or in the status line's background list, now shows it where the chat is, instead of over the
+  page: "← Back to Claude" at the top (or Escape, or the main agent's row in the list) returns to
+  the main chat exactly where it was read, since the chat stays loaded underneath. The message
+  box, the working list and any question the main agent asks stay in place; another row switches
+  the view; the list folds away after a pick so the view has the room on a phone.
 - **Who is who in the working list.** The list over the message box starts with the main agent
   (its mark, "main agent" and its state: working, needs you, waiting, idle), then each subagent
   and command with its role and state; the look inside a task names it a subagent or a command.

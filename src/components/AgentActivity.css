@@ -172,7 +172,10 @@ button.agent-activity-bar {
 .agent-activity-task.is-main {
   border-bottom: var(--hairline) solid var(--border);
   margin-bottom: var(--space-1);
-  /* its state lines up with the rows under it, which end in a › */
+}
+
+/* not a way back (the chat is shown): its state lines up with the rows under it, which end in a › */
+.agent-activity-task.is-main:not(.is-openable) {
   padding-inline-end: calc(2 * var(--space-2) + var(--icon-size));
 }
 
@@ -219,4 +222,13 @@ button.agent-activity-bar {
 
 @media (pointer: coarse) {
   .agent-activity-task { min-height: var(--touch-target); }
+}
+
+/* the row whose task is shown in the chat's place */
+.agent-activity-task.is-shown .agent-activity-task-open {
+  background: var(--accent-tint);
+}
+
+.agent-activity-task.is-main.is-shown {
+  border-radius: var(--radius-sm);
 }

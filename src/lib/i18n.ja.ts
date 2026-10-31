@@ -1148,4 +1148,7 @@ export const JA: Record<string, string> = {
   "main agent": "メインエージェント",
   "subagent": "サブエージェント",
   "working": "作業中",
+  "Back to {agent}": "{agent} に戻る",
+  "This task can't be shown here.": "このタスクはここに表示できません。",
+  "Back": "戻る",
 };

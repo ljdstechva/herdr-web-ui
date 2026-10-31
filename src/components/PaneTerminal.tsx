@@ -37,9 +37,11 @@ import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { AgentActivity } from "./AgentActivity.tsx";
+import { TaskView } from "./TaskView.tsx";
+import { TaskViewContext, type TaskViewControl } from "../lib/taskViewContext.ts";
 import { Composer, type SendResult } from "./Composer.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
-import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, OmoTask, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
 import { chatLaneLength, useSettings, terminalTheme, type Palette, type ResolvedTheme, type TerminalCursorStyle } from "../lib/settings.ts";
 import { loadFontStack, TERMINAL_FONT_STACK, terminalFontStack } from "../lib/fontFamily.ts";
@@ -2196,8 +2198,16 @@ export function PaneTerminal({
   // Capture the owner's pane for the entire upload batch, even across a pane switch.
   const uploadImage = useCallback((file: File) => uploadPaneImage(paneId ?? "", file), [paneId]);
 
+  // A subagent or command looked inside takes the chat's place (TaskView); the chat stays mounted
+  // under it, so Back finds it as it was. Another pane, or the terminal lens, leaves it.
+  const [viewingTask, setViewingTask] = useState<OmoTask | null>(null);
+  useEffect(() => setViewingTask(null), [paneId, machineId, chatView]);
+  const closeTask = useCallback(() => setViewingTask(null), []);
+  const taskView = useMemo<TaskViewControl>(() => ({ viewing: viewingTask?.id ?? null, open: setViewingTask, close: closeTask }), [viewingTask, closeTask]);
+
   return (
-    // data-direct-typing: xterm's own field raises the soft keyboard here (lib/viewport.ts)
+    <TaskViewContext.Provider value={taskView}>
+    {/* data-direct-typing: xterm's own field raises the soft keyboard here (lib/viewport.ts) */}
     <div ref={stackRef} className={`terminal-stack${chatView ? " is-chat" : ""}${greeted ? " is-greeted" : ""}`} data-pane-owner={paneId === null ? undefined : paneStorageId(machineId, paneId)} data-direct-typing={coarse && directTyping && !chatView ? "" : undefined}>
       {paneId === null && restoreError !== null && (
         <div className="terminal-placeholder is-restore-error" role="status">
@@ -2333,6 +2343,11 @@ export function PaneTerminal({
             promptDock={promptDock}
             onPromptAnswered={onPromptAnswered}
           />
+          </RenderBoundary>
+        )}
+        {presented && paneId !== null && chatView && viewingTask !== null && (
+          <RenderBoundary resetKey={viewingTask.id} fallback={() => <div className="task-view"><p className="task-view-note is-error" role="alert">{t("This task can't be shown here.")}</p><button type="button" className="btn" onClick={closeTask}>{t("Back")}</button></div>}>
+            <TaskView key={`${paneId}:${viewingTask.id}`} paneId={paneId} task={viewingTask} agentName={agentDisplayLabel(agent)} onClose={closeTask} />
           </RenderBoundary>
         )}
       </div>
@@ -2473,5 +2488,6 @@ export function PaneTerminal({
         modifiers={modifiers} onToggleModifier={toggleModifier} items={settings.keyBarItems}
         {...(coarse ? { directTyping, onToggleDirect: toggleDirect } : {})} />}
     </div>
+    </TaskViewContext.Provider>
   );
 }

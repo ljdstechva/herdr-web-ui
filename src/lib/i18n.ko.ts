@@ -1146,4 +1146,7 @@ export const KO: Record<string, string> = {
   "main agent": "메인 에이전트",
   "subagent": "하위 에이전트",
   "working": "작업 중",
+  "Back to {agent}": "{agent}(으)로 돌아가기",
+  "This task can't be shown here.": "이 작업은 여기에 표시할 수 없습니다.",
+  "Back": "뒤로",
 };

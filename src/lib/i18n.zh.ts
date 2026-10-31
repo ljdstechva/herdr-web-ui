@@ -1150,4 +1150,7 @@ export const ZH: Record<string, string> = {
   "main agent": "主代理",
   "subagent": "子代理",
   "working": "工作中",
+  "Back to {agent}": "返回 {agent}",
+  "This task can't be shown here.": "此任务无法在此显示。",
+  "Back": "返回",
 };

@@ -1,14 +1,73 @@
-/* A look inside a background task: a dialog on a wide screen, a sheet from the bottom on a phone
-   (the shared .modal rules); the conversation reads as the chat reads */
+/* A look inside a background task, in the chat's place: it covers the chat (which stays mounted
+   under it) and leaves the working line, the prompt card and the composer below where they are.
+   The transcript reads as the chat reads; Back returns to the main agent. */
 .task-view {
-  width: min(100%, 760px);
-  height: min(100%, 860px);
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  animation: fade-in var(--dur-fast) var(--ease-out);
+  /* the chat's own sizes (.chat-view, ChatView.css): the turns read here as there */
+  --chat-fs-2xs: calc(var(--fs-2xs) * var(--chat-scale, 1));
+  --chat-fs-xs: calc(var(--fs-xs) * var(--chat-scale, 1));
+  --chat-fs-sm: calc(var(--fs-sm) * var(--chat-scale, 1));
+  --chat-fs-md: calc(var(--fs-md) * var(--chat-scale, 1));
+  --chat-fs-body: calc(var(--fs-chat) * var(--chat-scale, 1));
+  --chat-fs-lg: calc(var(--fs-lg) * var(--chat-scale, 1));
+  --chat-fs-xl: calc(var(--fs-xl) * var(--chat-scale, 1));
 }
 
 .task-view-header {
   display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* a single pane's ⋯ sits over the top right corner (PaneCanvas.css) */
+  padding: var(--space-2) calc(var(--control-h) + var(--space-3)) var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  background: var(--bg);
+}
+
+.task-view-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  margin-inline-start: calc(-1 * var(--space-2));
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+
+.task-view-back svg {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.task-view-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-view-headline {
+  display: flex;
   align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+}
+
+.task-view-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  color: var(--status-working);
 }
 
 .task-view-heading {
@@ -20,14 +79,22 @@
 }
 
 .task-view-title {
+  margin: 0;
   overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .task-view-meta {
+  overflow: hidden;
   color: var(--text-dim);
   font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-view-meta.is-running {
@@ -37,16 +104,21 @@
 .task-view-body {
   flex: 1 1 auto;
   min-height: 0;
+  padding: var(--space-3) var(--space-4) var(--space-6);
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
+/* the conversation on the chat's own column */
 .task-view-transcript {
-  padding-bottom: var(--space-4);
+  max-width: var(--chat-w);
+  margin: 0 auto;
 }
 
 .task-view-note {
-  margin: var(--space-2) 0;
+  max-width: var(--chat-w);
+  margin: var(--space-2) auto;
   color: var(--text-dim);
   font-size: var(--fs-sm);
 }
@@ -56,7 +128,8 @@
 }
 
 .task-view-output {
-  margin: 0;
+  max-width: var(--chat-w);
+  margin: 0 auto;
   padding: var(--space-3);
   background: var(--term-bg);
   border-radius: var(--radius-md);
@@ -68,22 +141,15 @@
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 640px) {
-  .task-view { height: 92%; }
-}
-
-.task-view-icon {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  margin-top: 2px;
-  color: var(--status-working);
-}
-
-/* a phone: the sheet takes the height, and the close button a finger's room */
 @media (pointer: coarse) {
-  .task-view-header .icon-button {
-    min-width: var(--touch-target);
-    min-height: var(--touch-target);
-  }
+  .task-view-header { padding-inline-end: calc(var(--touch-target) + var(--space-3)); }
+  .task-view-back { min-height: var(--touch-target); }
+}
+
+@media (max-width: 640px) {
+  .task-view-body { padding-inline: var(--space-3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-view { animation: none; }
 }
