@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { HerdrPane } from "../shared/protocol.ts";
 import { BackgroundWait, WAIT_LIMIT_MS } from "./background-wait.ts";
-import { ClaudeSubagentStatus, claudeSubagentState, claudeSubagents, forgetSubagents, lineNotifications, readLines, remember, subagentDetails, taskNotification, within } from "./claude-subagents.ts";
+import { ClaudeSubagentStatus, claudeSubagentState, claudeSubagents, forgetSubagents, lineNotifications, readLines, remember, subagentDetails, subagentTranscript, taskNotification, taskOutputFile, fileTail, within } from "./claude-subagents.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -212,6 +212,37 @@ describe("subagentDetails", () => {
     s.agent("a1", { description: "Review the parser", type: "reviewer", steps: [[1, 10], [2, 30]] });
     s.agent("a2");
     expect([...subagentDetails(s.path, ["a1", "gone"])]).toEqual([["a1", { title: "Review the parser", agent: "reviewer" }]]);
+  });
+});
+
+describe("a look inside a task", () => {
+  it("finds a subagent's transcript and a background command's output by plain ids only", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-task-view-"));
+    roots.push(root);
+    const parent = join(root, "projects", "-opt-work", "22222222-2222-4222-8222-222222222222.jsonl");
+    const agents = join(root, "projects", "-opt-work", "22222222-2222-4222-8222-222222222222", "subagents");
+    mkdirSync(agents, { recursive: true });
+    writeFileSync(parent, "");
+    writeFileSync(join(agents, "agent-a1b2.jsonl"), json({ type: "user" }));
+    const tasks = join(root, "tmp", "claude-1000", "-opt-work", "22222222-2222-4222-8222-222222222222", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    writeFileSync(join(tasks, "bx9.output"), "one\ntwo\n");
+    expect(subagentTranscript(parent, "a1b2")).toBe(join(agents, "agent-a1b2.jsonl"));
+    expect(subagentTranscript(parent, "../a1b2")).toBeNull();
+    expect(subagentTranscript(parent, "nobody")).toBeNull();
+    expect(taskOutputFile(parent, "bx9", join(root, "tmp"), 1000)).toBe(join(tasks, "bx9.output"));
+    expect(taskOutputFile(parent, "bx9", join(root, "tmp"), 1001)).toBeNull();
+    expect(taskOutputFile(parent, "b/x9", join(root, "tmp"), 1000)).toBeNull();
+  });
+
+  it("reads the end of an output, from a line's start once it is cut", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-task-tail-"));
+    roots.push(root);
+    const file = join(root, "out");
+    writeFileSync(file, "first line\nsecond line\nthird\n");
+    expect(fileTail(file)).toEqual({ text: "first line\nsecond line\nthird\n", size: 29, cut: false });
+    expect(fileTail(file, 12)).toEqual({ text: "third\n", size: 29, cut: true });
+    expect(fileTail(join(root, "missing"))).toBeNull();
   });
 });
 

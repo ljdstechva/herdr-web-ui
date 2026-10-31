@@ -8,6 +8,7 @@ import { clockOffsetMs, endedSummary, formatElapsed, runGoing, spanMs, taskElaps
 import { formatTokens } from "../lib/compose.ts";
 import { taskKind, wakeupInMs } from "../lib/agentActivity.ts";
 import { useT } from "../lib/i18n.ts";
+import { TaskView, taskViewKind } from "./TaskView.tsx";
 import type { OmoRun, OmoRunNode, OmoTask } from "../../shared/protocol.ts";
 
 const POLL_MS = 3000;
@@ -57,6 +58,8 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
   /** the PC's clock minus this browser's: task times are on the PC's */
   const [offset, setOffset] = useState(0);
   const [showEnded, setShowEnded] = useState(false);
+  /** the task looked inside (TaskView), which stays open after the list closes */
+  const [viewing, setViewing] = useState<OmoTask | null>(null);
   const root = useRef<HTMLSpanElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -144,12 +147,19 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
       task.tool_calls === null ? null : t(task.tool_calls === 1 ? "{n} tool call" : "{n} tool calls", { n: task.tool_calls }),
       task.tokens === null ? null : t("{n} tokens", { n: formatTokens(task.tokens) }),
     ].filter((item) => item !== null).join(" · ");
-    return <li key={task.id} className={`bg-task is-${task.status}`}>
+    const content = <>
       <Icon className="bg-task-icon" aria-hidden="true" />
       <span className="bg-task-main">
         <span className="bg-task-title">{task.title}<span className="sr-only"> ({words[task.status]})</span></span>
         {(meta.length > 0 || (task.status !== "running" && task.status !== "completed")) && <span className="bg-task-meta">{[task.status !== "running" && task.status !== "completed" ? words[task.status] : null, meta || null].filter((item) => item !== null).join(" · ")}</span>}
       </span>
+    </>;
+    // a Claude pane's subagent opens on its conversation, a command on what it printed
+    const opens = claude && taskViewKind(task) !== null;
+    return <li key={task.id} className={`bg-task is-${task.status}${opens ? " is-openable" : ""}`}>
+      {opens
+        ? <button type="button" className="bg-task-open" title={t("See inside")} onClick={() => { setViewing(task); setOpen(false); }}>{content}<ChevronRight className="bg-task-go" aria-hidden="true" /></button>
+        : content}
     </li>;
   };
 
@@ -186,7 +196,8 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
   const endedRuns = runs.filter((run) => !runGoing(run));
   const summary = endedSummary(tasks ?? [], runs);
 
-  if (count === 0 && !open && !seen && !omo) return null;
+  const view = viewing !== null && <TaskView paneId={paneId} task={viewing} onClose={() => { setViewing(null); toggle.current?.focus(); }} />;
+  if (count === 0 && !open && !seen && !omo) return view || null;
   const label = count === 0 ? t("Background tasks") : t(count === 1 ? "{n} background task" : "{n} background tasks", { n: count });
   // a phone's status line has one row: there the words give way to the icon and the number
   return <span className="bg-tasks" ref={root}>
@@ -211,5 +222,6 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
         <ul id={endedId} className="bg-task-list" hidden={!showEnded}>{endedRuns.map(runView)}{ended.map(row)}</ul>
       </>}
     </div>}
+    {view}
   </span>;
 }

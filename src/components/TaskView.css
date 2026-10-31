@@ -1,0 +1,73 @@
+/* A look inside a background task: a dialog on a wide screen, a sheet from the bottom on a phone
+   (the shared .modal rules); the conversation reads as the chat reads */
+.task-view {
+  width: min(100%, 760px);
+  height: min(100%, 860px);
+}
+
+.task-view-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.task-view-heading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task-view-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-view-meta {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.task-view-meta.is-running {
+  color: var(--status-working);
+}
+
+.task-view-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.task-view-transcript {
+  padding-bottom: var(--space-4);
+}
+
+.task-view-note {
+  margin: var(--space-2) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.task-view-note.is-error {
+  color: var(--danger-text);
+}
+
+.task-view-output {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--term-bg);
+  border-radius: var(--radius-md);
+  color: var(--term-fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .task-view { height: 92%; }
+}

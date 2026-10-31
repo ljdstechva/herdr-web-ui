@@ -1425,3 +1425,202 @@
 .chat-abandoned { margin: var(--space-2) 0; }
 .chat-abandoned > summary { font-style: italic; }
 .chat-abandoned-note { margin: var(--space-2) 0 0; color: var(--text-dim); }
+
+/* The answers the agent gave, at the chat's top right: a pick scrolls back to one (lib/chatOutline.ts) */
+/* under the pane's own ⋯, which a single pane draws over the body's top right corner (PaneCanvas.css) */
+.chat-outline-dock {
+  position: absolute;
+  top: calc(var(--control-h) + var(--space-2));
+  right: var(--space-2);
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-height: calc(100% - var(--control-h) - 2 * var(--space-2));
+}
+
+/* solid, as it floats over the words: an icon button's own ground is see-through */
+.chat-outline-dock .chat-outline-toggle {
+  position: relative;
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  box-shadow: var(--shadow-card);
+}
+
+.chat-outline-dock .chat-outline-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chat-outline-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  color: var(--primary-text);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  text-align: center;
+}
+
+.chat-outline {
+  display: flex;
+  flex-direction: column;
+  width: min(320px, calc(100vw - 2 * var(--space-4)));
+  min-height: 0;
+  margin-top: var(--space-2);
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  animation: menu-in var(--dur-fast) var(--ease-out);
+}
+
+.chat-outline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.chat-outline-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.chat-outline-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.chat-outline-item:hover,
+.chat-outline-item:focus-visible {
+  background: var(--bg-hover);
+}
+
+.chat-outline-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--text-dim);
+}
+
+.chat-outline-item.is-question .chat-outline-icon { color: var(--status-blocked); }
+.chat-outline-item.is-result .chat-outline-icon { color: var(--status-done); }
+
+.chat-outline-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: var(--lh-tight);
+}
+
+.chat-outline-time {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.chat-outline-older {
+  margin: 0 var(--space-1) var(--space-1);
+}
+
+/* the turn a pick scrolled to is marked a moment, then reads as the others */
+.chat-transcript [data-picked] {
+  scroll-margin-top: var(--space-6);
+  animation: chat-picked 1.6s var(--ease-out);
+}
+
+@keyframes chat-picked {
+  0%, 40% { background: var(--accent-tint); box-shadow: 0 0 0 var(--space-2) var(--accent-tint); }
+  100% { background: transparent; box-shadow: 0 0 0 var(--space-2) transparent; }
+}
+
+/* While a call runs its output is on the screen only: the end of the screen, under the call */
+.chat-live-terminal {
+  margin: var(--space-2) 0 var(--space-3);
+  background: var(--term-bg);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.chat-live-terminal-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--status-working);
+  font-size: var(--fs-xs);
+}
+
+.chat-live-terminal-label svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.chat-live-terminal-call {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-live-terminal pre {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--term-fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .chat-outline-item { min-height: var(--touch-target); }
+  .chat-outline-dock {
+    top: calc(var(--touch-target) + var(--space-2));
+    max-height: calc(100% - var(--touch-target) - 2 * var(--space-2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-outline,
+  .chat-transcript [data-picked] { animation: none; }
+}

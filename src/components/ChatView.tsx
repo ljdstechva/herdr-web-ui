@@ -1,7 +1,7 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Copy, Layers, Target,
+  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleHelp, CircleSlash, CircleX, Copy, Layers, MessageSquareText, SquareTerminal, TableOfContents, Target, X,
   type LucideProps,
 } from "lucide-react";
 
@@ -39,10 +39,14 @@ import { lineDiff } from "../lib/diff.ts";
 import { formatTokens, sameMessage } from "../lib/compose.ts";
 import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTasks.ts";
 import { sendUserFileCall } from "../lib/sendUserFile.ts";
+import { chatOutline, type OutlineEntry } from "../lib/chatOutline.ts";
+import { runningTool, screenTail } from "../lib/liveTerminal.ts";
 
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
-const ChatPaneContext = createContext<string | null>(null);
-const ChatHistoryContext = createContext("");
+export const ChatPaneContext = createContext<string | null>(null);
+export const ChatHistoryContext = createContext("");
+/** Set where the turns drawn are a subagent's (TaskView): a call's whole output is in its transcript, not the pane's. */
+export const ChatTaskContext = createContext<string | null>(null);
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
@@ -50,6 +54,11 @@ import { currentLocale, useT } from "../lib/i18n.ts";
 
 const TRANSCRIPT_LINES = 400;
 const PROMPT_POLL_MS = 2000;
+/** how often the end of the screen is read while a call runs (lib/liveTerminal.ts) */
+const LIVE_SCREEN_MS = 1500;
+/** how long an answer picked in the outline stays marked */
+const PICKED_MS = 1600;
+const OUTLINE_ICONS: Record<OutlineEntry["kind"], ComponentType<LucideProps>> = { answer: MessageSquareText, question: CircleHelp, result: Layers };
 /** Scrolling this close to the top asks for the page before it. */
 const LOAD_OLDER_PX = 400;
 
@@ -277,7 +286,10 @@ function useWholeOutput(ref: string | undefined): { text: string | null; state: 
   const paneId = useContext(ChatPaneContext);
   const machineId = useMachineId();
   const history = useContext(ChatHistoryContext);
-  const url = ref === undefined || paneId === null ? null : machinePath(machineId, `pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref }).toString()}`);
+  const task = useContext(ChatTaskContext);
+  const url = ref === undefined || paneId === null ? null : task !== null
+    ? machinePath(machineId, `pane/task/tool-output?${new URLSearchParams({ pane_id: paneId, task_id: task, ref }).toString()}`)
+    : machinePath(machineId, `pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref }).toString()}`);
   return useScopedOutput(url, history);
 }
 
@@ -442,6 +454,8 @@ interface TurnProps {
   showThinking: boolean;
   /** arrived after the transcript was first drawn: an agent's turn rises in (ChatView.css .is-entered) */
   entered: boolean;
+  /** the turn's name in the chat's outline, on its outermost element: a pick there scrolls to it */
+  anchor?: string;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -484,7 +498,7 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, entered }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, entered, anchor }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useState(false);
@@ -493,7 +507,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ent
   const time = formatTime(turn.ts);
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
-    return <details className="chat-compact">
+    return <details className="chat-compact" data-turn-key={anchor}>
       <summary>{t("Conversation compacted")}{time !== null && <> · <time dateTime={turn.ts ?? undefined}>{time}</time></>}</summary>
       <div className="chat-compact-text"><Markdown>{compact.text}</Markdown></div>
     </details>;
@@ -502,7 +516,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ent
   const ended = turn.parts.find((part): part is Extract<ConversationPart, { kind: "task_result" }> => part.kind === "task_result");
   if (ended !== undefined) {
     const heading = ended.tasks.length === 1 ? t("Background task ended") : t("{n} background tasks ended", { n: ended.tasks.length });
-    return <section className="chat-task-results" aria-label={heading}>
+    return <section className="chat-task-results" aria-label={heading} data-turn-key={anchor}>
       <p className="chat-task-results-head"><Layers aria-hidden="true" /><span>{heading}</span>{time !== null && <> · <time dateTime={turn.ts ?? undefined}>{time}</time></>}</p>
       {ended.tasks.map((task) => <TaskResultRow key={task.id} task={task} />)}
     </section>;
@@ -510,14 +524,14 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ent
   // the runtime spoke, not the user: a quiet divider like a compaction, the text on request
   const notice = turn.parts.find((part): part is Extract<ConversationPart, { kind: "notice" }> => part.kind === "notice");
   if (notice !== undefined) {
-    return <details className="chat-compact chat-notice">
+    return <details className="chat-compact chat-notice" data-turn-key={anchor}>
       <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · <time dateTime={turn.ts ?? undefined}>{time}</time></>}</summary>
       <pre className="chat-compact-text chat-notice-text">{notice.text}</pre>
     </details>;
   }
   if (turn.role === "user") {
     const text = turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n");
-    return <article className="chat-turn chat-turn-user">
+    return <article className="chat-turn chat-turn-user" data-turn-key={anchor}>
       <UserImages paneId={paneId} parts={turn.parts} text={text} />
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
@@ -532,7 +546,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ent
   const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
-  return <article className={`chat-turn chat-turn-agent${entered ? " is-entered" : ""}`}>
+  return <article className={`chat-turn chat-turn-agent${entered ? " is-entered" : ""}`} data-turn-key={anchor}>
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}
@@ -620,6 +634,12 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   const [newMessages, setNewMessages] = useState(false);
   /** scrolled up from the end: the way back is offered even when nothing new came */
   const [away, setAway] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const outlineId = useId();
+  const outlineDock = useRef<HTMLDivElement>(null);
+  /** the end of the screen while a call runs: its output is not in the transcript until it ends */
+  const [liveScreen, setLiveScreen] = useState("");
+  const [screenWanted, setScreenWanted] = useState(false);
   /** an answer for this pane arrived (or failed): until then, and while a replaced history is read again, an empty chat is only loading */
   const [loaded, setLoaded] = useState(seed !== null);
   const [prompt, setPrompt] = useState<InteractivePrompt | null>(null);
@@ -1002,6 +1022,31 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     return node === null ? undefined : dismissKeyboardOn(node);
   }, []);
 
+  useEffect(() => {
+    if (!outlineOpen) return;
+    const outside = (event: PointerEvent): void => { if (!outlineDock.current?.contains(event.target as Node)) setOutlineOpen(false); };
+    const escape = (event: KeyboardEvent): void => { if (event.key === "Escape") setOutlineOpen(false); };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("pointerdown", outside); window.removeEventListener("keydown", escape); };
+  }, [outlineOpen]);
+  useEffect(() => {
+    if (!screenWanted || !visible) { setLiveScreen(""); return; }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = async (): Promise<void> => {
+      try {
+        const screen = await fetchPaneTranscript(paneId, 80);
+        if (alive) setLiveScreen(screenTail(screen.text));
+      } catch {
+        // the next read tries again; what was shown stays until the call ends
+      }
+      if (alive) timer = setTimeout(() => void read(), LIVE_SCREEN_MS);
+    };
+    void read();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [screenWanted, visible, paneId, fetchPaneTranscript]);
+
   const onScroll = (): void => {
     const node = scroller.current;
     if (node === null) return;
@@ -1080,6 +1125,26 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   const turnKey = (turn: ConversationTurn, index: number): string => `${scope}:${turn.role}:${turn.ts ?? index}`;
   if (loaded && state.source === "conversation" && openedWith.current?.scope !== scope) openedWith.current = { scope, keys: new Set(shownTurns.map(turnKey)) };
   const entered = (key: string): boolean => openedWith.current?.scope === scope && !openedWith.current.keys.has(key);
+
+  // The answers the agent gave, newest first, at the chat's right: one that scrolled away while
+  // subagents kept the transcript busy is a pick away (lib/chatOutline.ts). A pick scrolls to it
+  // and marks it a moment; the list closes, as a menu does.
+  const outline = useMemo(() => state.source === "conversation" ? chatOutline(shownTurns, (turn, index) => `${scope}:${turn.role}:${turn.ts ?? index}`).reverse() : [], [state.source, shownTurns, scope]);
+  const jumpTo = (key: string): void => {
+    setOutlineOpen(false);
+    const node = scroller.current?.querySelector<HTMLElement>(`[data-turn-key="${CSS.escape(key)}"]`);
+    if (!node) return;
+    stickToBottom.current = false;
+    setAway(true);
+    node.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    // not React's: the turn is memoized and its className is the turn's own
+    delete node.dataset["picked"];
+    void node.offsetWidth;
+    node.dataset["picked"] = "";
+    window.setTimeout(() => { delete node.dataset["picked"]; }, PICKED_MS);
+  };
+  const runningCall = state.source === "conversation" && agentStatus === "working" && !ended ? runningTool(shownTurns) : null;
+  useEffect(() => setScreenWanted(runningCall !== null), [runningCall]);
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><FileUrlContext.Provider value={imageUrl}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
     <div className="chat-transcript" data-conversation-source={state.conversationSource}>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
@@ -1109,7 +1174,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
             const live = isLiveWorkTurn(turn, last, agentStatus, finishedBeforeSend);
             const key = turnKey(turn, index);
             return <RenderBoundary key={key} resetKey={turnRevision(turn)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
-              <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} entered={entered(key)} />
+              <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} entered={entered(key)} anchor={key} />
             </RenderBoundary>;
           })
         : agent !== null
@@ -1118,6 +1183,10 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
               {!empty && <pre>{state.terminalText}</pre>}
             </section>
           : state.messages.map((message, index) => <FallbackTurn key={index} paneId={paneId} message={message} />)}
+      {runningCall !== null && liveScreen !== "" && <section className="chat-live-terminal" aria-label={t("Running now")}>
+        <p className="chat-live-terminal-label"><SquareTerminal aria-hidden="true" /><span>{t("Running now")}</span><span className="chat-live-terminal-call">{runningCall}</span></p>
+        <pre>{liveScreen}</pre>
+      </section>}
       {outgoingShown.map((message) => <OutgoingTurn key={message.id} paneId={paneId} message={message} />)}
       {!ended && !connected && <p className="chat-inline-state" role="status">{t("Reconnecting…")}</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? t("locked — the token gate is asking again") : error}</p>}
@@ -1128,6 +1197,28 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
       : away && <button type="button" className="btn chat-new-messages is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>}
   </div>
+  {outline.length > 0 && <div className="chat-outline-dock" ref={outlineDock}>
+    <button type="button" className="icon-button chat-outline-toggle" aria-expanded={outlineOpen} aria-controls={outlineOpen ? outlineId : undefined} aria-label={t("Answers")} title={t("Answers")} onClick={() => setOutlineOpen((open) => !open)}>
+      <TableOfContents aria-hidden="true" /><span className="chat-outline-count" aria-hidden="true">{outline.length}</span>
+    </button>
+    {outlineOpen && <nav id={outlineId} className="chat-outline" aria-label={t("Answers")}>
+      <p className="chat-outline-head"><span>{t("Answers")}</span><button type="button" className="icon-button" aria-label={t("Close")} title={t("Close")} onClick={() => setOutlineOpen(false)}><X aria-hidden="true" /></button></p>
+      <ol className="chat-outline-list">
+        {outline.map((entry) => {
+          const Icon = OUTLINE_ICONS[entry.kind];
+          const time = formatTime(entry.ts);
+          return <li key={entry.key}><button type="button" className={`chat-outline-item is-${entry.kind}`} onClick={() => jumpTo(entry.key)}>
+            <Icon className="chat-outline-icon" aria-hidden="true" />
+            <span className="chat-outline-title">{entry.title}</span>
+            {time !== null && <time className="chat-outline-time" dateTime={entry.ts ?? undefined}>{time}</time>}
+          </button></li>;
+        })}
+      </ol>
+      {typeof olderCursor === "string" && <button type="button" className="btn btn-ghost chat-outline-older" disabled={olderState === "loading"} onClick={() => void loadOlder()}>
+        {t(olderState === "loading" ? "Loading earlier messages…" : olderState === "failed" ? "Couldn't load earlier messages — retry" : "Earlier messages")}
+      </button>}
+    </nav>}
+  </div>}
   {/* The prompt card is not part of the transcript: it is drawn on the composer's column, over the
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
       re-read) stays here. */}

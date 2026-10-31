@@ -1,5 +1,6 @@
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import type { HerdrPane, OmoTask } from "../shared/protocol.ts";
 
 /**
@@ -527,6 +528,40 @@ function readTail(path: string, stat: { size: number; mtimeMs: number; id: strin
 }
 
 const subagentsDir = (parentPath: string): string => join(parentPath.replace(/\.jsonl$/, ""), "subagents");
+
+/** A subagent's own transcript, for the chat's look inside it; null for an id that is not a plain word or a file that is not a plain file. */
+export function subagentTranscript(parentPath: string, id: string): string | null {
+  if (!AGENT_ID.test(id)) return null;
+  const path = join(subagentsDir(parentPath), `agent-${id}.jsonl`);
+  return plain(path) === null ? null : path;
+}
+
+/**
+ * Where Claude Code writes what a background command prints while it runs:
+ * `<tmp>/claude-<uid>/<project>/<session>/tasks/<task id>.output` (a subagent's is a link to its
+ * transcript, which `subagentTranscript` reads instead). `tmp` is CLAUDE_CODE_TMPDIR, else the
+ * system's. Null for an id that is not a plain word, a missing file or one that is not plain.
+ */
+export function taskOutputFile(parentPath: string, id: string, tmp = process.env["CLAUDE_CODE_TMPDIR"] || tmpdir(), uid = process.getuid?.() ?? null): string | null {
+  if (!AGENT_ID.test(id) || uid === null) return null;
+  const session = basename(parentPath).replace(/\.jsonl$/, "");
+  const path = join(tmp, `claude-${uid}`, basename(dirname(parentPath)), session, "tasks", `${id}.output`);
+  return plain(path) === null ? null : path;
+}
+
+/** The last `max` bytes of a plain file as text, cut at a line start when it was cut; null when it cannot be read. */
+export function fileTail(path: string, max = 64 * 1024): { text: string; size: number; cut: boolean } | null {
+  const stat = plain(path);
+  if (stat === null) return null;
+  const start = Math.max(0, stat.size - max);
+  const buffer = Buffer.alloc(stat.size - start);
+  let fd: number;
+  try { fd = openSync(path, "r"); } catch { return null; }
+  try { readSync(fd, buffer, 0, buffer.length, start); } catch { return null; } finally { closeSync(fd); }
+  let text = buffer.toString("utf8");
+  if (start > 0) { const line = text.indexOf("\n"); text = line === -1 ? text : text.slice(line + 1); }
+  return { text, size: stat.size, cut: start > 0 };
+}
 
 function folderVersion(dir: string): { sig: string; latestMs: number } {
   try {

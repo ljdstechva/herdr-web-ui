@@ -1,11 +1,12 @@
 import { useEffect, useId, useState } from "react";
-import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronUp, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
+import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronRight, ChevronUp, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
 import "./AgentActivity.css";
 
 import type { AgentStatus, OmoTask } from "../../shared/protocol.ts";
 import { agentActivity, runningTasks, taskKind, wakeupInMs, type Activity } from "../lib/agentActivity.ts";
 import { agentDisplayLabel } from "../lib/compose.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
+import { TaskView, taskViewKind } from "./TaskView.tsx";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { clockOffsetMs, formatElapsed, taskElapsedMs } from "../lib/omoTasks.ts";
 
@@ -48,6 +49,8 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
   const [offset, setOffset] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
+  /** the task looked inside (TaskView): it stays open after the task ends and the line goes */
+  const [viewing, setViewing] = useState<OmoTask | null>(null);
   const listId = useId();
   const watching = background > 0 || waiting;
 
@@ -79,7 +82,8 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
   const activity = agentActivity(status, background, waiting, tasks);
   const running = background > 0 ? runningTasks(tasks) : [];
   useEffect(() => { if (activity === null || running.length === 0) setOpen(false); }, [activity === null, running.length]);
-  if (activity === null) return null;
+  const view = viewing !== null && <TaskView paneId={paneId} task={tasks?.find((task) => task.id === viewing.id) ?? viewing} onClose={() => setViewing(null)} />;
+  if (activity === null) return view || null;
 
   const name = agentDisplayLabel(agent ?? null);
   const besides = whatRuns(activity, t);
@@ -105,13 +109,18 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
             const due = wakeupInMs(task, now + offset);
             const Icon = TASK_ICONS[task.category ?? ""] ?? Bot;
             const kind = task.category === "shell" ? null : taskKind(task.category, t);
+            const row = <>
+              <Icon aria-hidden="true" />
+              <span className="agent-activity-task-title" title={task.title}>{task.title}</span>
+              {kind && <span className="agent-activity-task-kind">{kind}</span>}
+              {due !== null ? <span className="agent-activity-task-time">{t("in {time}", { time: formatElapsed(due) })}</span>
+                : elapsed !== null && <span className="agent-activity-task-time">{formatElapsed(elapsed)}</span>}
+            </>;
+            // a Claude subagent opens on its conversation, a command on what it printed so far
+            const opens = agent === "claude" && taskViewKind(task) !== null;
             return (
-              <li key={task.id} className="agent-activity-task">
-                <Icon aria-hidden="true" />
-                <span className="agent-activity-task-title" title={task.title}>{task.title}</span>
-                {kind && <span className="agent-activity-task-kind">{kind}</span>}
-                {due !== null ? <span className="agent-activity-task-time">{t("in {time}", { time: formatElapsed(due) })}</span>
-                  : elapsed !== null && <span className="agent-activity-task-time">{formatElapsed(elapsed)}</span>}
+              <li key={task.id} className={`agent-activity-task${opens ? " is-openable" : ""}`}>
+                {opens ? <button type="button" className="agent-activity-task-open" title={t("See inside")} onClick={() => setViewing(task)}>{row}<ChevronRight className="agent-activity-task-go" aria-hidden="true" /></button> : row}
               </li>
             );
           })}
@@ -121,6 +130,7 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
         ? <button type="button" className="agent-activity-bar" aria-expanded={open} aria-controls={open ? listId : undefined}
             title={open ? t("Hide what is running") : t("Show what is running")} onClick={() => setOpen((shown) => !shown)}>{content}</button>
         : <div className="agent-activity-bar">{content}</div>}
+      {view}
     </div>
   );
 }

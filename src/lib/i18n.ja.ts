@@ -1135,4 +1135,12 @@ export const JA: Record<string, string> = {
   "Create vault": "保管庫を作成",
   "No logins saved yet.": "保存されたログイン情報はまだありません。",
   "Change login": "ログイン情報を変更",
+  "Answers": "回答",
+  "Couldn't read this task. Trying again…": "このタスクを読み込めませんでした。再試行しています…",
+  "Nothing printed yet": "まだ出力はありません",
+  "Nothing written yet": "まだ何も書かれていません",
+  "Running now": "実行中",
+  "See inside": "中身を見る",
+  "The last 64 KB of the output": "出力の最後の 64 KB",
+  "There is nothing to show inside this task": "このタスクには表示できる内容がありません",
 };

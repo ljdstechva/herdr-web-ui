@@ -132,3 +132,38 @@ button.agent-activity-bar {
   .agent-activity-dot { animation: none; }
   .agent-activity { animation: none; }
 }
+
+/* a Claude subagent or command in the list opens on what it does (TaskView) */
+.agent-activity-task.is-openable {
+  padding: 0;
+}
+
+.agent-activity-task-open {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.agent-activity-task-open:hover,
+.agent-activity-task-open:focus-visible {
+  background: var(--bg-hover);
+}
+
+.agent-activity-task-open svg.agent-activity-task-go {
+  color: var(--text-dim);
+}
+
+@media (pointer: coarse) {
+  .agent-activity-task-open { min-height: var(--touch-target); }
+}

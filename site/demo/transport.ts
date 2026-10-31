@@ -100,6 +100,19 @@ const omoTasks = () => [
   { id: "st_demo3", title: "Find pages that still say v0.2", category: "quick", model: "Claude Haiku 4.5", status: "completed", started_at: ago(26), ended_at: ago(22), turns: 9, tool_calls: 33, tokens: 61_200 },
   { id: "st_demo4", title: "Translate the FAQ to Korean", category: "writing", model: "GPT-6.1", status: "failed", started_at: ago(48), ended_at: ago(44), turns: 3, tool_calls: 5, tokens: 12_000 },
 ];
+/** The Claude pane's subagent and background command (AgentActivity's list), and what a look inside each shows (TaskView). */
+const CLAUDE_TASKS_PANE = "api";
+const claudeTasks = () => [
+  { id: "a0demo1", title: "Find every caller of charge()", category: "Explore", model: "claude-sonnet-5-5", status: "running", started_at: ago(2), ended_at: null, turns: 4, tool_calls: 12, tokens: 31_400 },
+  { id: "b0demo2", title: "bun test server/payments", category: "shell", model: null, status: "running", started_at: ago(1), ended_at: null, turns: null, tool_calls: null, tokens: null },
+];
+const claudeTaskTurns = () => [
+  { role: "user", ts: ago(2), parts: [{ kind: "text", text: "Find every caller of charge() in server/ and say which ones pass an idempotency key." }] },
+  { role: "assistant", ts: ago(1.5), parts: [
+    { kind: "tool", name: "Grep", summary: "charge\\(", input: "charge\\(", output: "server/payments.ts:41\nserver/refunds.ts:88\nserver/jobs/retry.ts:17" },
+    { kind: "text", text: "Three callers so far. `payments.ts` and `retry.ts` pass a key; `refunds.ts` does not." },
+  ] },
+];
 const step = (id: string, state: string, error: string | null = null) => ({ id, label: id, state, error });
 const omoRuns = () => [
   { id: "dag_demo1", name: "Guide release check", status: "running", started_at: ago(6), ended_at: null, waves: [
@@ -147,7 +160,14 @@ function backfillPanes(): void {
   snap.workspaces.forEach((workspace, index) => { workspace.number = index + 1; });
 }
 backfillPanes();
-for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === OMO_TASKS_PANE) Object.assign(pane, { background_tasks: 2 });
+// The Claude pane's running subagent and command are shown on request (`?demo-tasks` in the page's
+// address, scripts/task-view-demo-regression.ts): their count marks the pane's tab, which the
+// other demo checks read as they were recorded.
+const claudeTasksShown = typeof location !== "undefined" && new URLSearchParams(location.search).has("demo-tasks");
+for (const pane of snapshot().panes) {
+  const key = keyOfPane.get(pane.pane_id);
+  if (key === OMO_TASKS_PANE || (claudeTasksShown && key === CLAUDE_TASKS_PANE)) Object.assign(pane, { background_tasks: 2 });
+}
 
 // Fictional repositories keep their checkout catalog after a workspace closes. The list joins
 // each checkout to the current snapshot, so closed checkouts can be opened again without git.
@@ -811,7 +831,14 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (request.jump !== false && result.match) redrawHistory(target);
     return json(result);
   }
-  if (path === "/api/pane/omo-tasks") return json(keyOfPane.get(paneId) === OMO_TASKS_PANE ? { tasks: omoTasks(), runs: omoRuns() } : { tasks: [], runs: [] });
+  if (path === "/api/pane/omo-tasks") return json(keyOfPane.get(paneId) === OMO_TASKS_PANE ? { tasks: omoTasks(), runs: omoRuns() } : claudeTasksShown && keyOfPane.get(paneId) === CLAUDE_TASKS_PANE ? { tasks: claudeTasks(), runs: [] } : { tasks: [], runs: [] });
+  if (path === "/api/pane/task/conversation" || path === "/api/pane/task/output" || path === "/api/pane/task/tool-output") {
+    const task = query.get("task_id");
+    if (keyOfPane.get(paneId) !== CLAUDE_TASKS_PANE || (task !== "a0demo1" && task !== "b0demo2")) return error("task_not_found", "no such subagent or background command in this pane's session", 404);
+    if (path === "/api/pane/task/output") return task === "b0demo2" ? json({ text: "bun test v1.3.0\n\nserver/payments.test.ts:\n✓ charges once per key [3ms]\n✓ retries keep the key [5ms]\n", size: 96, cut: false }) : error("task_not_found", "no output file for this task", 404);
+    if (path === "/api/pane/task/tool-output") return error("output_not_found", "no such tool call in this subagent's conversation", 404);
+    return task === "a0demo1" ? json({ source: "claude-transcript", turns: claudeTaskTurns(), metadata: { model: "claude-sonnet-5-5", reasoning_effort: null }, cursor: null, history_id: "demo-subagent" }) : error("task_not_found", "no such subagent", 404);
+  }
   if (path === "/api/pane/files") {
     const q = (query.get("q") ?? "").toLowerCase();
     return json({ files: DEMO_FILES.filter((file) => file.toLowerCase().includes(q)).slice(0, Number(query.get("limit") ?? 20)) });

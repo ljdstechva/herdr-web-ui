@@ -20,7 +20,7 @@ import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { isMouseReport, sameAttachment } from "./input-guard.ts";
 import { startStatusCollector } from "./collector.ts";
-import { claudePanePid, claudePaneSession, codexPaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
+import { claudePanePid, claudePaneSession, codexPaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 import { CodexSubagentStatus } from "./codex-subagents.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
@@ -28,7 +28,7 @@ import { ConversationMonitor } from "./conversation-monitor.ts";
 import { omoPanes } from "./omo.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
-import { ClaudeSubagentStatus, claudeSubagents, within } from "./claude-subagents.ts";
+import { ClaudeSubagentStatus, claudeSubagents, fileTail, subagentTranscript, taskOutputFile, within } from "./claude-subagents.ts";
 import { BackgroundWait } from "./background-wait.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
@@ -2483,6 +2483,53 @@ export function createServer(
           return jsonResponse({ tasks: codexAgents.tasksOf(paneId), runs: [], server_time });
         }
         return jsonResponse({ tasks: omoTasks(session.cwd, session.sessionId, processAlive), runs: omoRuns(session.cwd, session.sessionId), server_time });
+      }
+
+      // A look inside one of a Claude pane's background tasks, from the status line's list: a
+      // subagent's own conversation (paged like the pane's), or what a background command has
+      // printed so far (the end of its output file). Read-only, the session's own files only.
+      if (pathname === "/api/pane/task/conversation" || pathname === "/api/pane/task/output" || pathname === "/api/pane/task/tool-output") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const paneId = url.searchParams.get("pane_id");
+        const taskId = url.searchParams.get("task_id");
+        if (!paneId || !taskId) return badRequest("missing_parameter", "pane_id and task_id query parameters are required");
+        const missing = (): Response => jsonResponse({ error: { code: "task_not_found", message: "no such subagent or background command in this pane's session" } }, 404);
+        try {
+          if (claudeAgents.sessionOf(paneId) === null) {
+            await within(1000, (async () => { await claudeAgents.ensure(await paneGet(paneId)); })());
+          }
+          const claude = claudeAgents.sessionOf(paneId);
+          if (claude === null) return missing();
+          if (pathname === "/api/pane/task/output") {
+            const file = taskOutputFile(claude.path, taskId);
+            const tail = file === null ? null : fileTail(file);
+            if (tail === null) return missing();
+            return jsonResponse({ text: tail.text, size: tail.size, cut: tail.cut }, 200, { "cache-control": "no-store" });
+          }
+          const path = subagentTranscript(claude.path, taskId);
+          if (path === null) return missing();
+          if (pathname === "/api/pane/task/tool-output") {
+            const ref = url.searchParams.get("ref");
+            if (!ref) return badRequest("missing_parameter", "ref query parameter is required");
+            const output = transcriptToolOutput("claude-transcript", path, ref);
+            if (output === null) return jsonResponse({ error: { code: "output_not_found", message: "no such tool call in this subagent's conversation" } }, 404);
+            return new Response(output, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "private, max-age=86400, immutable", "x-content-type-options": "nosniff" } });
+          }
+          const page = {
+            before: url.searchParams.get("before") ?? undefined,
+            since: url.searchParams.get("since") ?? undefined,
+            from: url.searchParams.get("from") ?? undefined,
+          };
+          const { version, ...conversation } = transcriptPage("claude-transcript", path, page);
+          const etag = `W/"${version}"`;
+          const headers = { etag, "cache-control": "no-store" };
+          if (request.headers.get("if-none-match")?.replace(/^W\//, "") === etag.slice(2)) return new Response(null, { status: 304, headers });
+          return jsonResponse(conversation, 200, headers);
+        } catch (error) {
+          if (error instanceof HistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
+          if (error instanceof ConversationUnavailable) return missing();
+          return errorResponse(error);
+        }
       }
 
       if (pathname === "/api/pane/read") {

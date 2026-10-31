@@ -1133,4 +1133,12 @@ export const KO: Record<string, string> = {
   "Create vault": "금고 만들기",
   "No logins saved yet.": "저장된 로그인 정보가 아직 없습니다.",
   "Change login": "로그인 정보 변경",
+  "Answers": "답변",
+  "Couldn't read this task. Trying again…": "이 작업을 읽지 못했습니다. 다시 시도하는 중…",
+  "Nothing printed yet": "아직 출력이 없습니다",
+  "Nothing written yet": "아직 기록된 내용이 없습니다",
+  "Running now": "지금 실행 중",
+  "See inside": "내용 보기",
+  "The last 64 KB of the output": "출력의 마지막 64KB",
+  "There is nothing to show inside this task": "이 작업에는 보여 줄 내용이 없습니다",
 };

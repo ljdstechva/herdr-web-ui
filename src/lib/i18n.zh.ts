@@ -1137,4 +1137,12 @@ export const ZH: Record<string, string> = {
   "Create vault": "创建保管库",
   "No logins saved yet.": "尚未保存任何登录信息。",
   "Change login": "更改登录信息",
+  "Answers": "回答",
+  "Couldn't read this task. Trying again…": "无法读取此任务。正在重试…",
+  "Nothing printed yet": "尚无输出",
+  "Nothing written yet": "尚无内容",
+  "Running now": "正在运行",
+  "See inside": "查看内容",
+  "The last 64 KB of the output": "输出的最后 64 KB",
+  "There is nothing to show inside this task": "此任务没有可显示的内容",
 };

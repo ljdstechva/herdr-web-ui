@@ -736,6 +736,19 @@ export async function fetchPaneOmoActivity(paneId: string, machineId = "local"):
   return { tasks: activity.tasks ?? [], runs: activity.runs ?? [], serverTime: activity.server_time ?? null };
 }
 
+/** GET /api/pane/task/conversation: one of a Claude pane's subagents, its own conversation (the newest page, or the page `before` a cursor). */
+export async function fetchTaskConversation(paneId: string, taskId: string, machineId = "local", page: ConversationPageQuery = {}): Promise<ConversationResponse> {
+  const query = new URLSearchParams({ pane_id: paneId, task_id: taskId });
+  if (page.before !== undefined) query.set("before", page.before);
+  return await getJson<ConversationResponse>(machinePath(machineId, `pane/task/conversation?${query.toString()}`), AbortSignal.timeout(CHAT_READ_TIMEOUT_MS));
+}
+
+/** GET /api/pane/task/output: what one of a Claude pane's background commands has printed so far, its last 64 KB. */
+export async function fetchTaskOutput(paneId: string, taskId: string, machineId = "local"): Promise<{ text: string; size: number; cut: boolean }> {
+  const query = new URLSearchParams({ pane_id: paneId, task_id: taskId });
+  return await getJson<{ text: string; size: number; cut: boolean }>(machinePath(machineId, `pane/task/output?${query.toString()}`));
+}
+
 /** GET /api/pane/files: paths under the pane's cwd matching `query`, for @-mentions. */
 export async function fetchPaneFiles(paneId: string, query: string, limit = 20, machineId = "local"): Promise<string[]> {
   const params = new URLSearchParams({ pane_id: paneId, q: query, limit: String(limit) });

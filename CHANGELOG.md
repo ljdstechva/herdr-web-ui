@@ -8,6 +8,20 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Look inside a subagent.** A Claude pane's running subagents and background commands in
+  the "what is still working" line over the message box, and in the status line's background
+  list, open when tapped: a subagent shows its own conversation (its prompt, the tools it ran and
+  what it said), drawn as the chat draws turns and read again every few seconds; a background
+  command shows what it has printed so far (the last 64 KB), as the terminal would. Read-only,
+  from the session's own files (`GET /api/pane/task/conversation`, `/api/pane/task/output`,
+  `/api/pane/task/tool-output`).
+- **Running output in the chat.** While a call runs, its output is on the agent's screen but not
+  in its transcript yet: the chat now shows the end of the screen under the running call ("Running
+  now"), read every 1.5 s, and drops it once the call's result arrives.
+- **Answers list.** A button at the chat's top right lists the agent's answers, newest first,
+  each by a very short summary (its first heading or first sentence) and its time; answers that
+  end in a question and background results that came back are marked. A pick scrolls back to the
+  answer and highlights it, so an answer that scrolled away under subagent reports is not lost.
 - **Sign-in cards.** When an agent on this PC runs `agent-login login <site>` and the sign-in
   broker needs something only the owner has (the vault passphrase after a reboot, the site's
   username and password, a one-time code), a card shows over the message box of every chat pane
