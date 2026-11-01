@@ -1155,7 +1155,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     if (node !== null && stickToBottom.current) node.scrollTop = node.scrollHeight;
   }, [liveScreen]);
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><FileUrlContext.Provider value={imageUrl}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
-    <div className="chat-transcript" data-conversation-source={state.conversationSource}>
+    <div className={`chat-transcript${outline.length > 0 ? " has-outline" : ""}`} data-conversation-source={state.conversationSource}>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
           in the transcript, because paging back would otherwise drop them under their own heading */}

@@ -8,7 +8,7 @@ import { buildDemoApp } from "./demo-build.ts";
 // Real app over fictional demo panes. The demo's Claude pane runs a subagent and a background
 // command: a row of the "what is running" line over the message box, and of the status line's
 // background list, opens a look inside (TaskView): the subagent's own conversation, drawn as the
-// chat draws turns, and what the command printed. The chat's answers list (top right) jumps back
+// chat draws turns, and what the command printed. The chat's answers list (bottom right) jumps back
 // to an answer and marks it. Phone and desktop widths; nothing may leave the screen sideways.
 const app = mkdtempSync(join(tmpdir(), "herdr-task-view-"));
 const PANE = "w1C:p1";
@@ -127,10 +127,15 @@ try {
           // 3. the answers list: a pick scrolls to the answer and marks it, and the list closes
           const toggle = page.locator(".chat-outline-toggle");
           await toggle.waitFor();
-          // it stays clear of the pane's own ⋯ at the same corner
-          const menu = await page.locator(`.pane-frame[data-layout-pane="${PANE}"] .pane-frame-menu`).boundingBox();
+          // it sits at the chat's bottom right, in a thumb's reach, on the message box's side of the chat
           const own = (await toggle.boundingBox())!;
-          if (menu !== null) assert.ok(own.y >= menu.y + menu.height || own.x + own.width <= menu.x, `${width}px: the answers button does not cover the pane's ⋯`);
+          const area = (await page.locator(".chat-view").boundingBox())!;
+          assert.ok(own.y + own.height <= area.y + area.height && own.y + own.height >= area.y + area.height - 24, `${width}px: the answers button is at the chat's bottom`);
+          assert.ok(own.x + own.width >= area.x + area.width - 24, `${width}px: the answers button is at the chat's right`);
+          // at the chat's end the last turn stops above it, so it covers no copy button
+          await page.locator(".chat-view").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+          const lastBottom = await page.locator(".chat-transcript > *").last().evaluate((node) => node.getBoundingClientRect().bottom);
+          assert.ok(lastBottom <= (await toggle.boundingBox())!.y, `${width}px: the chat's end clears the answers button`);
           await toggle.click();
           const items = page.locator(".chat-outline-item");
           await items.first().waitFor();
@@ -138,6 +143,7 @@ try {
           assert.match(await items.first().innerText(), /Done\. Retries are now safe/);
           const panel = (await page.locator(".chat-outline").boundingBox())!;
           assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 0.5, `${width}px: the answers list fits the screen`);
+          assert.ok(panel.y + panel.height <= own.y && panel.y >= area.y, `${width}px: the answers list opens above its button, inside the chat`);
           await noSideways(page, `${width}px answers list`);
           await page.locator(".chat-view").evaluate((node) => { node.scrollTop = node.scrollHeight; });
           await items.first().click();

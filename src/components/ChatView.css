@@ -1426,18 +1426,22 @@
 .chat-abandoned > summary { font-style: italic; }
 .chat-abandoned-note { margin: var(--space-2) 0 0; color: var(--text-dim); }
 
-/* The answers the agent gave, at the chat's top right: a pick scrolls back to one (lib/chatOutline.ts) */
-/* under the pane's own ⋯, which a single pane draws over the body's top right corner (PaneCanvas.css) */
+/* The answers the agent gave, at the chat's bottom right where a thumb reaches on a phone: a pick
+   scrolls back to one (lib/chatOutline.ts). The button stays at the bottom, the list opens above it. */
 .chat-outline-dock {
   position: absolute;
-  top: calc(var(--control-h) + var(--space-2));
   right: var(--space-2);
+  bottom: var(--space-2);
   z-index: var(--z-popover);
   display: flex;
-  flex-direction: column;
+  flex-direction: column-reverse;
   align-items: flex-end;
-  max-height: calc(100% - var(--control-h) - 2 * var(--space-2));
+  max-height: calc(100% - 2 * var(--space-2));
 }
+
+/* the chat's end stops above the button, so it never covers the last turn's copy button. On the
+   transcript, not the scroller: a scroller's padding would lift the sticky "jump to latest" too. */
+.chat-transcript.has-outline { padding-bottom: var(--touch-target); }
 
 /* solid, as it floats over the words: an icon button's own ground is see-through */
 .chat-outline-dock .chat-outline-toggle {
@@ -1473,7 +1477,7 @@
   flex-direction: column;
   width: min(320px, calc(100vw - 2 * var(--space-4)));
   min-height: 0;
-  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
   background: var(--bg-panel);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-lg);
@@ -1620,10 +1624,6 @@
 
 @media (pointer: coarse) {
   .chat-outline-item { min-height: var(--touch-target); }
-  .chat-outline-dock {
-    top: calc(var(--touch-target) + var(--space-2));
-    max-height: calc(100% - var(--touch-target) - 2 * var(--space-2));
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
