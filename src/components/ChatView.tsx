@@ -1022,6 +1022,18 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     return node === null ? undefined : dismissKeyboardOn(node);
   }, []);
 
+  // the answers dock floats beside the scroller, not in it, so a scrollbar that takes room (a desktop's;
+  // a phone's floats and takes none) is measured for it to stand clear of. It comes and goes with overflow.
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (node === null) return;
+    const measure = (): void => setScrollbarWidth(node.offsetWidth - node.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!outlineOpen) return;
     const outside = (event: PointerEvent): void => { if (!outlineDock.current?.contains(event.target as Node)) setOutlineOpen(false); };
@@ -1206,7 +1218,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
       : away && <button type="button" className="btn chat-new-messages is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>}
   </div>
-  {outline.length > 0 && <div className="chat-outline-dock" ref={outlineDock}>
+  {outline.length > 0 && <div className="chat-outline-dock" ref={outlineDock} style={{ right: `calc(var(--space-2) + ${scrollbarWidth}px)` }}>
     <button type="button" className="icon-button chat-outline-toggle" aria-expanded={outlineOpen} aria-controls={outlineOpen ? outlineId : undefined} aria-label={t("Answers")} title={t("Answers")} onClick={() => setOutlineOpen((open) => !open)}>
       <TableOfContents aria-hidden="true" /><span className="chat-outline-count" aria-hidden="true">{outline.length}</span>
     </button>

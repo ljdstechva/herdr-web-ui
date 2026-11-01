@@ -1427,10 +1427,10 @@
 .chat-abandoned-note { margin: var(--space-2) 0 0; color: var(--text-dim); }
 
 /* The answers the agent gave, at the chat's bottom right where a thumb reaches on a phone: a pick
-   scrolls back to one (lib/chatOutline.ts). The button stays at the bottom, the list opens above it. */
+   scrolls back to one (lib/chatOutline.ts). The button stays at the bottom, the list opens above it.
+   `right` is set where it is drawn: the margin plus the room a desktop scrollbar takes (ChatView.tsx). */
 .chat-outline-dock {
   position: absolute;
-  right: var(--space-2);
   bottom: var(--space-2);
   z-index: var(--z-popover);
   display: flex;

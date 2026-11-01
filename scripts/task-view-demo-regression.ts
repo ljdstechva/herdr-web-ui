@@ -36,7 +36,7 @@ try {
     return await file.exists() ? new Response(file) : new Response(null, { status: 404 });
   } });
   try {
-    const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
+    const browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ["--hide-scrollbars"], ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
     try {
       for (const width of [360, 390, 1280]) {
         const touch = width < 1000;
@@ -131,7 +131,12 @@ try {
           const own = (await toggle.boundingBox())!;
           const area = (await page.locator(".chat-view").boundingBox())!;
           assert.ok(own.y + own.height <= area.y + area.height && own.y + own.height >= area.y + area.height - 24, `${width}px: the answers button is at the chat's bottom`);
-          assert.ok(own.x + own.width >= area.x + area.width - 24, `${width}px: the answers button is at the chat's right`);
+          // a scrollbar that takes room (a desktop's) stays visible and usable beside it
+          const room = await page.locator(".chat-view").evaluate((node) => ({ left: node.getBoundingClientRect().left + node.clientLeft, width: node.clientWidth, bar: (node as HTMLElement).offsetWidth - node.clientWidth }));
+          if (!touch) assert.ok(room.bar > 0, `${width}px: the test has a desktop scrollbar to clear (${room.bar}px)`);
+          const count = (await page.locator(".chat-outline-count").boundingBox())!;
+          assert.ok(Math.max(own.x + own.width, count.x + count.width) <= room.left + room.width, `${width}px: the answers button and its count stay left of the scrollbar`);
+          assert.ok(own.x + own.width >= room.left + room.width - 24, `${width}px: the answers button is at the chat's right`);
           // at the chat's end the last turn stops above it, so it covers no copy button
           await page.locator(".chat-view").evaluate((node) => { node.scrollTop = node.scrollHeight; });
           const lastBottom = await page.locator(".chat-transcript > *").last().evaluate((node) => node.getBoundingClientRect().bottom);
@@ -144,6 +149,7 @@ try {
           const panel = (await page.locator(".chat-outline").boundingBox())!;
           assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 0.5, `${width}px: the answers list fits the screen`);
           assert.ok(panel.y + panel.height <= own.y && panel.y >= area.y, `${width}px: the answers list opens above its button, inside the chat`);
+          assert.ok(panel.x + panel.width <= room.left + room.width, `${width}px: the answers list stays left of the scrollbar`);
           await noSideways(page, `${width}px answers list`);
           await page.locator(".chat-view").evaluate((node) => { node.scrollTop = node.scrollHeight; });
           await items.first().click();
