@@ -453,6 +453,7 @@ export const KO: Record<string, string> = {
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "처음 {rows}행, {columns}열만 표시합니다. 전체를 보려면 파일을 다운로드하세요.",
   "Sheets": "시트",
   "Open {path}": "{path} 열기",
+  "This video can't play in the chat.": "이 동영상은 채팅에서 재생할 수 없습니다.",
 
   // ---- PC dialog ----
   "Update remote bridge": "원격 브리지 업데이트",

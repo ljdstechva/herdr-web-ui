@@ -93,7 +93,7 @@ export function swipeTarget<W extends { workspace_id: string }, T extends { tab_
 /** A dialog, the palette or a sheet is up: a stroke there is theirs. */
 const MODAL = "[aria-modal='true'], dialog[open]";
 /** Things a finger drags for their own sake. */
-const DRAGGED = "[role='separator'], [role='slider'], input, textarea, select, [contenteditable='true'], .key-bar, .terminal-viewport-tools, .voice-pill, .voice-mic";
+const DRAGGED = "[role='separator'], [role='slider'], input, textarea, select, [contenteditable='true'], .key-bar, .terminal-viewport-tools, .voice-pill, .voice-mic, .markdown-video";
 
 /** What lies between the finger and the surface and scrolls sideways. */
 function sidewaysScrollers(target: EventTarget | null, surface: HTMLElement): HTMLElement[] {

@@ -36,6 +36,7 @@ import { freeAgentName } from "./agent-name.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
 import { fileResponse, locateFile } from "./file-view.ts";
+import { chatVideo } from "./video-file.ts";
 import { DocumentPreviews, PreviewError, previewResponse } from "./file-preview.ts";
 import {
   agentManifests,
@@ -1917,6 +1918,14 @@ export function createServer(
         const pdf = previews.open(url.searchParams.get("id") ?? "");
         if (pdf === null) return jsonResponse({ error: { code: "not_found", message: "no such preview; open the file again" } }, 404);
         return previewResponse(pdf, url.searchParams.get("name"));
+      }
+
+      // a video the chat plays in place: only a video file, only from the work folder (video-file.ts)
+      if (pathname === "/api/fs/video") {
+        if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
+        const video = chatVideo(url.searchParams.get("path") ?? "");
+        if (video === null) return jsonResponse({ error: { code: "video_refused", message: "only an .mp4 or .webm file inside the work folder plays here" } }, 403);
+        return fileResponse(video, false);
       }
 
       if (pathname === "/api/fs/stat" || pathname === "/api/fs/file" || pathname === "/api/fs/preview") {

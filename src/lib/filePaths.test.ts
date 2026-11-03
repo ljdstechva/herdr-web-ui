@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { codeIsFilePath, isImagePath, splitFilePaths } from "./filePaths.ts";
+import { codeIsFilePath, isImagePath, isVideoPath, splitFilePaths, videoPosterPath } from "./filePaths.ts";
 
 const paths = (text: string) => splitFilePaths(text).filter((part) => typeof part !== "string").map((part) => (part as { path: string }).path);
 
@@ -11,6 +11,12 @@ describe("file paths in chat text", () => {
     expect(paths("./scripts/capture.ts 에서 확인")).toEqual(["./scripts/capture.ts"]);
     // the text around a path is kept, whole
     expect(splitFilePaths("open src/a.ts now")).toEqual(["open ", { path: "src/a.ts" }, " now"]);
+  });
+
+  it("knows a video the chat plays, and the poster beside it", () => {
+    for (const path of ["/tmp/a.mp4", "x/B.MP4", "c.webm"]) expect(isVideoPath(path)).toBe(true);
+    for (const path of ["/tmp/a.mov", "a.mp4.txt", "a.m4v", "mp4"]) expect(isVideoPath(path)).toBe(false);
+    expect(videoPosterPath("/w/a b/reel-07.mp4")).toBe("/w/a b/reel-07.poster.jpg");
   });
 
   it("knows an image file by its extension", () => {

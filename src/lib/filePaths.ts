@@ -62,5 +62,18 @@ export function isImagePath(path: string): boolean {
   return IMAGE_FILE.test(path);
 }
 
+/**
+ * A video the chat plays in place when an answer writes it as `![…](path)`. Only these two: the
+ * /api/fs/video route serves nothing else, and a .mov stays the link it was.
+ */
+const VIDEO_FILE = /\.(?:mp4|webm)$/i;
+export function isVideoPath(path: string): boolean {
+  return VIDEO_FILE.test(path);
+}
+/** The picture a player shows before it is played: the one the preview script leaves beside the video, `reel.mp4` -> `reel.poster.jpg`. */
+export function videoPosterPath(path: string): string {
+  return path.replace(VIDEO_FILE, ".poster.jpg");
+}
+
 /** The address an <img> reads a file from, for the pane the chat belongs to; null where no pane serves one (images stay paths). */
 export const FileUrlContext = createContext<((path: string) => string) | null>(null);

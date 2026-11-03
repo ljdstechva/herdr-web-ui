@@ -1062,6 +1062,29 @@
   object-fit: contain;
 }
 
+/*
+ * 9:16 holds the room until the file says its own shape, so the chat does not jump. A vertical
+ * video stops short of the screen's height: all of it and its controls show at once in the chat,
+ * under the composer's row and clear of the buttons that float over the chat's end.
+ */
+.markdown-video {
+  display: block;
+  width: min(100%, calc(62vh * 9 / 16));
+  width: min(100%, calc(62dvh * 9 / 16));
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: auto 9 / 16;
+  margin: var(--space-2) auto;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  object-fit: contain;
+}
+
+.markdown-video-failed {
+  color: var(--text-dim);
+}
+
 .markdown-code-link {
   text-decoration: none;
 }

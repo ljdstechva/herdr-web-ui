@@ -455,6 +455,7 @@ export const JA: Record<string, string> = {
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "最初の {rows} 行と {columns} 列を表示しています。すべてを見るにはファイルをダウンロードしてください。",
   "Sheets": "シート",
   "Open {path}": "{path} を開く",
+  "This video can't play in the chat.": "この動画はチャットでは再生できません。",
 
   // ---- PC dialog ----
   "Update remote bridge": "リモートブリッジを更新",

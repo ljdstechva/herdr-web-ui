@@ -21,6 +21,29 @@ describe("image thumbnails", () => {
     }
   };
 
+  it("plays a local .mp4 or .webm written as an image, tap to play, reading only its first bytes", () => {
+    const html = render("![#7 reel](</opt/work/a client/preview/reel-07.mp4>)");
+    expect(html).toContain('<video class="markdown-video"');
+    expect(html).toContain(`src="/api/fs/video?path=${encodeURIComponent("/opt/work/a client/preview/reel-07.mp4")}"`);
+    expect(html).toContain(`poster="/api/fs/file?path=${encodeURIComponent("/opt/work/a client/preview/reel-07.poster.jpg")}"`);
+    expect(html).toContain('preload="metadata"');
+    expect(html).toMatch(/playsInline/i);
+    expect(html).not.toMatch(/autoplay/i);
+    expect(render("![clip](/tmp/b.WEBM)")).toContain("<video");
+  });
+
+  it("leaves every other way of naming a video as it was", () => {
+    for (const markdown of ["[reel](/tmp/a.mp4)", "/tmp/a.mp4", "`/tmp/a.mp4`", "![old](/tmp/a.mov)", "![web](https://x.dev/a.mp4)", '<video src="/tmp/a.mp4"></video>']) {
+      expect(render(markdown)).not.toContain("<video class");
+    }
+  });
+
+  it("does not offer a player where the local video route cannot serve it", () => {
+    const remote = (path: string) => `/api/machines/pc1/fs/file?path=${encodeURIComponent(path)}`;
+    expect(render("![reel](/tmp/a.mp4)", remote)).not.toContain("<video");
+    expect(render("![reel](/tmp/a.mp4)", null)).not.toContain("<video");
+  });
+
   it("collects the image files a line names, once each, up to the strip's length", () => {
     expect(imagePaths(parseInline("Saved /tmp/a.png and `/tmp/b.jpg`, [c](/tmp/c.webp), /tmp/a.png again, /tmp/run.log, [d](https://x.dev/d.png)"))).toEqual(["/tmp/a.png", "/tmp/b.jpg", "/tmp/c.webp"]);
     expect(imagePaths(parseInline(Array.from({ length: 9 }, (_, n) => `/tmp/shot-${n}.png`).join(" ")))).toHaveLength(6);

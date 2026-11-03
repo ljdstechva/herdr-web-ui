@@ -1,5 +1,5 @@
 import { fileUriPath } from "./terminalFileLinks.ts";
-import { isImagePath } from "./filePaths.ts";
+import { isImagePath, isVideoPath } from "./filePaths.ts";
 
 export type InlineNode =
   | { type: "text"; value: string }
@@ -9,7 +9,7 @@ export type InlineNode =
   | { type: "link"; href: string; children: InlineNode[] }
   /** a link to a local file (`[report](/repo/out/REPORT.md)`): its label opens the path */
   | { type: "file"; path: string; children: InlineNode[] }
-  /** an image of a local file (`![after](/tmp/shot.png)`): drawn as a thumbnail that opens the path */
+  /** an image or video of a local file (`![after](/tmp/shot.png)`): a thumbnail that opens the path, or a player for an .mp4 or .webm */
   | { type: "image"; path: string; alt: string };
 
 export interface ListItem {
@@ -229,7 +229,7 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
       const file = href === null ? markdownFileTarget(target) : null;
       // `![alt](…)`: the `!` ends the text before the mark. A local image is drawn; an image on
       // the web stays its link, so nothing is fetched from another site until it is tapped
-      const image = index > offset && source[index - 1] === "!" && (href !== null || (file !== null && isImagePath(file)));
+      const image = index > offset && source[index - 1] === "!" && (href !== null || (file !== null && (isImagePath(file) || isVideoPath(file))));
       if (image) {
         const before = source.slice(offset, index - 1);
         nodes.pop();

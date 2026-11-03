@@ -2,7 +2,7 @@ import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRe
 import { Check, Copy } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
-import { codeIsFilePath, FileUrlContext, isImagePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
+import { codeIsFilePath, FileUrlContext, isImagePath, isVideoPath, OpenFileContext, splitFilePaths, videoPosterPath } from "../lib/filePaths.ts";
 import { fileUriPath } from "../lib/terminalFileLinks.ts";
 import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "../lib/highlight.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
@@ -72,6 +72,34 @@ function ChatImage({ path, alt, open }: { path: string; alt: string; open: ((pat
     : <a className="markdown-image" href={src} target="_blank" rel="noopener noreferrer" title={path}>{image}</a>;
 }
 
+/**
+ * A video an answer writes as `![…](path)`, played in the chat: tap to play, never by itself, and
+ * only its first bytes are read until then. It reads through /api/fs/video, which serves .mp4 and
+ * .webm from the work folder and nothing else. Only this PC has that route, so a remote PC's video,
+ * or one the route refuses, stays the path that opens the file viewer, with a word saying why.
+ */
+const LOCAL_FILE_ROUTE = "/api/fs/file?";
+function ChatVideo({ path, alt, open }: { path: string; alt: string; open: ((path: string) => void) | null }) {
+  const t = useT();
+  const url = useContext(FileUrlContext);
+  const [failed, setFailed] = useState(false);
+  const file = url === null ? "" : url(path);
+  if (url === null || failed || !file.startsWith(LOCAL_FILE_ROUTE)) {
+    const name = open !== null ? <FilePath path={path} code={false} open={open} /> : <span>{alt} (<code>{path}</code>)</span>;
+    return <>{failed && <span className="markdown-video-failed">{t("This video can't play in the chat.")} </span>}{name}</>;
+  }
+  return <video
+    className="markdown-video"
+    src={`/api/fs/video?${file.slice(LOCAL_FILE_ROUTE.length)}`}
+    poster={url(videoPosterPath(path))}
+    aria-label={alt}
+    controls
+    playsInline
+    preload="metadata"
+    onError={() => setFailed(true)}
+  />;
+}
+
 /** A row of thumbnails has this many at most: a listing of thirty renders stays a listing. */
 const MAX_IMAGE_STRIP = 6;
 
@@ -133,7 +161,9 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
           ? <button key={key} type="button" className="markdown-file" title={t("Open {path}", { path: node.path })} onClick={() => open(node.path)}>{label}</button>
           : <span key={key}>{label} (<code>{node.path}</code>)</span>;
       }
-      case "image": return <ChatImage key={key} path={node.path} alt={node.alt} open={open} />;
+      case "image": return isVideoPath(node.path)
+        ? <ChatVideo key={key} path={node.path} alt={node.alt} open={open} />
+        : <ChatImage key={key} path={node.path} alt={node.alt} open={open} />;
     }
   })}</>;
 }

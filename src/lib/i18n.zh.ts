@@ -457,6 +457,7 @@ export const ZH: Record<string, string> = {
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "仅显示前 {rows} 行和 {columns} 列。下载文件可查看全部内容。",
   "Sheets": "工作表",
   "Open {path}": "打开 {path}",
+  "This video can't play in the chat.": "此视频无法在聊天中播放。",
 
   // ---- PC dialog ----
   "Update remote bridge": "更新远程 bridge",
