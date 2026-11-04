@@ -1,5 +1,5 @@
 import type { AgentInfo, HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { customTabLabel, tabLabel } from "./tabName.ts";
+import { customTabLabel, nameSaysFolder, tabFolder, tabLabel } from "./tabName.ts";
 
 export interface SidebarAgent {
   pane: HerdrPane;
@@ -87,22 +87,24 @@ export function workspaceAgentLabels(agents: readonly SidebarAgent[]): Map<strin
  * more tabs or the tab was renamed. A tab is judged by its place in the row, not its number:
  * herdr relabels the tab that moves up when the one before it closes, and keeps its number.
  */
-export function agentTabName(tab: TabInfo | null | undefined, workspaceTabs: readonly TabInfo[], t: Parameters<typeof tabLabel>[1]): string | null {
+export function agentTabName(tab: TabInfo | null | undefined, workspaceTabs: readonly TabInfo[], t: Parameters<typeof tabLabel>[1], panes: Parameters<typeof tabFolder>[1]): string | null {
   if (!tab) return null;
   const place = workspaceTabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1 || tab.number;
-  return workspaceTabs.length > 1 || customTabLabel(tab, place) ? tabLabel(tab, t, place) : null;
+  return workspaceTabs.length > 1 || customTabLabel(tab, place) ? tabLabel(tab, t, place, tabFolder(tab.tab_id, panes)) : null;
 }
 
 /**
  * An agent row's first line: the name its owner gave the pane, else its workspace's name, with
  * the tab's where the agent row names one (agentTabName). These are names the owner chose, so
  * renaming a workspace or a tab renames the row; what the agent is doing (its terminal title, the
- * chat's topic) changes with every chat and stays in the tooltip.
+ * chat's topic) changes with every chat and stays in the tooltip. A tab written from a folder of
+ * the workspace's name ("Mouse - Social" in Mouse) already says the workspace.
  */
 export function agentRowTitle({ paneLabel, workspaceLabel, tabName }: { paneLabel: string | null | undefined; workspaceLabel: string; tabName: string | null }): string {
   const workspace = workspaceLabel.trim();
   const tab = nonblank(tabName);
-  return nonblank(paneLabel) ?? (tab && tab !== workspace ? [workspace, tab].filter(Boolean).join(" · ") : workspace);
+  const said = tab !== null && nameSaysFolder(tab, workspace);
+  return nonblank(paneLabel) ?? (said ? tab : tab ? [workspace, tab].filter(Boolean).join(" · ") : workspace);
 }
 
 export interface AgentContextParts {
@@ -126,6 +128,6 @@ export function agentContext({ agentLabel, title, markAgent, machineName, folder
   return [
     agent && agent !== title.trim() && agent.toLowerCase() !== markAgent?.toLowerCase() ? agent : null,
     nonblank(machineName),
-    place && place !== title.trim() && place !== workspaceLabel.trim() ? place : null,
+    place && !nameSaysFolder(title.trim().split(" · ").at(-1) ?? "", place) && place !== workspaceLabel.trim() ? place : null,
   ].filter((part): part is string => Boolean(part));
 }

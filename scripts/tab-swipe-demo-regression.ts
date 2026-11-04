@@ -136,7 +136,9 @@ try {
           await atRest(page);
           // and the same stroke the other way returns, to the tab it left: the workspace's last
           const back = await stroke(cdp, middle, { x: 130, y: 0 }, { hold: true });
-          assert.equal((await stripOf(page)).hint, `infra · ${third}`, "going back, the workspace before is entered at its last tab, and both are named");
+          // a tab written from a folder of the workspace's name already says the workspace
+          assert.equal(third.startsWith("infra"), true, "the fixture's tab is written from its folder");
+          assert.equal((await stripOf(page)).hint, third, "going back, the workspace before is entered at its last tab, and both are named");
           assert.equal((await stripOf(page)).hintSide, "start");
           await back();
           await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, here, { timeout: 5_000 });

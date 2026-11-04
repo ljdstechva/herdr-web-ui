@@ -75,6 +75,16 @@ describe("rankPanes", () => {
     expect(ids(rankPanes("Tab 2", roster, workspaces, { tabs }))).toEqual([]);
   });
 
+  it("finds a pane by the tab's folder name, whichever panes the search was cut to", () => {
+    const numbered = [{ ...tabs[0]!, label: "1" }, { tab_id: "t1b", workspace_id: "w1", label: "Social", number: 2, agent_status: "idle", focused: false, pane_count: 1 }] satisfies TabInfo[];
+    const inMouse = [pane("one", { label: "One", cwd: "/work/Mouse" }), pane("two", { label: "Two", tab_id: "t1b", cwd: "/work/Mouse" })];
+    expect(ids(rankPanes("Mouse 1", inMouse, workspaces, { tabs: numbered }))).toEqual(["one"]);
+    expect(ids(rankPanes("Mouse - Social", inMouse, workspaces, { tabs: numbered }))).toEqual(["two"]);
+    // a status filter left only the tab's second pane, whose folder is another
+    const second = pane("split", { label: "Split", cwd: "/tmp" });
+    expect(ids(rankPanes("Mouse 1", [second], workspaces, { tabs: numbered, panes: [inMouse[0]!, second] }))).toEqual(["split"]);
+  });
+
   it("finds a pane by its workspace's branch", () => {
     const branches = new Map([["w2", { branch: "feat/palette-goto-filters" }], ["w1", { branch: null }]]);
     expect(ids(rankPanes("goto-filters", panes, workspaces, { branches }))).toEqual(["beta"]);

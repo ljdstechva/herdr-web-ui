@@ -18,7 +18,8 @@ const snapshot = {
     { tab_id: "w1:t3", workspace_id: "w1", label: "", number: 3 },
     { tab_id: "w2:t1", workspace_id: "w2", label: "", number: 1 },
   ],
-} as unknown as Pick<SessionSnapshot, "tabs" | "workspaces">;
+  panes: [],
+} as unknown as Pick<SessionSnapshot, "tabs" | "workspaces" | "panes">;
 
 describe("paneMoveTargets", () => {
   it("lists a new tab, the workspace's other tabs in order, every other workspace, then a new workspace", () => {
@@ -50,9 +51,23 @@ describe("paneMoveTargets", () => {
         { tab_id: "w1:ta", workspace_id: "w1", label: "", number: 1 },
         { tab_id: "w1:tc", workspace_id: "w1", label: "", number: 2 },
       ],
-    } as unknown as Pick<SessionSnapshot, "tabs" | "workspaces">;
+      panes: [],
+    } as unknown as Pick<SessionSnapshot, "tabs" | "workspaces" | "panes">;
     const labels = paneMoveTargets(reordered, { workspace_id: "w1", tab_id: "w1:tc" }, t).filter((target) => target.kind === "tab").map((target) => [target.id, target.label]);
     expect(labels).toEqual([["tab:w1:tb", "2"], ["tab:w1:ta", "Tab 2"]]);
+  });
+
+  it("names the tabs from their folders, as the strip does", () => {
+    const inFolders = {
+      ...snapshot,
+      panes: [
+        { pane_id: "p1", tab_id: "w1:t2", cwd: "/work/Mouse" },
+        { pane_id: "p2", tab_id: "w1:t1", cwd: "/work/Mouse" },
+        { pane_id: "p3", tab_id: "w1:t3", cwd: "/work/Mouse" },
+      ],
+    } as unknown as Pick<SessionSnapshot, "tabs" | "workspaces" | "panes">;
+    const labels = paneMoveTargets(inFolders, { workspace_id: "w1", tab_id: "w1:t3" }, t).filter((target) => target.kind === "tab").map((target) => target.label);
+    expect(labels).toEqual(["Mouse 1", "Mouse - build"]);
   });
 
   it("offers a lone pane a new tab and the other workspaces only", () => {

@@ -2,12 +2,15 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Browser, Locator, Page } from "playwright-core";
 import type { PaneLayoutSnapshot, PaneSplit } from "../shared/protocol.ts";
 import { paneFocus, paneRead, paneRename, paneSplit, sessionSnapshot, tabClose, tabCreate, tabMove, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 
-const TAB = "Tab 1";
+// the strip writes a tab from its folder: the workspace's, set where the folder is made
+let FOLDER = "";
+let TAB = "";
+const named = (name: string): string => `${FOLDER} - ${name}`;
 const evidence = process.env.UI_EVIDENCE_DIR;
 const frameSelector = (id: string) => `[data-layout-pane=${JSON.stringify(id)}]`;
 const frame = (page: Page, id: string) => page.locator(frameSelector(id));
@@ -144,7 +147,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     // Right-click targets an inactive tab without activating it; Close removes only that target.
     const nativeTab = (await sessionSnapshot()).tabs.find((candidate) => candidate.tab_id === tabId)!;
     const target = await tabCreate({ workspaceId: nativeTab.workspace_id, label: "menu-target" });
-    const inactive = page.getByRole("tab", { name: "menu-target", exact: true });
+    const inactive = page.getByRole("tab", { name: named("menu-target"), exact: true });
     await inactive.waitFor();
     const order = () => strip.getByRole("tab").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset["tabId"]));
     const originalOrder = [tabId, target.tab.tab_id];
@@ -210,7 +213,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
       await until(() => raceRequests === 1, "the reorder request waits before acknowledgement");
       const extra = await tabCreate({ workspaceId: nativeTab.workspace_id, label: "unrelated-before-ack" });
       raceTab = extra.tab.tab_id;
-      await page.getByRole("tab", { name: "unrelated-before-ack", exact: true }).waitFor();
+      await page.getByRole("tab", { name: named("unrelated-before-ack"), exact: true }).waitFor();
       const beforeAck = (await sessionSnapshot()).tabs.filter((entry) => entry.workspace_id === nativeTab.workspace_id);
       const expected = [beforeAck.find((entry) => entry.tab_id === target.tab.tab_id)!, ...beforeAck.filter((entry) => entry.tab_id !== target.tab.tab_id)];
       const response = page.waitForResponse((entry) => entry.request().method() === "POST" && new URL(entry.url()).pathname.endsWith("/tab/move"));
@@ -254,16 +257,16 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     // A topology change while pressed invalidates the original insertion coordinates.
     await dragInactiveBeforeFirst(false);
     const extra = await tabCreate({ workspaceId: nativeTab.workspace_id, label: "cancel-drag" });
-    await page.getByRole("tab", { name: "cancel-drag", exact: true }).waitFor();
+    await page.getByRole("tab", { name: named("cancel-drag"), exact: true }).waitFor();
     const beforeStaleRelease = movePaths.length;
     await page.mouse.up();
     assert.equal(movePaths.length, beforeStaleRelease, "a stale drag is not sent after a tab appears");
     await tabClose(extra.tab.tab_id);
-    await page.getByRole("tab", { name: "cancel-drag", exact: true }).waitFor({ state: "detached" });
+    await page.getByRole("tab", { name: named("cancel-drag"), exact: true }).waitFor({ state: "detached" });
     await currentPane(page, first);
     await frame(page, first).locator(".xterm-helper-textarea").focus();
     await inactive.click({ button: "right" });
-    const inactiveMenu = page.getByRole("menu", { name: "menu-target", exact: true });
+    const inactiveMenu = page.getByRole("menu", { name: named("menu-target"), exact: true });
     await inactiveMenu.waitFor();
     assert.equal(await tab.getAttribute("aria-selected"), "true", "the open tab does not change when another tab is right-clicked");
     assert.equal((await sessionSnapshot()).focused_pane_id, first, "the menu does not change native focus");
@@ -500,7 +503,7 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     const owner = (await sessionSnapshot()).panes.find((pane) => pane.pane_id === first)!;
     const sibling = await tabCreate({ workspaceId: owner.workspace_id, label: "touch-reorder" });
     try {
-      await page.getByRole("tab", { name: "touch-reorder", exact: true }).waitFor();
+      await page.getByRole("tab", { name: named("touch-reorder"), exact: true }).waitFor();
       await touchMenu.tap();
       await tabSheet.getByRole("button", { name: "Move tab right", exact: true }).tap();
       await until(async () => (await sessionSnapshot()).tabs.filter((entry) => entry.workspace_id === owner.workspace_id)[0]?.tab_id === sibling.tab.tab_id, "touch menu reorders native tabs");
@@ -511,7 +514,7 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
       await until(async () => (await sessionSnapshot()).tabs.filter((entry) => entry.workspace_id === owner.workspace_id)[0]?.tab_id === owner.tab_id, "touch menu restores original order");
       await until(async () => await page.locator(".tab-strip").getAttribute("aria-busy") === "false", "restored touch order acknowledged");
     } finally { await tabClose(sibling.tab.tab_id); }
-    await page.getByRole("tab", { name: "touch-reorder", exact: true }).waitFor({ state: "detached" });
+    await page.getByRole("tab", { name: named("touch-reorder"), exact: true }).waitFor({ state: "detached" });
     await frame(page, second).locator(".pane-frame-menu").tap();
     const paneSheet = page.getByRole("dialog", { name: /^Pane actions for / });
     await paneSheet.waitFor();
@@ -550,6 +553,8 @@ async function checkTouchTablet(browser: Browser, origin: string, first: string)
 
 export async function checkTabMenu(browser: Browser, origin: string): Promise<void> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-tab-menu-")));
+  FOLDER = basename(root);
+  TAB = `${FOLDER} 1`;
   let workspaceId: string | null = null;
   try {
     const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-tab-menu" });

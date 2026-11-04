@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { chromium } from "playwright-core";
 import type { Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
@@ -177,7 +177,8 @@ try {
   // representative pane of the workspace row; the workspace's visible name remains its own.
   await changeState(page, [{ selector: paneSelector(other.paneId), attribute: ["aria-current", "true"] }, { selector: '.tab-strip [role="tab"]', count: 1 }],
     () => page.locator(paneSelector(other.paneId)).click(), "selecting the split workspace shows its strip");
-  assert.equal(await page.locator('.tab-strip [role="tab"]').textContent(), "Tab 1", "a tab herdr named by its number reads as Tab 1");
+  const firstTab = `${basename(other.cwd)} 1`;
+  assert.equal(await page.locator('.tab-strip [role="tab"]').textContent(), firstTab, "a tab herdr named by its number reads as its folder and place");
   // at this width the header over the pane is the pane's surface, and the strip under it is
   // the same one, not a band of the panel's colour between header and pane
   const surfaces = await page.evaluate(() => {
@@ -192,8 +193,8 @@ try {
   assert.equal(surfaces.columnChat, surfaces.headerChat, "the header and the pane column agree on the lens");
   assert.equal(surfaces.strip, surfaces.header, "the strip is the header's surface");
   if (surfaces.headerChat) assert.equal(surfaces.chat, surfaces.header, "which under the chat lens is the transcript's");
-  await page.getByRole("tab", { name: "Tab 1", exact: true }).click({ button: "right" });
-  const tabMenu = page.getByRole("menu", { name: "Tab 1", exact: true });
+  await page.getByRole("tab", { name: firstTab, exact: true }).click({ button: "right" });
+  const tabMenu = page.getByRole("menu", { name: firstTab, exact: true });
   await tabMenu.waitFor();
   assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab", "Rename tab", "Close tab"]);
   await page.keyboard.press("Escape");

@@ -83,7 +83,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           const selected = machine.id === selectedMachineId && pane.pane_id === selectedPaneId;
           const online = machine.state === "connected";
           const tabs = machine.snapshot?.tabs.filter((candidate) => candidate.workspace_id === workspace.workspace_id) ?? [];
-          const tabName = agentTabName(tab, tabs, t);
+          const tabName = agentTabName(tab, tabs, t, machine.snapshot?.panes ?? []);
           // the row is named as its owner named it (workspace, tab, pane); what the agent is doing is the tooltip's
           const title = agentRowTitle({ paneLabel: pane.label, workspaceLabel: workspace.label, tabName });
           const task = agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);

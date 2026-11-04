@@ -27,7 +27,7 @@ export function rankMachinePanes(query: string, machines: readonly Machine[], fi
     const snapshot = machine.snapshot;
     if (machine.state !== "connected" || !snapshot) return [];
     return scorePanes(query, filterPanesByStatus(snapshot.panes, filter), snapshot.workspaces,
-      { tabs: snapshot.tabs, branches: branches.get(machine.id), machineName: machine.name, t })
+      { tabs: snapshot.tabs, panes: snapshot.panes, branches: branches.get(machine.id), machineName: machine.name, t })
       .map(({ pane, score }) => ({ machineId: machine.id, paneId: pane.pane_id, machine, pane, score }));
   });
   // Stable ties keep PC and session order, independent of overlapping workspace/pane IDs.

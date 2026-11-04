@@ -16,7 +16,8 @@ import { ApiError } from "../lib/api.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { useT } from "../lib/i18n.ts";
-import { customTabLabel, tabLabel } from "../lib/tabName.ts";
+import { agentRowTitle } from "../lib/sidebarAgents.ts";
+import { customTabLabel, folderTabName, tabFolder, tabLabel } from "../lib/tabName.ts";
 import { STRIP_AT_REST, stripPlaced, stripScrolled, stripSelected, type StripScroll } from "../lib/tabStripScroll.ts";
 import { PANE_TABPANEL_ID, paneTabPanelLabel } from "../lib/paneRegion.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
@@ -106,7 +107,11 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
   // what the snapshot holds now, for a deed that answers after it changed
   const snapshotTabs = useRef(tabs);
   snapshotTabs.current = tabs;
-  const nameOf = (tab: HerdrTab): string => sent?.tabId === tab.tab_id ? sent.label : tabLabel(tab, t, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1);
+  const placeOf = (tab: HerdrTab): number => tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1;
+  // the name its owner gave it, which the name field edits: the folder is the strip's to add
+  // read from the snapshot: an open menu holds the tab as it was, before a rename reached it
+  const givenName = (tab: HerdrTab): string | null => sent?.tabId === tab.tab_id ? sent.label : customTabLabel(tabs.find((candidate) => candidate.tab_id === tab.tab_id) ?? tab, placeOf(tab));
+  const nameOf = (tab: HerdrTab): string => folderTabName(tabFolder(tab.tab_id, snapshot.panes), givenName(tab), placeOf(tab), t);
 
   useEffect(() => {
     lastViewed.set(`${machineId}:${selectedPane.tab_id}`, selectedPane.pane_id);
@@ -240,7 +245,9 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
       if (target.workspace === null) return nameOf(target.tab);
       // another workspace is named first; its tab too, where it has more than the one
       const theirs = snapshot.tabs.filter((tab) => tab.workspace_id === target.tab.workspace_id);
-      return theirs.length > 1 ? `${target.workspace.label} · ${tabLabel(target.tab, t, theirs.indexOf(target.tab) + 1)}` : target.workspace.label;
+      return theirs.length > 1
+        ? agentRowTitle({ paneLabel: null, workspaceLabel: target.workspace.label, tabName: tabLabel(target.tab, t, theirs.indexOf(target.tab) + 1, tabFolder(target.tab.tab_id, snapshot.panes)) })
+        : target.workspace.label;
     },
     open: (step) => { const target = besideOpen(step); const pane = target ? paneFor(target.tab) : undefined; if (pane) onSelectPane(pane.pane_id); },
   };
@@ -257,7 +264,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
   const beginRename = (tab: HerdrTab): void => {
     setError(null);
     focusName.current = tab.tab_id;
-    setEditing({ tabId: tab.tab_id, value: sent?.tabId === tab.tab_id ? sent.label : customTabLabel(tab, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1) ?? "" });
+    setEditing({ tabId: tab.tab_id, value: givenName(tab) ?? "" });
   };
   // an empty name is not sent: herdr would keep it, and its own tab row would show nothing.
   // Enter keeps the typed name, and so does the field losing focus (a tap elsewhere, a phone
@@ -270,7 +277,7 @@ export function TabStrip({ online, snapshot, workspace, selectedPane, onSelectPa
     const label = current.value.trim();
     if (!blurred) refocus.current = tab.tab_id;
     setEditing(null);
-    if (label === "" || label === nameOf(tab)) return;
+    if (label === "" || label === givenName(tab) || label === nameOf(tab)) return;
     setSent({ tabId: tab.tab_id, label });
     void renameTab(tab.tab_id, label).catch((reason: unknown) => {
       if (latest.current.machineId !== machineId || latest.current.workspaceId !== workspace.workspace_id) return;

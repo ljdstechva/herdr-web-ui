@@ -155,16 +155,34 @@ describe("agentTabName", () => {
   it("names a tab only beside another tab or once it was renamed", () => {
     const only = tab("w1:t1", "w1");
     only.label = "1";
-    expect(agentTabName(only, [only], t)).toBeNull();
-    expect(agentTabName({ ...only, label: "Review" }, [only], t)).toBe("Review");
+    expect(agentTabName(only, [only], t, [])).toBeNull();
+    expect(agentTabName({ ...only, label: "Review" }, [only], t, [])).toBe("Review");
     const second = { ...tab("w1:t2", "w1"), label: "2", number: 2 };
-    expect(agentTabName(second, [only, second], t)).toBe("Tab 2");
-    expect(agentTabName(null, [only], t)).toBeNull();
+    expect(agentTabName(second, [only, second], t, [])).toBe("Tab 2");
+    expect(agentTabName(null, [only], t, [])).toBeNull();
   });
 
   it("does not take the tab that moved up after a close for a renamed one", () => {
     // herdr relabels the survivor "1" and leaves its number at 2
     const survivor = { ...tab("w1:t2", "w1"), label: "1", number: 2 };
-    expect(agentTabName(survivor, [survivor], t)).toBeNull();
+    expect(agentTabName(survivor, [survivor], t, [])).toBeNull();
+  });
+
+  it("writes the tab from its folder", () => {
+    const first = { ...tab("w1:t1", "w1"), label: "1" };
+    const second = { ...tab("w1:t2", "w1"), label: "Social", number: 2 };
+    const panes = [{ tab_id: "w1:t1", cwd: "/work/Mouse" }, { tab_id: "w1:t2", cwd: "/work/Mouse" }];
+    expect(agentTabName(first, [first], t, panes)).toBeNull();
+    expect(agentTabName(first, [first, second], t, panes)).toBe("Mouse 1");
+    expect(agentTabName(second, [first, second], t, panes)).toBe("Mouse - Social");
+  });
+
+  it("does not repeat the workspace or the folder a tab's name already says", () => {
+    expect(agentRowTitle({ paneLabel: null, workspaceLabel: "Mouse", tabName: "Mouse 2" })).toBe("Mouse 2");
+    expect(agentRowTitle({ paneLabel: null, workspaceLabel: "Mouse", tabName: "Mouse - Social" })).toBe("Mouse - Social");
+    expect(agentRowTitle({ paneLabel: null, workspaceLabel: "Clients", tabName: "Mouse 2" })).toBe("Clients · Mouse 2");
+    expect(agentRowTitle({ paneLabel: "mine", workspaceLabel: "Mouse", tabName: "Mouse 2" })).toBe("mine");
+    expect(agentContext({ agentLabel: null, title: "Clients · Mouse 2", markAgent: null, machineName: null, folder: "Mouse", workspaceLabel: "Clients" })).toEqual([]);
+    expect(agentContext({ agentLabel: null, title: "Clients · Cat 2", markAgent: null, machineName: null, folder: "Mouse", workspaceLabel: "Clients" })).toEqual(["Mouse"]);
   });
 });

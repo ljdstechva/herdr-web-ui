@@ -18,7 +18,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
 import { folderName, placeLine } from "../lib/paneName.ts";
 import { agentTabName } from "../lib/sidebarAgents.ts";
-import { tabLabel } from "../lib/tabName.ts";
+import { nameSaysFolder, tabFolder, tabLabel } from "../lib/tabName.ts";
 import { useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -483,13 +483,13 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   };
   const tabName = (row: MachinePane): string | null => {
     const { tab, all } = tabOf(row);
-    return agentTabName(tab, all, t);
+    return agentTabName(tab, all, t, row.machine.snapshot?.panes ?? []);
   };
   const activeRow = rows[activeIndex];
   const activeWorkspace = activeRow?.kind === "pane" ? activeRow.machine.snapshot?.workspaces.find((workspace) => workspace.workspace_id === activeRow.pane.workspace_id) : undefined;
   const activeTab = activeRow?.kind === "pane" ? tabOf(activeRow) : undefined;
   const footerPlace = activeRow?.kind === "pane"
-    ? [multiMachine ? activeRow.machine.name : null, activeWorkspace?.label ?? t("Unknown workspace"), activeTab?.tab ? tabLabel(activeTab.tab, t, activeTab.place) : null].filter(Boolean).join(" › ")
+    ? [multiMachine ? activeRow.machine.name : null, activeWorkspace?.label ?? t("Unknown workspace"), activeTab?.tab ? tabLabel(activeTab.tab, t, activeTab.place, tabFolder(activeTab.tab.tab_id, activeRow.machine.snapshot?.panes ?? [])) : null].filter(Boolean).join(" › ")
     : activeRow?.kind === "action" ? activeRow.action.label
     : activeRow?.offered.action.title ?? "";
   const footerPath = activeRow?.kind === "pane" ? panePath(activeRow.pane) : "";
@@ -548,9 +548,10 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
                 const { pane } = row;
                 const workspace = row.machine.snapshot?.workspaces.find((item) => item.workspace_id === pane.workspace_id);
                 const folder = folderName(panePath(pane));
+                const rowTab = tabName(row);
                 const panePlace = section.placeNamesWorkspace
                   ? placeLine(workspace?.label ?? t("Unknown workspace"), folder)
-                  : placeLine(tabName(row) ?? "", folder);
+                  : placeLine(rowTab ?? "", rowTab !== null && nameSaysFolder(rowTab, folder) ? "" : folder);
                 const place = multiMachine && section.placeNamesWorkspace ? `${row.machine.name} › ${panePlace}` : panePlace;
                 const selected = row.machineId === machineId && pane.pane_id === selectedPaneId;
                 return (

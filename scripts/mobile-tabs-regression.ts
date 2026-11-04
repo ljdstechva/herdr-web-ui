@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import { herdrRpc, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
@@ -53,6 +53,8 @@ async function activeTabInView(page: Page, label: string): Promise<void> {
 /** A phone's header and tab strip over a workspace with more tabs than fit the screen. */
 export async function checkMobileTabs(browser: Browser, origin: string): Promise<void> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-mobile-tabs-")));
+  // the strip writes a tab from its folder
+  const TAB = `${basename(root)} 1`;
   let workspaceId: string | null = null;
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
@@ -124,12 +126,12 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await screenshot("last-tab");
 
     await page.locator(".tab-strip").evaluate((node) => { node.scrollLeft = 0; });
-    await page.getByRole("tab", { name: "Tab 1", exact: true }).tap();
-    await page.locator('.tab-strip [role="tab"][aria-selected="true"]', { hasText: "Tab 1" }).waitFor();
+    await page.getByRole("tab", { name: TAB, exact: true }).tap();
+    await page.locator('.tab-strip [role="tab"][aria-selected="true"]', { hasText: TAB }).waitFor();
     await activeTabInView(page, "the first tab, tapped");
     assert.equal(await page.locator(".tab-strip-menu:visible").count(), 1, "the menu button follows a tab selected by touch");
-    await page.getByRole("button", { name: "Actions for Tab 1", exact: true }).tap();
-    const tabSheet = page.getByRole("dialog", { name: "Tab 1", exact: true });
+    await page.getByRole("button", { name: `Actions for ${TAB}`, exact: true }).tap();
+    const tabSheet = page.getByRole("dialog", { name: TAB, exact: true });
     await tabSheet.waitFor();
     assert.deepEqual(await tabSheet.locator(".row-sheet-item").allTextContents(), ["Move tab right", "New tab", "Rename tab", "Close tab"], "the first tab offers only its available adjacent move, with the same actions as right-click");
     await tabSheet.getByRole("button", { name: "Cancel", exact: true }).tap();
@@ -179,8 +181,8 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
         if (scrolled) {
           assert.equal(await strip.evaluate((node) => node.scrollLeft), 0, "a strip the user scrolled is left there when the faces come");
           assert.equal(await openInView(), false);
-          await late.getByRole("tab", { name: "Tab 1", exact: true }).tap();
-          await late.locator('.tab-strip [role="tab"][aria-selected="true"]', { hasText: "Tab 1" }).waitFor();
+          await late.getByRole("tab", { name: TAB, exact: true }).tap();
+          await late.locator('.tab-strip [role="tab"][aria-selected="true"]', { hasText: TAB }).waitFor();
           await activeTabInView(late, "a tab opened after the user's scroll");
         } else {
           await activeTabInView(late, "the last tab, after the faces came");

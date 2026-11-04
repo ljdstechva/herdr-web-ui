@@ -11,6 +11,8 @@ import { Toggle } from "./SettingsControls.tsx";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { folderName } from "../lib/paneName.ts";
+import { folderTabName } from "../lib/tabName.ts";
 import { worktreeTabLabel } from "../lib/tabWorktrees.ts";
 import { suggestWorktreeBranch } from "../lib/worktreeName.ts";
 
@@ -272,7 +274,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
               value={name}
               disabled={fieldsDisabled}
               autoComplete="off"
-              placeholder={worktree ? worktreeTabLabel(branch) : tab ? String(tab.number) : directoryBasename(cwd)}
+              placeholder={worktree ? worktreeTabLabel(branch) : tab ? folderTabName(tab.cwd ? folderName(tab.cwd) : null, null, tab.number, t) : directoryBasename(cwd)}
               onChange={(event) => setName(event.target.value)}
             />
             <span className="field-hint">{t(tab ? "Tab name (optional)" : "Optional workspace label")}</span>

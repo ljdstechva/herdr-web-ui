@@ -1,7 +1,7 @@
 import type { HerdrPane, PluginAction, PluginActions, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
 import { t as moduleT, type Translate } from "./i18n.ts";
 import { paneStatus, type KnownStatus } from "./status.ts";
-import { tabLabel } from "./tabName.ts";
+import { tabFolder, tabLabel } from "./tabName.ts";
 
 export type PaletteStatusFilter = "all" | Exclude<KnownStatus, "unknown">;
 
@@ -46,21 +46,23 @@ export interface PaletteSearchContext {
   machineName?: string;
   /** a linked worktree's branch per workspace id, as useWorktreeBranches reads the inventory */
   branches?: ReadonlyMap<string, { branch: string | null }>;
-  /** names a tab the way the strip and the footer show it ("Tab 2" in the user's language); the module's `t` otherwise */
+  /** every pane of the snapshot, whose folders name the tabs; the panes searched (which a status filter may have cut) otherwise */
+  panes?: readonly HerdrPane[];
+  /** names a tab the way the strip and the footer show it (a tab with no folder is "Tab 2" in the user's language); the module's `t` otherwise */
   t?: Translate;
 }
 
 /**
  * What a tab can be found by: its label as herdr holds it, and the name the UI shows for it
- * ("Tab 2" for a tab herdr still names by its place), when the two differ.
+ * ("Mouse 2" for a tab herdr still names by its place), when the two differ.
  */
-function tabNames(tabs: readonly TabInfo[], t: Translate): Map<string, string[]> {
+function tabNames(tabs: readonly TabInfo[], panes: readonly HerdrPane[], t: Translate): Map<string, string[]> {
   const names = new Map<string, string[]>();
   const placed = new Map<string, number>();
   for (const tab of tabs) {
     const place = (placed.get(tab.workspace_id) ?? 0) + 1;
     placed.set(tab.workspace_id, place);
-    const shown = tabLabel(tab, t, place);
+    const shown = tabLabel(tab, t, place, tabFolder(tab.tab_id, panes));
     names.set(tab.tab_id, shown === tab.label ? [tab.label] : [tab.label, shown]);
   }
   return names;
@@ -136,7 +138,7 @@ function searchableText(pane: HerdrPane, workspaceLabel: string, tabNames: reado
 export function scorePanes(query: string, panes: readonly HerdrPane[], workspaces: readonly WorkspaceInfo[], context: PaletteSearchContext = {}): { pane: HerdrPane; score: number }[] {
   if (query.trim().length === 0) return panes.map((pane) => ({ pane, score: 0 }));
   const workspaceLabels = new Map(workspaces.map((workspace) => [workspace.workspace_id, workspace.label]));
-  const tabsByName = tabNames(context.tabs ?? [], context.t ?? moduleT);
+  const tabsByName = tabNames(context.tabs ?? [], context.panes ?? panes, context.t ?? moduleT);
   return panes
     .map((pane, index) => {
       let score: number | null = null;
