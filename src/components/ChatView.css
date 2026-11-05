@@ -1062,6 +1062,83 @@
   object-fit: contain;
 }
 
+/* holds room until the picture says its size, so a lazy image has a place to be seen at */
+.markdown-image-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: var(--space-2) 0;
+}
+.markdown-images > .markdown-image-frame { margin: 0; }
+.markdown-image-frame:not(.is-shown) .markdown-image { min-height: 120px; }
+
+/* the pill reads over any picture: it carries its own ground, in both themes */
+.share-image-pill {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--touch-target);
+  max-width: calc(100% - 2 * var(--space-2));
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid rgb(255 255 255 / 28%);
+  border-radius: 999px;
+  background: rgb(0 0 0 / 68%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.share-image-pill svg { flex: none; width: 16px; height: 16px; }
+.share-image-pill.is-ready { background: var(--accent); color: #000; }
+.share-image-pill.is-failed { background: #b3261e; }
+.share-image-spin { animation: share-image-spin var(--dur-spin) steps(8) infinite; }
+@keyframes share-image-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .share-image-spin { animation: none; } }
+
+.share-image-header { position: relative; display: inline-flex; }
+.share-image-note {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: var(--z-popover);
+  width: max-content;
+  max-width: 70vw;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-lg);
+  background: rgb(0 0 0 / 82%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 400;
+}
+.share-image-note.is-failed { background: #b3261e; }
+
+/* an image that cannot be drawn says why, in one row, and the row does something about it */
+.markdown-image-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--touch-target);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) dashed var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.875em;
+  text-align: start;
+  cursor: pointer;
+}
+.markdown-images > .markdown-image-note { margin: 0; }
+.markdown-image-note svg { flex: none; width: 18px; height: 18px; }
+.markdown-image-note-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.markdown-image-note-path { overflow: hidden; font-size: 0.875em; opacity: 0.8; text-overflow: ellipsis; white-space: nowrap; }
+
 /*
  * 9:16 holds the room until the file says its own shape, so the chat does not jump. A vertical
  * video stops short of the screen's height: all of it and its controls show at once in the chat,

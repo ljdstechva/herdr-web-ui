@@ -455,6 +455,15 @@ export const JA: Record<string, string> = {
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "最初の {rows} 行と {columns} 列を表示しています。すべてを見るにはファイルをダウンロードしてください。",
   "Sheets": "シート",
   "Open {path}": "{path} を開く",
+  "Share": "共有",
+  "Share image": "画像を共有",
+  "Ready, tap again to send": "準備完了。もう一度タップして送信",
+  "Copied. Paste it in Messenger": "コピーしました。Messengerに貼り付けてください",
+  "Saved. Attach it in Messenger": "保存しました。Messengerで添付してください",
+  "Couldn't share this image": "この画像を共有できませんでした",
+  "This image isn't on the server.": "この画像はサーバーにありません。",
+  "Several files have this name. Tap to choose.": "同じ名前のファイルが複数あります。タップして選択してください。",
+  "This image didn't load. Tap to try again.": "画像を読み込めませんでした。タップして再試行してください。",
   "This video can't play in the chat.": "この動画はチャットでは再生できません。",
 
   // ---- PC dialog ----

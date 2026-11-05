@@ -83,10 +83,10 @@ export function markdownFileTarget(href: string): string | null {
 
 /**
  * A link target that is a file path with spaces in it, written as it is rather than in `<…>`
- * (`[Report](/opt/work/09 Online Jobs/Report.docx)`): rooted, without parentheses, ending in a
- * file name with an extension and perhaps a line.
+ * (`[Report](/opt/work/09 Online Jobs/Report.docx)`): rooted, its parentheses in pairs (a download's
+ * `shot (1).jpg`), ending in a file name with an extension and perhaps a line.
  */
-const SPACED_FILE_TARGET = /^(?:~|\.{1,2})?\/[^()<>\n]*?\.[A-Za-z0-9]{1,8}(?::\d+){0,2}$/;
+const SPACED_FILE_TARGET = /^(?:~|\.{1,2})?\/(?:[^()<>\n]|\([^()<>\n]*\))*?\.[A-Za-z0-9]{1,8}(?::\d+){0,2}$/;
 const MAX_SPACED_TARGET = 1024;
 
 /** A bare URL without the punctuation that closes the sentence around it (GFM's autolink rule). */
@@ -124,7 +124,7 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   // rendering exactly as it appears in the terminal and native transcript.
   // a bare or <angle> http(s) URL is a link too; it stops at the first non-ASCII character,
   // so `…/pull/36에서` links the address and leaves the Korean after it as text
-  const marker = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\((?:<[^<>\n]+>|[^\s)]+|(?:~|\.{1,2})?\/[^()<>\n]*?\.[A-Za-z0-9]{1,8}(?::\d+){0,2})\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
+  const marker = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\((?:<[^<>\n]+>|[^\s()]+(?:\([^\s()]*\)[^\s()]*)+|[^\s)]+|(?:~|\.{1,2})?\/(?:[^()<>\n]|\([^()<>\n]*\))*?\.[A-Za-z0-9]{1,8}(?::\d+){0,2})\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
   // its last part alone, for a `__` that nothing closes as bold: one `_` may still close it
   const emphasis = /(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu;
   // what any part of `marker` starts with
@@ -173,7 +173,9 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
         const end = targetEnd(target);
         if (!(end > target && source[end] === ")")) {
           // a path is not longer than this: a line of unclosed targets is not read again from each
-          const close = parenEnd(target);
+          let close = parenEnd(target);
+          // `shot (1).jpg)`: that one closed the name's own bracket, the target's is the next
+          if (close < source.length && source.slice(target, close).includes("(")) close = parenEnd(close + 1);
           if (!(close < lineEnd(target) && close - target <= MAX_SPACED_TARGET && SPACED_FILE_TARGET.test(source.slice(target, close)))) pattern = null;
         }
       }

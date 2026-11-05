@@ -4,6 +4,7 @@ import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 import { DocumentPreview } from "./DocumentPreview.tsx";
 import { ImageView } from "./ImageView.tsx";
+import { ShareImage } from "./ShareImage.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -158,6 +159,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
               {sheetPages ? <Table2 aria-hidden="true" /> : <FileText aria-hidden="true" />}
             </button>
           )}
+          {kind === "image" && info !== null && <ShareImage url={url} path={info.path} icon />}
           <a className="icon-button" href={previewPdf ?? url} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>
           <button type="button" className="icon-button" disabled={info === null || error !== null} onClick={() => { if (info) downloads.start({ url: fileUrl(info.path, paneId, true), name: info.name, size: info.size }); }} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></button>
           <button type="button" className="icon-button" aria-label={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>

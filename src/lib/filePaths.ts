@@ -10,7 +10,10 @@ import { createContext } from "react";
 // otherwise tried as a path from every one of them, to its end. `~/` still starts one after a
 // plus sign (`+~/notes/a.md`, a line of a diff)
 const BARE_PATH = /(?<![\w/.@~-])(?<!\+(?!~))((?:~\/|\.{1,2}\/|\/)?(?:[\w@.+-]+\/)+[\w@+-][\w@.+-]*\.[A-Za-z0-9]{1,8})(?![\w/])/g;
-const CODE_PATH = /^(?:~\/|\.{1,2}\/|\/)?(?:[\w@.+-]+\/)*[\w@+-][\w@.+-]*\.[A-Za-z0-9]{1,8}$/;
+// backticks say it is one name, so `café.jpg`'s letters count here; a bare path stays stricter
+const CODE_PATH = /^(?:~\/|\.{1,2}\/|\/)?(?:[\p{L}\p{N}\p{M}_@.+-]+\/)*[\p{L}\p{N}\p{M}_@+-][\p{L}\p{N}\p{M}_@.+-]*\.[A-Za-z0-9]{1,8}$/u;
+// a number in brackets before the extension is a download's name (`shot(1).jpg`), `fn(1).map` stays code
+const NUMBERED_CODE_PATH = /^(?:~\/|\.{1,2}\/|\/)?(?:[\p{L}\p{N}\p{M}_@.+-]+\/)*[\p{L}\p{N}\p{M}_@+-][\p{L}\p{N}\p{M}_@.+-]*\(\d+\)\.(?:png|jpe?g|gif|webp|svg|avif|pdf|docx?|xlsx?|pptx?)$/iu;
 
 /**
  * A bare dotted name that is code or a host, not a file: what agents write in backticks all the
@@ -23,9 +26,22 @@ function isCodeName(name: string): boolean {
   return !name.includes("/") && CODE_NAME.test(name);
 }
 
-/** Text split into plain runs and the file paths in it. */
-export function splitFilePaths(text: string): (string | { path: string })[] {
-  const parts: (string | { path: string })[] = [];
+/** The document and media files a path with spaces may end in: the viewer shows them all. */
+const VIEWED_EXTENSION = "pdf|docx?|docm|dotx?|odt|rtf|xlsx?|xlsm|xlsb|ods|pptx?|pptm|ppsx?|potx?|odp|csv|png|jpe?g|gif|webp|svg|mp4|m4v|mov|webm|mp3|m4a|wav|ogg";
+/**
+ * A rooted path whose folders hold spaces, written bare (`saved to /opt/work/03 Social/a.jpg`): on
+ * this PC nearly every work file has one, and cut at the space it read as the wrong file
+ * (`Social/a.jpg`). Prose has spaces too, so it stays narrow: it ends at the first document or media
+ * extension, a segment holds at most five words and none of a sentence's punctuation, and `isSpacedFolder`
+ * asks for a space in a FOLDER, as `/usr/bin/convert in.png` is a command naming a file.
+ */
+const WORD = "[^\\s/\\\\,;:!?*|\"'`<>()\\[\\]]+";
+const NAME_WORD = "[^\\s/\\\\,;:!?*|\"'`<>\\[\\]]+?";
+const SPACED_BARE_PATH = new RegExp(`(?<![\\w/.@~-])((?:~/|/)(?:${WORD}(?: ${WORD}){0,4}/){1,24}${NAME_WORD}(?: ${NAME_WORD}){0,4}?\\.(?:${VIEWED_EXTENSION}))(?![\\w/]|\\.\\w)`, "gi");
+const isSpacedFolder = (path: string): boolean => path.slice(0, path.lastIndexOf("/")).includes(" ");
+
+/** The paths with no space in them, in a run of text with none of the spaced ones. */
+function pushPlainPaths(parts: (string | { path: string })[], text: string): void {
   let offset = 0;
   for (const match of text.matchAll(BARE_PATH)) {
     const index = match.index ?? 0;
@@ -36,6 +52,24 @@ export function splitFilePaths(text: string): (string | { path: string })[] {
     offset = index + match[0].length;
   }
   if (offset < text.length) parts.push(text.slice(offset));
+}
+
+/** Text split into plain runs and the file paths in it. */
+export function splitFilePaths(text: string): (string | { path: string })[] {
+  const parts: (string | { path: string })[] = [];
+  let offset = 0;
+  // a space is what a spaced path needs: most text has neither it and a slash, so most text skips this
+  if (text.includes("/") && text.includes(" ")) {
+    for (const match of text.matchAll(SPACED_BARE_PATH)) {
+      if (!isSpacedFolder(match[1]!)) continue;
+      const index = match.index ?? 0;
+      if (index > offset) pushPlainPaths(parts, text.slice(offset, index));
+      parts.push({ path: match[1]! });
+      offset = index + match[0].length;
+    }
+  }
+  if (offset === 0) pushPlainPaths(parts, text);
+  else if (offset < text.length) pushPlainPaths(parts, text.slice(offset));
   return parts;
 }
 
@@ -45,12 +79,12 @@ export function splitFilePaths(text: string): (string | { path: string })[] {
  * in backticks has spaces too (`/usr/bin/env python3 x.py`), and so does one that names files
  * (`/usr/bin/convert in.png out.pdf`), hence no extension may stand before a space either.
  */
-const SPACED_CODE_PATH = /^(?:~\/|\.{1,2}\/|\/)(?:[^/\n`]+\/)*[^/\n`]+\.(?:pdf|docx?|docm|dotx?|odt|rtf|xlsx?|xlsm|xlsb|ods|pptx?|pptm|ppsx?|potx?|odp|csv|png|jpe?g|gif|webp|svg|mp4|m4v|mov|webm|mp3|m4a|wav|ogg)$/i;
+const SPACED_CODE_PATH = new RegExp(`^(?:~\\/|\\.{1,2}\\/|\\/)(?:[^/\\n\`]+\\/)*[^/\\n\`]+\\.(?:${VIEWED_EXTENSION})$`, "i");
 
 /** A code span that is a single file name or path (`README.md`, `src/app.ts`). */
 export function codeIsFilePath(code: string): boolean {
   if (code.includes(" ")) return SPACED_CODE_PATH.test(code) && !/\.[A-Za-z0-9]{1,8}\s|\s-|\s{2}|\s\/|\/\s/.test(code);
-  return CODE_PATH.test(code) && !isCodeName(code) && /[A-Za-z]/.test(code.replace(/\.[A-Za-z0-9]{1,8}$/, "")) && !/^\d+(?:\.\d+)+$/.test(code);
+  return (CODE_PATH.test(code) || NUMBERED_CODE_PATH.test(code)) && !isCodeName(code) && /[A-Za-z]/.test(code.replace(/\.[A-Za-z0-9]{1,8}$/, "")) && !/^\d+(?:\.\d+)+$/.test(code);
 }
 
 /** Opens a path in the file viewer; null where nothing can open one (paths stay text). */

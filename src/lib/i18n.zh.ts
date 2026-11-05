@@ -457,6 +457,15 @@ export const ZH: Record<string, string> = {
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "仅显示前 {rows} 行和 {columns} 列。下载文件可查看全部内容。",
   "Sheets": "工作表",
   "Open {path}": "打开 {path}",
+  "Share": "分享",
+  "Share image": "分享图片",
+  "Ready, tap again to send": "已就绪，再点一次发送",
+  "Copied. Paste it in Messenger": "已复制，请粘贴到 Messenger",
+  "Saved. Attach it in Messenger": "已保存，请在 Messenger 中添加附件",
+  "Couldn't share this image": "无法分享此图片",
+  "This image isn't on the server.": "服务器上没有此图片。",
+  "Several files have this name. Tap to choose.": "有多个同名文件，点按以选择。",
+  "This image didn't load. Tap to try again.": "图片未能加载，点按重试。",
   "This video can't play in the chat.": "此视频无法在聊天中播放。",
 
   // ---- PC dialog ----

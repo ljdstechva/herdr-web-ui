@@ -245,7 +245,7 @@ async function checkLayout(): Promise<void> {
               title: { ...rect(title), scrollWidth: title.scrollWidth, clientWidth: title.clientWidth, overflow: getComputedStyle(title).textOverflow },
               documentWidth: document.documentElement.scrollWidth, documentHeight: document.documentElement.scrollHeight };
           });
-          assert.equal(geometry.controls.length, 3, label);
+          assert.equal(geometry.controls.length, 4, label); // share, new tab, download, close: this file is an image
           assert.ok(geometry.dialog.x >= -1 && geometry.dialog.right <= scenario.width + 1, `${label}: dialog fits width`);
           assert.ok(geometry.dialog.y >= -1 && geometry.dialog.bottom <= limit + 1, `${label}: dialog fits usable height ${JSON.stringify(geometry.dialog)}`);
           for (const control of geometry.controls) {

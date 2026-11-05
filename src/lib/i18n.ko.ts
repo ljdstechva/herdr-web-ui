@@ -453,6 +453,15 @@ export const KO: Record<string, string> = {
   "Showing the first {rows} rows and {columns} columns. Download the file to see all of it.": "처음 {rows}행, {columns}열만 표시합니다. 전체를 보려면 파일을 다운로드하세요.",
   "Sheets": "시트",
   "Open {path}": "{path} 열기",
+  "Share": "공유",
+  "Share image": "이미지 공유",
+  "Ready, tap again to send": "준비됨. 다시 탭하면 보냅니다",
+  "Copied. Paste it in Messenger": "복사했습니다. Messenger에 붙여넣으세요",
+  "Saved. Attach it in Messenger": "저장했습니다. Messenger에 첨부하세요",
+  "Couldn't share this image": "이 이미지를 공유하지 못했습니다",
+  "This image isn't on the server.": "이 이미지는 서버에 없습니다.",
+  "Several files have this name. Tap to choose.": "이 이름의 파일이 여러 개 있습니다. 탭하여 선택하세요.",
+  "This image didn't load. Tap to try again.": "이미지를 불러오지 못했습니다. 탭하여 다시 시도하세요.",
   "This video can't play in the chat.": "이 동영상은 채팅에서 재생할 수 없습니다.",
 
   // ---- PC dialog ----

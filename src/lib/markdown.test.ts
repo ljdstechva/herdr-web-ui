@@ -51,6 +51,15 @@ describe("image thumbnails", () => {
     expect(imagePaths(parseInline("![after](/tmp/after.png)"))).toEqual([]);
   });
 
+  it("draws an image whose name has brackets or whose bare path has spaces, as the path it is", () => {
+    const shown = (markdown: string) => [...render(markdown).matchAll(/<img [^>]*src="\/api\/fs\/file\?path=([^"]*)"/g)].map((match) => decodeURIComponent(match[1]!));
+    expect(shown("![a](/opt/x y/fb latest (1).jpg)")).toEqual(["/opt/x y/fb latest (1).jpg"]);
+    expect(shown("![a](/tmp/s(1).jpg)")).toEqual(["/tmp/s(1).jpg"]);
+    expect(shown("saved to /opt/work/03 SMARCOMMS/fb.jpg")).toEqual(["/opt/work/03 SMARCOMMS/fb.jpg"]);
+    // a web address's own brackets stay in the address
+    expect(parseInline("[w](https://en.wikipedia.org/wiki/A_(b))")[0]).toMatchObject({ type: "link", href: "https://en.wikipedia.org/wiki/A_(b)" });
+  });
+
   it("draws an image the answer names as a thumbnail that opens the file", () => {
     const html = render("Saved to /tmp/shot.png and ![after](/tmp/after.png).");
     expect(html.match(/<img /g)?.length).toBe(2);

@@ -13,6 +13,29 @@ describe("file paths in chat text", () => {
     expect(splitFilePaths("open src/a.ts now")).toEqual(["open ", { path: "src/a.ts" }, " now"]);
   });
 
+  it("reads a bare path through the spaces in its folders, as nearly every work file here has them", () => {
+    expect(paths("saved to /opt/workstation/03 SMARCOMMS/.tmp/fb.jpg now")).toEqual(["/opt/workstation/03 SMARCOMMS/.tmp/fb.jpg"]);
+    expect(splitFilePaths("(/opt/a b/x.jpg)")).toEqual(["(", { path: "/opt/a b/x.jpg" }, ")"]);
+    expect(paths("Before: /opt/a b/x.jpg, after: ~/c d/y.png.")).toEqual(["/opt/a b/x.jpg", "~/c d/y.png"]);
+    expect(paths("/opt/09 Online Jobs/IMG 2 (1).jpg ok")).toEqual(["/opt/09 Online Jobs/IMG 2 (1).jpg"]);
+    expect(paths("/opt/a b/c/report.docx and src/x.ts")).toEqual(["/opt/a b/c/report.docx", "src/x.ts"]);
+    // prose keeps reading as it did: a command naming files, two paths, a sentence, no spaced folder
+    expect(paths("/usr/bin/convert in.png out.pdf")).toEqual([]);
+    expect(paths("compare /tmp/a and /tmp/b.png")).toEqual(["/tmp/b.png"]);
+    expect(paths("/tmp/foo is the folder where I keep all the bar/baz.png files")).toEqual(["bar/baz.png"]);
+    expect(paths("Files at /opt/a b/, see /tmp/x.png")).toEqual(["/tmp/x.png"]);
+    const start = performance.now();
+    paths("/a b ".repeat(20_000));
+    paths(`/${"a ".repeat(50)}`.repeat(800));
+    paths(`${"/a/".repeat(30_000)} x`);
+    expect(performance.now() - start).toBeLessThan(250);
+  });
+
+  it("takes a name in backticks with its letters and a download's number", () => {
+    for (const code of ["/tmp/café.jpg", "shot(1).jpg", "/tmp/shot (1).jpg"]) expect(codeIsFilePath(code)).toBe(true);
+    for (const code of ["foo().bar", "fn(1).map", "useState()", "a.b(c)"]) expect(codeIsFilePath(code)).toBe(false);
+  });
+
   it("knows a video the chat plays, and the poster beside it", () => {
     for (const path of ["/tmp/a.mp4", "x/B.MP4", "c.webm"]) expect(isVideoPath(path)).toBe(true);
     for (const path of ["/tmp/a.mov", "a.mp4.txt", "a.m4v", "mp4"]) expect(isVideoPath(path)).toBe(false);

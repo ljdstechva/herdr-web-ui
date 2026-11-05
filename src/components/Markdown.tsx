@@ -1,5 +1,5 @@
 import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ImageOff } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
 import { codeIsFilePath, FileUrlContext, isImagePath, isVideoPath, OpenFileContext, splitFilePaths, videoPosterPath } from "../lib/filePaths.ts";
@@ -8,6 +8,8 @@ import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "../lib/highlight.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { useT } from "../lib/i18n.ts";
 import { copyText } from "../lib/clipboard.ts";
+import { useImageLoad } from "../lib/useImageLoad.ts";
+import { ShareImage } from "./ShareImage.tsx";
 
 type Katex = typeof import("katex").default;
 /** KaTeX is a fifth of the app's script: the first expression loads it (lib/katex.ts), and every later one has it at once. */
@@ -57,19 +59,40 @@ function FilePath({ path, code, open }: { path: string; code: boolean; open: (pa
   return <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={t("Open {path}", { path })} onClick={() => open(path)}>{label}</button>;
 }
 
+/** What a thumbnail stands on; a path the answer only names (relative) says nothing when no such file is there. */
+function ChatImageFile({ path, alt, src, open, quietWhenMissing }: { path: string; alt: string; src: string; open: ((path: string) => void) | null; quietWhenMissing: boolean }) {
+  const t = useT();
+  const { load, attempt, onLoad, onError, retry } = useImageLoad(src);
+  if (load === "missing" && quietWhenMissing) return null;
+  if (load === "missing" || load === "ambiguous" || load === "failed") {
+    const words = load === "missing" ? t("This image isn't on the server.")
+      : load === "ambiguous" ? t("Several files have this name. Tap to choose.")
+        : t("This image didn't load. Tap to try again.");
+    // the viewer lists the files of a shared name; the other two ask the server again
+    const act = load === "ambiguous" && open !== null ? () => open(path) : retry;
+    return <button type="button" className={`markdown-image-note is-${load}`} title={path} onClick={act}>
+      <ImageOff aria-hidden="true" />
+      <span className="markdown-image-note-text"><span role="status">{words}</span><span className="markdown-image-note-path" dir="ltr">{path}</span></span>
+    </button>;
+  }
+  const image = <img key={attempt} src={src} alt={alt} loading="lazy" onLoad={onLoad} onError={onError} />;
+  return <span className={`markdown-image-frame${load === "shown" ? " is-shown" : ""}`}>
+    {open !== null
+      ? <button type="button" className="markdown-image" title={t("Open {path}", { path })} onClick={() => open(path)}>{image}</button>
+      : <a className="markdown-image" href={src} target="_blank" rel="noopener noreferrer" title={path}>{image}</a>}
+    {load === "shown" && <ShareImage url={src} path={path} />}
+  </span>;
+}
+
 /**
  * An image file the answer names, drawn where the chat can read files: a fixed thumbnail that
- * opens the file, as a path chip does. Where it cannot, the path shows as one.
+ * opens the file, as a path chip does, with a way to send the picture on. Where it cannot, the path
+ * shows as one.
  */
-function ChatImage({ path, alt, open }: { path: string; alt: string; open: ((path: string) => void) | null }) {
-  const t = useT();
+function ChatImage({ path, alt, open, quietWhenMissing = false }: { path: string; alt: string; open: ((path: string) => void) | null; quietWhenMissing?: boolean }) {
   const url = useContext(FileUrlContext);
   if (url === null) return open !== null ? <FilePath path={path} code={false} open={open} /> : <span>{alt} (<code>{path}</code>)</span>;
-  const src = url(path);
-  const image = <img src={src} alt={alt} loading="lazy" />;
-  return open !== null
-    ? <button type="button" className="markdown-image" title={t("Open {path}", { path })} onClick={() => open(path)}>{image}</button>
-    : <a className="markdown-image" href={src} target="_blank" rel="noopener noreferrer" title={path}>{image}</a>;
+  return <ChatImageFile path={path} alt={alt} src={url(path)} open={open} quietWhenMissing={quietWhenMissing} />;
 }
 
 /**
@@ -128,7 +151,7 @@ function ImageStrip({ nodes }: { nodes: InlineNode[] }) {
   const open = useContext(OpenFileContext);
   const paths = useMemo(() => (url === null ? [] : imagePaths(nodes)), [url, nodes]);
   if (paths.length === 0) return null;
-  return <div className="markdown-images">{paths.map((path) => <ChatImage key={path} path={path} alt={path} open={open} />)}</div>;
+  return <div className="markdown-images">{paths.map((path) => <ChatImage key={path} path={path} alt={path} open={open} quietWhenMissing={!/^(?:\/|~\/)/.test(path)} />)}</div>;
 }
 
 /** `interactive` is false inside a link or file label: nothing clickable nests in another. */
