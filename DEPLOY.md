@@ -29,8 +29,9 @@ cd ~/apps/wt-<task> && bun install --frozen-lockfile
 # 3. deploy the branch (about four minutes; add --no-tests only if you just ran the unit suite)
 ~/apps/redeploy-vps.sh <task>
 
-# 4. when it says "done": remove the worktree
-git -C ~/apps/herdr-web-ui worktree remove ~/apps/wt-<task>
+# 4. when it says "done": leave the worktree where it is and name it in your report.
+#    No deleting after a task (owner rule 2026-11-05); remove it only when the owner asks:
+#    git -C ~/apps/herdr-web-ui worktree remove ~/apps/wt-<task>
 ```
 
 `/opt/workstation/15 herdr-web-ui` is **not** a place to build a deploy from: it is an older copy
