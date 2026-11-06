@@ -56,3 +56,23 @@ export function modelLabel(id: string): ModelLabel {
   if (glm) return { text: `GLM-${glm[1]}`, named: true };
   return { text: id, named: false };
 }
+
+/**
+ * What a subagent or background task ran on, for its row and its header: the model's name as the
+ * pill draws it (modelLabel) and the effort word its agent recorded, `Opus 5.5 xhigh`. Either part
+ * may be missing (an older Claude Code records no effort); null when neither is known. The effort
+ * is the agent's own word (low, medium, high, xhigh, max), never mapped or guessed.
+ */
+export interface ModelEffortLabel {
+  model: ModelLabel | null;
+  effort: string | null;
+  /** both in one line, `Opus 5.5 xhigh`, for a meta line of words */
+  text: string;
+}
+
+export function modelEffortLabel(model: string | null | undefined, effort: string | null | undefined): ModelEffortLabel | null {
+  const name = model ? modelLabel(model) : null;
+  const level = effort?.trim() || null;
+  if (name === null && level === null) return null;
+  return { model: name, effort: level, text: [name?.text, level].filter(Boolean).join(" ") };
+}

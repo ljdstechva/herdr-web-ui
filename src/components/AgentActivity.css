@@ -214,10 +214,17 @@ button.agent-activity-bar {
 .agent-activity-state.is-waiting { color: var(--text); }
 .agent-activity-state.is-idle { color: var(--status-done); }
 
-/* a phone's row keeps who and how; the agent type and the time give way */
+/* a phone's row keeps who, on what and how; the agent type and the time give way, and the
+   "subagent" word too where the model chip stands (only a subagent has one) */
 @media (max-width: 480px) {
   .agent-activity-task-kind,
-  .agent-activity-task-time { display: none; }
+  .agent-activity-task-time,
+  .agent-activity-role.has-model { display: none; }
+}
+
+.agent-activity-model {
+  min-width: 0;
+  max-width: 45%;
 }
 
 @media (pointer: coarse) {

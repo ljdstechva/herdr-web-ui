@@ -153,3 +153,9 @@
 @media (prefers-reduced-motion: reduce) {
   .task-view { animation: none; }
 }
+
+/* the model and effort it runs on (ModelChip), beside its name, never cut for the title */
+.task-view-model {
+  align-self: center;
+  max-width: 40%;
+}

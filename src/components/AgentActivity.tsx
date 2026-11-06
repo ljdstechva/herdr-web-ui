@@ -1,6 +1,7 @@
 import { useContext, useEffect, useId, useState } from "react";
 import { Activity as MonitorIcon, AlarmClock, Bot, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleDot, Hourglass, MessageCircleQuestion, SquareTerminal, Workflow, type LucideIcon } from "lucide-react";
 import { AgentMark } from "./AgentMark.tsx";
+import { ModelChip } from "./ModelChip.tsx";
 import "./AgentActivity.css";
 
 import type { AgentStatus, OmoTask } from "../../shared/protocol.ts";
@@ -144,8 +145,9 @@ export function AgentActivity({ paneId, agent, status, background, waiting }: Ag
             const row = <>
               <Icon aria-hidden="true" />
               <span className="agent-activity-task-title" title={task.title}>{task.title}</span>
-              <span className="agent-activity-role">{command ? t("command") : task.category === "workflow" || task.category === "wakeup" ? kind : t("subagent")}</span>
+              <span className={`agent-activity-role${task.model || task.effort ? " has-model" : ""}`}>{command ? t("command") : task.category === "workflow" || task.category === "wakeup" ? kind : t("subagent")}</span>
               {kind && !command && task.category !== "workflow" && task.category !== "wakeup" && <span className="agent-activity-task-kind">{kind}</span>}
+              <ModelChip model={task.model} effort={task.effort} className="agent-activity-model" />
               {due !== null ? <span className="agent-activity-task-time">{t("in {time}", { time: formatElapsed(due) })}</span>
                 : elapsed !== null && <span className="agent-activity-task-time">{formatElapsed(elapsed)}</span>}
               <StateChip state={due !== null ? "waiting" : "running"} t={t} />

@@ -35,10 +35,10 @@ function session() {
       for (const [minute, output] of options.steps ?? [[1, 10], [2, 20]]) this.work(id, minute, output);
       return file;
     },
-    work(id: string, minute: number, output: number, tools = 1) {
+    work(id: string, minute: number, output: number, tools = 1, effort?: string) {
       const file = join(dir, `agent-${id}.jsonl`);
       appendFileSync(file, json({ isSidechain: true, agentId: id, type: "user", timestamp: at(minute), message: { role: "user", content: "x" } }));
-      appendFileSync(file, json({ isSidechain: true, agentId: id, type: "assistant", timestamp: at(minute), message: { id: `m${minute}`, model: "claude-opus-5", usage: { input_tokens: 2, cache_read_input_tokens: 100, cache_creation_input_tokens: 5, output_tokens: output }, content: Array.from({ length: tools }, () => ({ type: "tool_use", id: "t", name: "Read", input: {} })) } }));
+      appendFileSync(file, json({ isSidechain: true, agentId: id, type: "assistant", timestamp: at(minute), ...(effort === undefined ? {} : { effort }), message: { id: `m${minute}`, model: "claude-opus-5", usage: { input_tokens: 2, cache_read_input_tokens: 100, cache_creation_input_tokens: 5, output_tokens: output }, content: Array.from({ length: tools }, () => ({ type: "tool_use", id: "t", name: "Read", input: {} })) } }));
     },
     /** a Bash call sent to the background, by the session or (`file`) by a subagent */
     bash(taskId: string, minute: number, options: { description?: string; command?: string; file?: string } = {}) {
@@ -69,11 +69,21 @@ describe("claudeSubagents", () => {
     const s = session();
     s.agent("a1", { description: "Review the parser", type: "reviewer", steps: [[1, 10], [2, 30]] });
     expect(claudeSubagents(s.path, true, NOW)).toEqual([{
-      id: "a1", title: "Review the parser", category: "reviewer", model: "claude-opus-5", status: "running",
+      id: "a1", title: "Review the parser", category: "reviewer", model: "claude-opus-5", effort: null, status: "running",
       started_at: at(1), ended_at: null, turns: 2, tool_calls: 2,
       // the last request held 2 + 100 + 5 + 30 tokens: not the sum of both requests
       tokens: 137,
     }]);
+  });
+
+  it("gives the effort its latest response ran at, as Claude Code records it", () => {
+    const s = session();
+    s.agent("a1", { steps: [] });
+    s.work("a1", 1, 10, 1, "medium");
+    s.work("a1", 2, 10, 1, "xhigh");
+    // a response that records none leaves the last one standing
+    s.work("a1", 3, 10);
+    expect(claudeSubagents(s.path, true, NOW)).toMatchObject([{ id: "a1", model: "claude-opus-5", effort: "xhigh" }]);
   });
 
   it("counts a notification once however many records carry it", () => {

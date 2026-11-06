@@ -608,6 +608,8 @@ export const ZH: Record<string, string> = {
   "Message {agent}…": "给 {agent} 发消息…",
   "Message composer": "消息输入框",
   "Model and reasoning": "模型和推理",
+  "Model {model}, effort {effort}": "模型 {model}，推理强度 {effort}",
+  "Model {model}": "模型 {model}",
   "Model not available": "模型信息不可用",
   "Model —": "模型 —",
   "Model": "模型",

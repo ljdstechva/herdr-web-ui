@@ -44,6 +44,15 @@ describe("codex subagents", () => {
     expect(lastTurnState(`${item}\n{"type":"event_msg","payload":{"ty`)).toBeNull();
   });
 
+  it("gives a child's reasoning effort where the store records one, and none on an older store", () => {
+    const older = store([{ n: 1, lines: [event("task_started"), item] }]);
+    expect(codexSubagents(older.db, PARENT, older.home, null, Date.now(), cachedTailReader())).toMatchObject([{ id: id(1), model: "gpt-6", effort: null }]);
+    const newer = store([{ n: 2, lines: [event("task_started"), item] }]);
+    newer.db.exec("ALTER TABLE threads ADD COLUMN reasoning_effort TEXT");
+    newer.db.run("UPDATE threads SET reasoning_effort = 'xhigh'");
+    expect(codexSubagents(newer.db, PARENT, newer.home, null, Date.now(), cachedTailReader())).toMatchObject([{ id: id(2), model: "gpt-6", effort: "xhigh" }]);
+  });
+
   it("names a child by its nickname and the job its path names", () => {
     expect(childTitle({ id: id(1), agent_nickname: "Sartre", agent_path: "/root/platform_supervisor" })).toBe("Sartre · platform supervisor");
     expect(childTitle({ id: id(1), agent_nickname: null, agent_path: null })).toBe(id(1).slice(0, 8));

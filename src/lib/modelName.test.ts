@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { modelLabel } from "./modelName.ts";
+import { modelEffortLabel, modelLabel } from "./modelName.ts";
 
 describe("modelLabel", () => {
   test("names a Claude id by the vendor's family and version", () => {
@@ -78,5 +78,19 @@ describe("modelLabel", () => {
     expect(modelLabel("gpt-9.9-sol")).toEqual({ text: "GPT-9.9-Sol", named: true });
     expect(modelLabel("glm-9.9")).toEqual({ text: "GLM-9.9", named: true });
     expect(modelLabel("glm-10.10")).toEqual({ text: "GLM-10.10", named: true });
+  });
+});
+
+describe("modelEffortLabel", () => {
+  test("names the model and gives the effort word beside it", () => {
+    expect(modelEffortLabel("claude-opus-5-5", "xhigh")?.text).toBe("Opus 5.5 xhigh");
+    expect(modelEffortLabel("claude-haiku-5-5", "medium")).toEqual({ model: { text: "Haiku 5.5", named: true }, effort: "medium", text: "Haiku 5.5 medium" });
+  });
+  test("keeps an id it cannot name whole, and draws what is known when a part is missing", () => {
+    expect(modelEffortLabel("claude-haiku-4-5-20251001", "low")?.text).toBe("claude-haiku-4-5-20251001 low");
+    expect(modelEffortLabel("claude-opus-5-5", null)?.text).toBe("Opus 5.5");
+    expect(modelEffortLabel(null, "high")?.text).toBe("high");
+    expect(modelEffortLabel(null, undefined)).toBeNull();
+    expect(modelEffortLabel("", " ")).toBeNull();
   });
 });

@@ -69,6 +69,8 @@ interface ChildThread {
   agent_role: string | null;
   agent_path: string | null;
   model: string | null;
+  /** null on a store whose threads table has no such column */
+  reasoning_effort: string | null;
   created_at_ms: number | null;
   created_at: number;
 }
@@ -76,12 +78,15 @@ interface ChildThread {
 /** The threads `parent` spawned, and those they spawned, newest first per level; none on a store without spawn edges. */
 export function spawnedThreads(db: Database, parent: string): ChildThread[] {
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thread_spawn_edges'").get() === null) return [];
+  // the effort column came with a later Codex store; an older one reads null for it
+  const effort = db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('threads')").all().some((column) => column.name === "reasoning_effort")
+    ? "t.reasoning_effort" : "NULL AS reasoning_effort";
   const found: ChildThread[] = [];
   const seen = new Set([parent]);
   let level = [parent];
   for (let depth = 0; depth < MAX_DEPTH && level.length > 0 && found.length < MAX_CHILDREN; depth += 1) {
     const rows = db.query<ChildThread, (string | number)[]>(
-      `SELECT t.id, t.rollout_path, t.agent_nickname, t.agent_role, t.agent_path, t.model, t.created_at_ms, t.created_at
+      `SELECT t.id, t.rollout_path, t.agent_nickname, t.agent_role, t.agent_path, t.model, ${effort}, t.created_at_ms, t.created_at
        FROM thread_spawn_edges e JOIN threads t ON t.id = e.child_thread_id
        WHERE e.parent_thread_id IN (${level.map(() => "?").join(", ")}) ORDER BY t.created_at DESC LIMIT ?`,
     ).all(...level, MAX_CHILDREN - found.length);
@@ -151,6 +156,7 @@ export function codexSubagents(db: Database, parent: string, home: string, start
       title: childTitle(child),
       category: child.agent_role,
       model: child.model,
+      effort: child.reasoning_effort,
       status: state === "running" ? (cutOff ? "lost" : "running") : state === "aborted" ? "cancelled" : "completed",
       started_at: iso(child.created_at_ms ?? child.created_at * 1000),
       ended_at: null,

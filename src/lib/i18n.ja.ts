@@ -606,6 +606,8 @@ export const JA: Record<string, string> = {
   "Message {agent}…": "{agent} へのメッセージ…",
   "Message composer": "メッセージ入力欄",
   "Model and reasoning": "モデルと推論",
+  "Model {model}, effort {effort}": "モデル {model}、推論レベル {effort}",
+  "Model {model}": "モデル {model}",
   "Model not available": "モデル情報なし",
   "Model —": "モデル —",
   "Model": "モデル",

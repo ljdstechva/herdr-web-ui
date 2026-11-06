@@ -1,0 +1,31 @@
+/* A subagent's model and effort (ModelChip.tsx): one pill, the effort in the strong face. */
+.model-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.model-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-chip-name.is-id {
+  font-family: var(--font-mono);
+}
+
+.model-chip-effort {
+  flex: none;
+  color: var(--text-strong);
+  font-weight: 600;
+}

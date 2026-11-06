@@ -383,6 +383,8 @@ interface Work {
   /** latest instruction to this agent, not a result of a tool it called */
   dispatchAt: number | null;
   model: string | null;
+  /** the effort its latest response ran at (Claude Code writes `effort` on each assistant entry) */
+  effort: string | null;
   turns: number;
   toolCalls: number;
   tokens: number | null;
@@ -398,7 +400,7 @@ function scanWork(path: string, budget: { left: number }): Work | null {
   if (stat === null) return null;
   let work = works.get(path);
   if (!work || work.id !== stat.id || work.offset > stat.size) {
-    work = { id: stat.id, offset: 0, skipping: false, behind: false, hungry: false, firstAt: null, lastAt: null, dispatchAt: null, model: null, turns: 0, toolCalls: 0, tokens: null, lastMessage: null, turnEndedAt: null, commands: noCommands() };
+    work = { id: stat.id, offset: 0, skipping: false, behind: false, hungry: false, firstAt: null, lastAt: null, dispatchAt: null, model: null, effort: null, turns: 0, toolCalls: 0, tokens: null, lastMessage: null, turnEndedAt: null, commands: noCommands() };
   }
   remember(works, path, work, 4096);
   if (work.offset >= stat.size) { work.behind = false; work.hungry = false; return work; }
@@ -426,6 +428,8 @@ function scanWork(path: string, budget: { left: number }): Work | null {
     for (const block of Array.isArray(message?.["content"]) ? message["content"] : []) if (row(block)?.["type"] === "tool_use") state.toolCalls += 1;
     const model = text(message?.["model"]);
     if (model !== null && !model.startsWith("<")) state.model = model;
+    const effort = text(entry["effort"]);
+    if (effort !== null && !effort.startsWith("<")) state.effort = effort;
     const usage = row(message?.["usage"]);
     if (usage !== null) {
       const parts = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"].map((name) => typeof usage[name] === "number" ? usage[name] : 0);
@@ -738,6 +742,7 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
       title: meta.title ?? meta.agent ?? id,
       category: meta.agent,
       model: counted ? work.model : null,
+      effort: counted ? work.effort : null,
       status: lost ? "lost" : status,
       started_at: iso(firstAt),
       ended_at: iso(status === "running" ? (lost ? view.lastAt : null) : endedAt),

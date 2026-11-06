@@ -604,6 +604,8 @@ export const KO: Record<string, string> = {
   "Message {agent}…": "{agent}에게 메시지…",
   "Message composer": "메시지 입력창",
   "Model and reasoning": "모델과 추론",
+  "Model {model}, effort {effort}": "모델 {model}, 추론 강도 {effort}",
+  "Model {model}": "모델 {model}",
   "Model not available": "모델 정보 없음",
   "Model —": "모델 —",
   "Model": "모델",

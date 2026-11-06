@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "re
 import { ArrowLeft, Bot, SquareTerminal } from "lucide-react";
 
 import "./TaskView.css";
+import { ModelChip } from "./ModelChip.tsx";
 
 import { ChatHistoryContext, ChatPaneContext, ChatTaskContext, Turn } from "./ChatView.tsx";
 import { useMachineApi } from "../lib/machineContext.tsx";
@@ -119,7 +120,7 @@ export function TaskView({ paneId, task: opened, agentName, onClose }: { paneId:
     running: t("running"), completed: t("done"), failed: t("failed"), cancelled: t("cancelled"), lost: t("lost"),
   };
   const elapsed = taskElapsedMs(task, Date.now());
-  const meta = [taskKind(task.category, t), task.model, elapsed === null ? null : formatElapsed(elapsed)].filter((item) => item !== null).join(" · ");
+  const meta = [taskKind(task.category, t), elapsed === null ? null : formatElapsed(elapsed)].filter((item) => item !== null).join(" · ");
   // the report a subagent handed back reads as its answer, not as a folded call (lib/subagentTurns.ts)
   const shown = useMemo(() => handbackAsAnswer([...older, ...(turns ?? [])]), [older, turns]);
   const moreBefore = olderCursor === undefined ? cursor !== null : olderCursor !== null;
@@ -137,6 +138,7 @@ export function TaskView({ paneId, task: opened, agentName, onClose }: { paneId:
             <h2 className="task-view-title" id={`${id}-title`}>{task.title}</h2>
             <span className={`task-view-meta is-${task.status}`}>{[kind === "output" ? t("command") : t("subagent"), words[task.status], meta].filter((item) => item !== "").join(" · ")}</span>
           </span>
+          <ModelChip model={task.model} effort={task.effort} className="task-view-model" />
         </div>
       </header>
       <div ref={body} className="task-view-body" onScroll={onScroll}>

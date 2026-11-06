@@ -453,6 +453,8 @@ export interface OmoTask {
   /** the category or agent type it ran as; a Claude Code pane's other background work is `shell`, `monitor`, `workflow` or `wakeup` (server/claude-subagents.ts) */
   category: string | null;
   model: string | null;
+  /** the reasoning effort it ran at as its agent records it (Claude Code's `effort` per response, Codex's thread `reasoning_effort`); absent or null when none is recorded */
+  effort?: string | null;
   /** `lost`: OmO's process that ran it is gone, or the pane no longer runs the Claude Code session that started it */
   status: "running" | "completed" | "failed" | "cancelled" | "lost";
   started_at: string | null;

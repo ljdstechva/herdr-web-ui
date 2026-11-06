@@ -56,7 +56,13 @@ try {
           const main = page.locator(".agent-activity-task.is-main");
           await main.waitFor();
           assert.match(await main.innerText(), /main agent[\s\S]*working/i);
-          assert.match(await page.locator(".agent-activity-task-open", { hasText: "Find every caller" }).innerText(), /subagent[\s\S]*running/i);
+          // a subagent's row names the model and effort it runs on; on a phone that chip stands for the "subagent" word
+          const callerRow = page.locator(".agent-activity-task-open", { hasText: "Find every caller" });
+          assert.match(await callerRow.innerText(), width <= 480 ? /running/i : /subagent[\s\S]*running/i);
+          assert.equal(await callerRow.locator(".model-chip-name").innerText(), "Sonnet 5.5", `${width}px: the row names the subagent's model`);
+          assert.equal(await callerRow.locator(".model-chip-effort").innerText(), "high", `${width}px: the row gives the subagent's effort`);
+          assert.equal(await callerRow.locator(".model-chip").getAttribute("aria-label"), "Model claude-sonnet-5-5, effort high");
+          assert.equal(await page.locator(".agent-activity-task-open", { hasText: "bun test" }).locator(".model-chip").count(), 0, "a command has no model chip");
           assert.match(await page.locator(".agent-activity-task-open", { hasText: "bun test" }).innerText(), /command[\s\S]*running/i);
           for (const row of await page.locator(".agent-activity-task").all()) {
             const box = (await row.boundingBox())!;
@@ -86,6 +92,13 @@ try {
           await view.locator(".chat-turn-user", { hasText: "idempotency key" }).waitFor();
           await view.locator(".chat-turn-agent", { hasText: "Three callers so far" }).waitFor();
           assert.match(await view.locator(".task-view-title").innerText(), /Find every caller of charge\(\)/);
+          // its header says what it runs on, beside the name and on screen
+          const chip = view.locator(".task-view-model");
+          assert.equal(await chip.locator(".model-chip-name").innerText(), "Sonnet 5.5");
+          assert.equal(await chip.locator(".model-chip-effort").innerText(), "high");
+          const chipBox = (await chip.boundingBox())!;
+          const headingBox = (await view.locator(".task-view-heading").boundingBox())!;
+          assert.ok(chipBox.x >= headingBox.x + headingBox.width - 0.5 && chipBox.x + chipBox.width <= width + 0.5, `${width}px: the model chip sits beside the name, on screen`);
           await noSideways(page, `${width}px subagent view`);
           if (touch) {
             const back = (await page.locator(".task-view-back").boundingBox())!;
@@ -145,14 +158,16 @@ try {
           const items = page.locator(".chat-outline-item");
           await items.first().waitFor();
           assert.ok(await items.count() >= 1, "the answers list has the agent's answers");
-          assert.match(await items.first().innerText(), /Done\. Retries are now safe/);
+          // the demo lands a newer answer 4.5 s in (site/demo/transport.ts), so a slow run finds it on top
+          const safe = items.filter({ hasText: /Done\. Retries are now safe/ });
+          assert.equal(await safe.count(), 1, "the answers list has the answer to pick");
           const panel = (await page.locator(".chat-outline").boundingBox())!;
           assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 0.5, `${width}px: the answers list fits the screen`);
           assert.ok(panel.y + panel.height <= own.y && panel.y >= area.y, `${width}px: the answers list opens above its button, inside the chat`);
           assert.ok(panel.x + panel.width <= room.left + room.width, `${width}px: the answers list stays left of the scrollbar`);
           await noSideways(page, `${width}px answers list`);
           await page.locator(".chat-view").evaluate((node) => { node.scrollTop = node.scrollHeight; });
-          await items.first().click();
+          await safe.click();
           await page.locator(".chat-outline").waitFor({ state: "detached" });
           const picked = page.locator(".chat-transcript [data-picked]");
           await picked.waitFor();

@@ -103,7 +103,7 @@ const omoTasks = () => [
 /** The Claude pane's subagent and background command (AgentActivity's list), and what a look inside each shows (TaskView). */
 const CLAUDE_TASKS_PANE = "api";
 const claudeTasks = () => [
-  { id: "a0demo1", title: "Find every caller of charge()", category: "Explore", model: "claude-sonnet-5-5", status: "running", started_at: ago(2), ended_at: null, turns: 4, tool_calls: 12, tokens: 31_400 },
+  { id: "a0demo1", title: "Find every caller of charge()", category: "Explore", model: "claude-sonnet-5-5", effort: "high", status: "running", started_at: ago(2), ended_at: null, turns: 4, tool_calls: 12, tokens: 31_400 },
   { id: "b0demo2", title: "bun test server/payments", category: "shell", model: null, status: "running", started_at: ago(1), ended_at: null, turns: null, tool_calls: null, tokens: null },
 ];
 const claudeTaskTurns = () => [
