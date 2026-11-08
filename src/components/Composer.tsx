@@ -54,6 +54,7 @@ import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { useT } from "../lib/i18n.ts";
 import { modalOpen } from "../lib/focus.ts";
+import { pasteContent } from "../lib/strayPaste.ts";
 
 export interface ComposerProps {
   connected: boolean;
@@ -875,13 +876,12 @@ export function Composer({
 
   const onPaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
-      const images = Array.from(event.clipboardData.items)
-        .filter((item) => item.kind === "file")
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => file !== null);
-      if (images.length === 0) return;
+      // text is pasted as text, even beside a picture of it (Word, Excel, Outlook copy both);
+      // only a clipboard with no text attaches its files (a screenshot)
+      const content = pasteContent(event.clipboardData);
+      if (content === null || "text" in content) return;
       event.preventDefault();
-      void uploadImages(images);
+      void uploadImages(content.files);
     },
     [uploadImages],
   );

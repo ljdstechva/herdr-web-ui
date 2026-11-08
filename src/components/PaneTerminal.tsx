@@ -53,6 +53,7 @@ import { adjustTerminalGlyphs } from "../lib/terminalGlyphs.ts";
 import { terminalLabel } from "../lib/terminalLabel.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { modalOpen } from "../lib/focus.ts";
+import { pasteContent, takesPasteItself } from "../lib/strayPaste.ts";
 import { pinchFontSize } from "../lib/pinchFontSize.ts";
 
 /** How long a resize must rest before the grid refits and the pty follows it. */
@@ -1308,6 +1309,43 @@ export function PaneTerminal({
         if (activeRef.current) term.focus();
       }
     };
+    // Ctrl+V where no field takes it (the chat clicked to read or select, a button, the body):
+    // the current pane's composer takes it in chat view, its terminal in terminal view
+    // (lib/strayPaste.ts). A field, a dialog, another handler that took it: left alone.
+    const onStrayPaste = (event: ClipboardEvent): void => {
+      if (event.defaultPrevented || !activeRef.current || modalOpen()) return;
+      if (takesPasteItself(event.target) || takesPasteItself(document.activeElement)) return;
+      const stack = stackRef.current;
+      if (!stack || stack.getClientRects().length === 0) return;
+      const content = pasteContent(event.clipboardData);
+      if (content === null) return;
+      if (chatViewRef.current) {
+        const box = stack.querySelector<HTMLTextAreaElement>(".composer-text");
+        if (!box || box.disabled || box.readOnly || box.getClientRects().length === 0) return;
+        event.preventDefault();
+        box.focus({ preventScroll: true });
+        if ("text" in content) {
+          // as typed: the composer's onChange, its draft and Ctrl+Z all see it
+          if (!document.execCommand("insertText", false, content.text)) {
+            const start = box.selectionStart, end = box.selectionEnd;
+            box.setRangeText(content.text, start, end, "end");
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        } else {
+          // the composer's own paste attaches the files (its onPaste)
+          const data = new DataTransfer();
+          for (const file of content.files) data.items.add(file);
+          box.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        }
+        return;
+      }
+      if (!socket.connected || term.options.disableStdin) return;
+      event.preventDefault();
+      if ("text" in content) pasteText(content.text);
+      else uploadFiles(content.files);
+      if (!findOpenRef.current) term.focus();
+    };
+    window.addEventListener("paste", onStrayPaste);
     host.addEventListener("paste", onFilePaste, { capture: true });
     host.addEventListener("dragover", onDragOver);
     host.addEventListener("drop", onDrop);
@@ -1672,6 +1710,7 @@ export function PaneTerminal({
       onData.dispose();
       host.removeEventListener("paste", onPaste, true);
       host.removeEventListener("paste", onFilePaste, { capture: true });
+      window.removeEventListener("paste", onStrayPaste);
       host.removeEventListener("dragover", onDragOver);
       host.removeEventListener("drop", onDrop);
       offDisconnect();
