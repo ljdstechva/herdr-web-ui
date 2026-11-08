@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { browserStreamUrl, KEYBOARD_FILL, KEYSYM, keysymOf, TouchGestures, typedKeysyms, typedSince, wheelMasks, type PointerAction } from "./browserView.ts";
+import { browserStreamUrl, isPasteChord, pasteStrokes, KEYBOARD_FILL, KEYSYM, keysymOf, TouchGestures, typedKeysyms, typedSince, wheelMasks, type PointerAction } from "./browserView.ts";
 
 function touch(): { gestures: TouchGestures; actions: PointerAction[]; said(): string[] } {
   const actions: PointerAction[] = [];
@@ -161,4 +161,29 @@ describe("the phone keyboard's text", () => {
 it("opens the stream on the page's own host, secure when the page is", () => {
   expect(browserStreamUrl("95", { protocol: "https:", host: "box.example.ts.net" })).toBe("wss://box.example.ts.net/api/browsers/95/stream");
   expect(browserStreamUrl("96", { protocol: "http:", host: "127.0.0.1:7317" })).toBe("ws://127.0.0.1:7317/api/browsers/96/stream");
+});
+
+describe("pasting into the server's browser", () => {
+  const key = (over: Partial<KeyboardEvent>) => ({ key: "", code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...over });
+  it("knows a paste press", () => {
+    expect(isPasteChord(key({ key: "v", code: "KeyV", ctrlKey: true }))).toBe(true);
+    expect(isPasteChord(key({ key: "V", code: "KeyV", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(isPasteChord(key({ key: "v", code: "KeyV", metaKey: true }))).toBe(true);
+    expect(isPasteChord(key({ key: "Insert", code: "Insert", shiftKey: true }))).toBe(true);
+    // a Russian layout's м on KeyV is still Ctrl+V
+    expect(isPasteChord(key({ key: "м", code: "KeyV", ctrlKey: true }))).toBe(true);
+  });
+  it("leaves other presses to the remote keyboard", () => {
+    expect(isPasteChord(key({ key: "v", code: "KeyV" }))).toBe(false);
+    expect(isPasteChord(key({ key: "c", code: "KeyC", ctrlKey: true }))).toBe(false);
+    expect(isPasteChord(key({ key: "v", code: "KeyV", ctrlKey: true, altKey: true }))).toBe(false);
+    expect(isPasteChord(key({ key: "Insert", code: "Insert", ctrlKey: true }))).toBe(false);
+  });
+  it("types a paste: line breaks as Shift+Enter, quotes and peso by keysym", () => {
+    expect(pasteStrokes("a\r\nB")).toEqual([{ keysym: 0x61 }, { keysym: KEYSYM.Return, shift: true }, { keysym: 0x42 }]);
+    expect(pasteStrokes("’ñ₱").map((stroke) => stroke.keysym)).toEqual([0x1002019, 0xf1, 0x10020b1]);
+    expect(pasteStrokes("x\ty")).toEqual([{ keysym: 0x78 }, { keysym: KEYSYM.Tab }, { keysym: 0x79 }]);
+    expect(pasteStrokes("a\u0000\u0007\u0085b")).toEqual([{ keysym: 0x61 }, { keysym: 0x62 }]);
+    expect(pasteStrokes("")).toEqual([]);
+  });
 });

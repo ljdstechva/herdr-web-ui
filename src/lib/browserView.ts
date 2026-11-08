@@ -301,3 +301,46 @@ export function typedKeysyms(before: string, after: string): number[] {
   const { backspaces, text } = typedSince(before, after);
   return [...Array<number>(backspaces).fill(KEYSYM.BackSpace), ...text.map(keysymOf)];
 }
+
+// ---------------------------------------------------------------------------------------------
+// pasting this device's clipboard
+
+/** keysyms of the modifier keys: all are let go on the server before a paste is typed */
+export const MODIFIER_KEYSYMS = [0xffe1, 0xffe2, 0xffe3, 0xffe4, 0xffe7, 0xffe8, 0xffe9, 0xffea, 0xffeb, 0xffec] as const;
+export const SHIFT_KEYSYM = 0xffe1;
+/** the most a paste may type: a longer one is refused, not typed for minutes */
+export const MAX_PASTE_CHARACTERS = 20_000;
+
+/**
+ * Whether a key press asks to paste: Ctrl+V (Ctrl+Shift+V too), Cmd+V on a Mac, Shift+Insert.
+ * noVNC would send it as keys, and the server's browser would paste the SERVER's clipboard;
+ * the press is kept from noVNC so this browser's own paste event brings this device's clipboard.
+ */
+export function isPasteChord(event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">): boolean {
+  if (event.altKey) return false;
+  const v = event.code === "KeyV" || event.key === "v" || event.key === "V";
+  if (v && (event.ctrlKey || event.metaKey)) return true;
+  return event.key === "Insert" && event.shiftKey && !event.ctrlKey && !event.metaKey;
+}
+
+/** One key to press for a paste; `shift` holds Shift around it. */
+export interface PasteStroke { keysym: number; shift?: true }
+
+/**
+ * A paste as the keys that type it on the server. x11vnc hands a viewer's clipboard to the X
+ * server, but the browser there does not read it (tested 2026-11-08), so the text is typed:
+ * every character by its keysym (’ “ ” – ₱ and any script included). A line break is
+ * Shift+Enter, a new line in a text box that does not send a chat message line by line; a tab
+ * is Tab; other control characters are left out. Windows line ends count once.
+ */
+export function pasteStrokes(text: string): PasteStroke[] {
+  const strokes: PasteStroke[] = [];
+  for (const character of text.replace(/\r\n?/g, "\n")) {
+    if (character === "\n") { strokes.push({ keysym: KEYSYM.Return, shift: true }); continue; }
+    if (character === "\t") { strokes.push({ keysym: KEYSYM.Tab }); continue; }
+    const point = character.codePointAt(0) ?? 0;
+    if (point < 0x20 || (point >= 0x7f && point < 0xa0)) continue;
+    strokes.push({ keysym: keysymOf(character) });
+  }
+  return strokes;
+}

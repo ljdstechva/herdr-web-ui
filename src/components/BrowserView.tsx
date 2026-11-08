@@ -13,6 +13,11 @@ import {
   HOLD_MS,
   KEYBOARD_FILL,
   NAMED_KEYS,
+  MAX_PASTE_CHARACTERS,
+  MODIFIER_KEYSYMS,
+  SHIFT_KEYSYM,
+  isPasteChord,
+  pasteStrokes,
   setBrowserLayout,
   TouchGestures,
   typedKeysyms,
@@ -49,6 +54,8 @@ type Phase = "connecting" | "connected" | "lost";
 
 function BrowserViewer({ onClose }: { onClose(): void }) {
   const t = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
   const { browsers, loading, error: discoveryError, refresh } = useBrowsers();
   const narrow = useMediaQuery(PHONE_QUERY);
   const touch = useMediaQuery("(pointer: coarse)");
@@ -248,6 +255,87 @@ function BrowserViewer({ onClose }: { onClose(): void }) {
     };
   }, []);
 
+  // Ctrl+V pastes THIS device's clipboard into the server's browser. noVNC would send the press as
+  // keys, and the remote browser would paste the server's own clipboard; so the press is kept from
+  // noVNC (not cancelled: this browser then fires its paste event) and the paste's text is typed
+  // there (lib/browserView.ts pasteStrokes). Typing waits for Ctrl/Cmd/Shift to be let go here and
+  // lets every modifier go on the server first: a held Ctrl would make each letter a shortcut.
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
+  useEffect(() => {
+    const root = surface.current;
+    if (!root) return;
+    let queue: Promise<void> = Promise.resolve();
+    let noteTimer: number | undefined;
+    let closed = false;
+    const held = new Set<string>();
+    let pending = 0;
+    const pause = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+    const say = (text: string | null, ms = 4000): void => {
+      setPasteNote(text);
+      window.clearTimeout(noteTimer);
+      if (text !== null) noteTimer = window.setTimeout(() => setPasteNote(null), ms);
+    };
+    const modifier = (key: string): boolean => key === "Control" || key === "Meta" || key === "Shift";
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (modifier(event.key)) held.add(event.key);
+      if (event.target === keys.current) return;
+      // a modifier held through a paste repeats its keydown: the server must not be given it back
+      if (pending > 0 && modifier(event.key)) { event.stopPropagation(); return; }
+      if (isPasteChord(event)) event.stopPropagation();
+    };
+    const onKeyUp = (event: KeyboardEvent): void => { if (modifier(event.key)) held.delete(event.key); };
+    const onBlur = (): void => held.clear();
+    const letGo = async (): Promise<void> => {
+      for (let waited = 0; held.size > 0 && waited < 2000; waited += 25) await pause(25);
+    };
+    const onPaste = (event: ClipboardEvent): void => {
+      // the phone keyboard's field types what is pasted into it (onInput)
+      if (event.target === keys.current) return;
+      const inside = (node: unknown): boolean => node instanceof Node && root.contains(node);
+      if (!inside(event.target) && !inside(document.activeElement)) return;
+      if (event.target instanceof HTMLSelectElement) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      const t = tRef.current; // the language of now
+      if (!text) { say(t("Only text can be pasted into the server's browser.")); return; }
+      if (!rfb.current) { say(t("Not pasted: the browser is not connected.")); return; }
+      if (text.length > MAX_PASTE_CHARACTERS) { say(t("Not pasted: {count} characters is more than can be typed into the server's browser.", { count: text.length.toLocaleString() }), 6000); return; }
+      const strokes = pasteStrokes(text);
+      pending += 1;
+      if (strokes.length > 400) say(t("Pasting {count} characters…", { count: strokes.length.toLocaleString() }), 60_000);
+      queue = queue.then(async () => {
+        await letGo();
+        const connection = rfb.current;
+        if (closed || !connection) return;
+        for (const keysym of MODIFIER_KEYSYMS) connection.sendKey(keysym, null, false);
+        for (const [index, stroke] of strokes.entries()) {
+          if (closed || rfb.current !== connection) return;
+          if (stroke.shift) connection.sendKey(SHIFT_KEYSYM, null, true);
+          connection.sendKey(stroke.keysym, null);
+          if (stroke.shift) connection.sendKey(SHIFT_KEYSYM, null, false);
+          // the server's browser keeps up: a breath every few keys, and after a character x11vnc
+          // has to add to the keyboard map first (anything outside Latin-1)
+          if (stroke.keysym > 0xffff) await pause(12);
+          else if (index % 24 === 23) await pause(8);
+        }
+      }).catch(() => { /* a connection that closed mid-paste: what was typed is there */ })
+        .finally(() => { pending -= 1; if (pending === 0 && strokes.length > 400) say(null); });
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("paste", onPaste, true);
+    return () => {
+      closed = true;
+      window.clearTimeout(noteTimer);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("paste", onPaste, true);
+    };
+  }, []);
+
   const refill = (): void => {
     const field = keys.current;
     if (!field) return;
@@ -317,7 +405,7 @@ function BrowserViewer({ onClose }: { onClose(): void }) {
         {!browser && !loading && !discoveryMessage && <p>{t("Open a browser on the server, then retry. This view reconnects automatically.")}</p>}
         <button type="button" className="btn" disabled={loading} onClick={() => { refresh(); setAttempt((count) => count + 1); }}>{t("Retry")}</button>
       </div>}
-      {browser && streamError && <p className="browser-view-error" role="alert">{streamError}</p>}
+      {browser && (streamError || pasteNote) && <p className="browser-view-error" role="alert">{streamError || pasteNote}</p>}
       <textarea ref={keys} className="browser-view-keys" aria-label={t("Type into the browser")} rows={1} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false} enterKeyHint="enter"
         onFocus={() => { refill(); setTyping(true); }} onBlur={() => setTyping(false)} onInput={onInput} onKeyDown={onKeyDown} onCompositionEnd={() => { if (sent.current.length > KEYBOARD_FILL.length * 4) refill(); }} />
     </div>
