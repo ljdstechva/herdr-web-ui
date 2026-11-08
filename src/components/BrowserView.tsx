@@ -311,12 +311,16 @@ function BrowserViewer({ onClose }: { onClose(): void }) {
         for (const keysym of MODIFIER_KEYSYMS) connection.sendKey(keysym, null, false);
         for (const [index, stroke] of strokes.entries()) {
           if (closed || rfb.current !== connection) return;
+          // a character outside Latin-1 (’ ₱ — any script) is one x11vnc first adds to the keyboard
+          // map: the browser must have taken the new map before the key and the key before the
+          // next change, or the character is lost (one ₱ in about 16 was, with a pause after only)
+          const mapped = stroke.keysym > 0xffff;
+          if (mapped) await pause(20);
           if (stroke.shift) connection.sendKey(SHIFT_KEYSYM, null, true);
           connection.sendKey(stroke.keysym, null);
           if (stroke.shift) connection.sendKey(SHIFT_KEYSYM, null, false);
-          // the server's browser keeps up: a breath every few keys, and after a character x11vnc
-          // has to add to the keyboard map first (anything outside Latin-1)
-          if (stroke.keysym > 0xffff) await pause(12);
+          // the server's browser keeps up: a breath every few keys
+          if (mapped) await pause(25);
           else if (index % 24 === 23) await pause(8);
         }
       }).catch(() => { /* a connection that closed mid-paste: what was typed is there */ })
