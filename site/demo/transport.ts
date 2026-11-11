@@ -1160,6 +1160,17 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);
   if (path === "/api/voice/transcribe") return error("voice_not_configured", "transcription is unavailable in the demo", 409);
+  // the Files browser's sizes: the demo's folders hold made-up amounts, and nothing can be added or sent
+  if (path === "/api/fs/usage") {
+    const dir = query.get("path") || "/home/demo";
+    const children: Record<string, { size: number; files: number }> = dir === "/home/demo"
+      ? { "checkout-api": { size: 48_300_000, files: 412 }, "docs-site": { size: 9_700_000, files: 188 }, infra: { size: 1_200_000, files: 36 }, release: { size: 310_000_000, files: 57 }, "web-dashboard": { size: 131_000_000, files: 904 } }
+      : {};
+    const size = Object.values(children).reduce((sum, child) => sum + child.size, 0);
+    const files = Object.values(children).reduce((sum, child) => sum + child.files, 0);
+    return json({ path: dir, name: dir.split("/").pop() || dir, kind: "folder", size, disk: size, files, folders: Object.keys(children).length, modified: new Date(0).toISOString(), partial: false, children, volume: { total: 256 * 1024 ** 3, free: 141 * 1024 ** 3 } });
+  }
+  if (path === "/api/fs/folder") return error("not_allowed", "the demo cannot make folders", 403);
   if (path.startsWith("/api/fs/")) return error("not_found", "the demo has no files to open", 404);
   return error("demo", `${method} ${path} is not part of the demo`, 404);
 }

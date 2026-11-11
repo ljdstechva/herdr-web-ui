@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Download, ExternalLink, FileText, Table2, X } from "lucide-react";
 import "./FileViewer.css";
-import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
+import { FileBrowser } from "./FileBrowser.tsx";
 import { DocumentPreview } from "./DocumentPreview.tsx";
 import { ImageView } from "./ImageView.tsx";
 import { ShareImage } from "./ShareImage.tsx";
@@ -107,7 +107,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const fill = directory === null && error === null && candidates === null && (kind === "pdf" || kind === "document" || kind === "presentation" || kind === "spreadsheet"
     || (kind === "image" && info !== null && info.size <= MAX_INLINE_IMAGE_BYTES));
   const body = (() => {
-    if (directory !== null) return <DirectoryBrowser key={directory} start={directory} onOpenFile={onOpen ?? setPath} />;
+    if (directory !== null) return <FileBrowser key={directory} start={directory} onOpenFile={onOpen ?? setPath} />;
     if (error !== null) return <p className="file-viewer-note" role="alert">{error}</p>;
     if (candidates !== null) return <div className="file-viewer-choices">
       <p className="file-viewer-note">Several files are named {path.split("/").pop()}:</p>

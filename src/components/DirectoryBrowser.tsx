@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, FileText, Folder, House } from "lucide-react";
+import { ArrowUp, Folder, House } from "lucide-react";
 
 import "./DirectoryBrowser.css";
 
 import type { DirectoryListing } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
-import { formatBytes } from "../lib/bridgeProgress.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 
@@ -14,8 +13,6 @@ export interface DirectoryBrowserProps {
   start: string;
   /** the folder chosen, in the dialog's own syntax (`~/…` inside home); without it there is no "Use this folder" */
   onPick?: (path: string) => void;
-  /** lists files too, and opens the one clicked (its absolute path) */
-  onOpenFile?: (path: string) => void;
 }
 
 /** `~/…` for a path inside home, as the directory field is usually typed. */
@@ -30,9 +27,10 @@ function childPath(parent: string, name: string): string {
 
 /**
  * A folder browser for the new-session dialog: one directory at a time, fetched from the
- * PC the session starts on. Nothing is kept but the folder shown now.
+ * PC the session starts on. Nothing is kept but the folder shown now. Folders only: the files
+ * beside them, with what each takes, are FileBrowser's.
  */
-export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowserProps) {
+export function DirectoryBrowser({ start, onPick }: DirectoryBrowserProps) {
   const t = useT();
   const { fetchDirectories } = useMachineApi();
   const [listing, setListing] = useState<DirectoryListing | null>(null);
@@ -47,7 +45,7 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
     const id = ++request.current;
     setLoading(true);
     try {
-      const next = await fetchDirectories(path, showHidden, onOpenFile !== undefined);
+      const next = await fetchDirectories(path, showHidden);
       if (id !== request.current) return;
       if (listing !== null && next.path !== listing.path) setQuery("");
       setListing(next);
@@ -63,7 +61,7 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
     } finally {
       if (id === request.current) setLoading(false);
     }
-  }, [fetchDirectories, listing, onOpenFile, t]);
+  }, [fetchDirectories, listing, t]);
 
   useEffect(() => { void open(start, false, true); }, []);
 
@@ -119,17 +117,8 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
               </button>
             </li>
           ))}
-          {onOpenFile !== undefined && listing?.files?.map((file) => (
-            <li key={`file:${file.name}`}>
-              <button type="button" className="dir-browser-item is-file" disabled={loading} onClick={() => onOpenFile(childPath(path, file.name))}>
-                <FileText aria-hidden="true" />
-                <span>{file.name}</span>
-                <span className="dir-browser-size">{formatBytes(file.size)}</span>
-              </button>
-            </li>
-          ))}
           {listing !== null && onPick !== undefined && normalizedQuery !== "" && directories?.length === 0 && <li className="dir-browser-note" role="status">{t("No matching folders")}</li>}
-          {listing !== null && normalizedQuery === "" && listing.directories.length === 0 && (listing.files ?? []).length === 0 && <li className="dir-browser-note">{t(onOpenFile ? "Nothing here" : "No folders here")}</li>}
+          {listing !== null && normalizedQuery === "" && listing.directories.length === 0 && <li className="dir-browser-note">{t("No folders here")}</li>}
           {listing?.truncated && <li className="dir-browser-note">{t("Showing the first {n} folders; type the rest of the path to go further.", { n: listing.directories.length })}</li>}
           {listing?.truncated && onPick !== undefined && <li className="dir-browser-note">{t("Search is limited to the {n} loaded folders.", { n: listing.directories.length })}</li>}
         </ul>

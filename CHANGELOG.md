@@ -8,6 +8,20 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Files shows what everything takes, makes folders and downloads them.** In **⋯ → Browse
+  files** (and a folder opened from the chat) every folder now shows the size of what is inside
+  it and every file its own, with a bar for its part of the largest; the folder's total, its
+  file and folder counts and the disk's free space sit above the list, and the list sorts by
+  name or by size. **New folder** makes a folder where you are; a name Windows could not hold
+  (`? : * < > |`, a trailing dot, `CON`…) or one that differs from a neighbour only by case is
+  refused in words, since a mirrored work folder would stop syncing over it. A right click, a
+  finger held on a row, or its **⋯** opens the row's menu: **Open**, **Download** (a folder as a
+  `.zip`), **Storage details** (size, size on disk, contents, last change, location) and **Copy
+  path**. A download is saved by the browser that asked, so a phone saves to the phone and a
+  desktop to the desktop. Sizes are a walk of the folder on the PC that has it: links are not
+  followed, a drive mounted inside is left out, and a folder too large to walk in 12 s reads
+  "At least …". A `.zip` is stored, not compressed, streamed as it is read (ZIP64 past 4 GB),
+  holds at most 100,000 entries, and names anything it could not read in a note inside.
 - **A subagent opens in the chat's place.** Tapping a subagent or a command in the working list,
   or in the status line's background list, now shows it where the chat is, instead of over the
   page: "← Back to Claude" at the top (or Escape, or the main agent's row in the list) returns to

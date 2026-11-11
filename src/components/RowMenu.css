@@ -10,6 +10,13 @@
   overflow-y: auto;
 }
 
+/* opened from inside a dialog (a row of the Files browser): over the modal layer it came from,
+   the file viewer's included, which is itself one step over the modal layer */
+.row-menu.is-over-modal,
+.modal-scrim.row-sheet-over-modal {
+  z-index: calc(var(--z-modal) + 2);
+}
+
 .row-menu .menu-item:focus-visible {
   outline: none;
   background: var(--bg-hover);

@@ -68,6 +68,9 @@ describe("a paired watch device", () => {
     // the filesystem and the directory listing are shape the terminal never shows it
     expect((await asWatcher("/api/fs/file?path=/etc/hostname")).status).toBe(403);
     expect((await asWatcher("/api/fs/video?path=/opt/workstation/a.mp4")).status).toBe(403);
+    expect((await asWatcher("/api/fs/usage?path=/tmp")).status).toBe(403);
+    expect((await asWatcher("/api/fs/archive?path=/tmp")).status).toBe(403);
+    expect((await asWatcher("/api/fs/folder", "POST")).status).toBe(403);
     expect((await asWatcher("/api/workspace/directories?cwd=/tmp")).status).toBe(403);
     expect((await asWatcher("/api/machines/local/workspace/directories?cwd=/tmp")).status).toBe(403);
     // sending an alert is not a preference: it makes the server POST somewhere

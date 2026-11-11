@@ -346,7 +346,8 @@ try {
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "folder", exact: true }).tap();
   await page.locator(".file-viewer .dir-browser").waitFor();
-  await page.locator(".file-viewer .dir-browser").getByRole("button", { name: /notes.txt/ }).tap();
+  // the row's own button: its ⋯ ("Actions for notes.txt") is named after the file too
+  await page.locator(".file-viewer .dir-browser .dir-browser-item").filter({ hasText: "notes.txt" }).tap();
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat folder URI opens directory browser through touch");

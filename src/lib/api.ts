@@ -1,6 +1,7 @@
 import { machinePath, type BridgeHealth, type HerdrIdentity, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
+  ArchiveCheck,
   AgentRenameRequest,
   ConversationResponse,
   CreateTabRequest,
@@ -8,6 +9,8 @@ import type {
   CreateWorktreeRequest,
   CreateWorktreeTabRequest,
   DirectoryListing,
+  FolderCreated,
+  StorageUsage,
   FileInfo,
   PdfPreview,
   FocusPaneRequest,
@@ -601,6 +604,30 @@ export async function fetchFileInfo(path: string, paneId: string | null, machine
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
 export function fileUrl(path: string, paneId: string | null, machineId = "local", download = false): string {
   return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
+}
+
+/** A large folder is walked for up to 12 s on the PC that has it, and a PC behind the proxy adds its own way. */
+const USAGE_TIMEOUT_MS = 45_000;
+
+/** GET /api/fs/usage: the storage a folder (with what each of its own folders holds) or a file takes. */
+export async function fetchStorageUsage(path: string, machineId = "local", signal?: AbortSignal): Promise<StorageUsage> {
+  const timeout = AbortSignal.timeout(USAGE_TIMEOUT_MS);
+  return getJson<StorageUsage>(machinePath(machineId, `fs/usage?${new URLSearchParams({ path }).toString()}`), signal ? AbortSignal.any([signal, timeout]) : timeout);
+}
+
+/** POST /api/fs/folder: makes the folder `name` inside the folder `path`. */
+export async function createFolder(path: string, name: string, machineId = "local"): Promise<FolderCreated> {
+  return (await (await sendJson(machinePath(machineId, "fs/folder"), "POST", { path, name })).json()) as FolderCreated;
+}
+
+/** GET /api/fs/archive?check=1: whether the folder can be sent as a .zip, and how large it will be. */
+export async function checkArchive(path: string, machineId = "local"): Promise<ArchiveCheck> {
+  return getJson<ArchiveCheck>(machinePath(machineId, `fs/archive?${new URLSearchParams({ path, check: "1" }).toString()}`), AbortSignal.timeout(USAGE_TIMEOUT_MS));
+}
+
+/** GET /api/fs/archive: a folder as a .zip the browser saves. */
+export function archiveUrl(path: string, machineId = "local"): string {
+  return machinePath(machineId, `fs/archive?${new URLSearchParams({ path }).toString()}`);
 }
 
 /** How long one ask for a preview may take: the server answers `converting` after 20 s, so this only ends a dead connection. */

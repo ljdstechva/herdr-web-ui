@@ -49,6 +49,14 @@ interface Props {
   items: RowMenuItem[];
   /** which edge of the button the popover lines up with: its right one (a row's ⋯), or its left one (a tab) */
   align?: "start" | "end";
+  /** the button is inside a modal dialog: the popover floats over that layer instead of under it */
+  overModal?: boolean;
+  /**
+   * Opened under a finger that is still down (a held row). The menu appears beneath that finger,
+   * and a browser may give the lift to whatever is there now as a tap: an item is run only by a
+   * press that began on the menu, or by the keyboard.
+   */
+  fromHold?: boolean;
   onClose: () => void;
 }
 
@@ -60,7 +68,7 @@ const POPOVER_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 // the sheet is modal: its Cancel is one of the stops
 const SHEET_ITEMS = '.row-sheet-item, .row-sheet-cancel';
 
-export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header, items, align = "end", onClose }: Props) {
+export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header, items, align = "end", overModal = false, fromHold = false, onClose }: Props) {
   const t = useT();
   const sheet = useMediaQuery(SHEET_QUERY);
   const surface = useRef<HTMLDivElement>(null);
@@ -168,15 +176,20 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
   // the focus where it is, and the click still comes
   const keepFocus = (event: ReactMouseEvent<HTMLButtonElement>): void => event.preventDefault();
 
-  const run = (item: RowMenuItem): void => {
+  // whether a press has begun on the menu since it opened (see `fromHold`)
+  const pressed = useRef(false);
+  const press = (): void => { pressed.current = true; };
+  const run = (item: RowMenuItem, event: ReactMouseEvent<HTMLButtonElement>): void => {
+    // `detail` is 0 for a click the keyboard made
+    if (fromHold && !pressed.current && event.detail !== 0) return;
     onClose();
     item.run();
   };
 
   if (sheet) {
     return createPortal(
-      <div className="modal-scrim">
-        <div ref={surface} className="modal row-sheet" role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} onBlur={onBlur}>
+      <div className={`modal-scrim${overModal ? " row-sheet-over-modal" : ""}`}>
+        <div ref={surface} className="modal row-sheet" role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown} onBlur={onBlur} onPointerDownCapture={press}>
           <span className="row-sheet-grip" aria-hidden="true" />
           {header ? <div className="row-sheet-head">{header}</div> : (
             <div className="row-sheet-head">
@@ -187,7 +200,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
           {/* the items scroll between the head and Cancel: a tab's menu is taller than a short phone, and `.modal` hides its overflow */}
           <div className="row-sheet-items">
             {items.map((item) => (
-              <button key={item.id} type="button" className={`row-sheet-item${item.danger ? " is-danger" : ""}${item.divider ? " has-divider" : ""}`} aria-current={item.current ? "true" : undefined} aria-pressed={item.checked} title={item.title} onMouseDown={keepFocus} onMouseEnter={point ? (event) => event.currentTarget.focus({ preventScroll: true }) : undefined} onClick={() => run(item)}>
+              <button key={item.id} type="button" className={`row-sheet-item${item.danger ? " is-danger" : ""}${item.divider ? " has-divider" : ""}`} aria-current={item.current ? "true" : undefined} aria-pressed={item.checked} title={item.title} onMouseDown={keepFocus} onMouseEnter={point ? (event) => event.currentTarget.focus({ preventScroll: true }) : undefined} onClick={(event) => run(item, event)}>
                 {item.glyph ?? <item.icon aria-hidden="true" />}
                 <span className="row-sheet-label">{item.label}</span>
                 {item.hint && <span className="row-sheet-hint">{item.hint}</span>}
@@ -202,12 +215,12 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
   }
 
   return createPortal(
-    <div ref={surface} className="menu row-menu" role="menu" aria-label={title} style={place ?? { visibility: "hidden" }} onKeyDown={onKeyDown} onBlur={onBlur}>
+    <div ref={surface} className={`menu row-menu${overModal ? " is-over-modal" : ""}`} role="menu" aria-label={title} style={place ?? { visibility: "hidden" }} onKeyDown={onKeyDown} onBlur={onBlur} onPointerDownCapture={press}>
       {header && <div className="row-menu-header" role="presentation">{header}</div>}
       {items.map((item) => (
         <Fragment key={item.id}>
           {item.divider && <span className="row-menu-divider" role="separator" />}
-          <button type="button" role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={item.checked} className={`menu-item${item.danger ? " is-danger" : ""}`} aria-current={item.current ? "true" : undefined} title={item.title} onMouseDown={keepFocus} onMouseEnter={point ? (event) => event.currentTarget.focus({ preventScroll: true }) : undefined} onClick={() => run(item)}>
+          <button type="button" role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={item.checked} className={`menu-item${item.danger ? " is-danger" : ""}`} aria-current={item.current ? "true" : undefined} title={item.title} onMouseDown={keepFocus} onMouseEnter={point ? (event) => event.currentTarget.focus({ preventScroll: true }) : undefined} onClick={(event) => run(item, event)}>
             {item.glyph ?? <item.icon aria-hidden="true" />}
             <span className="menu-item-main">{item.label}</span>
             {item.hint && <span className="menu-item-hint">{item.hint}</span>}

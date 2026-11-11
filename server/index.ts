@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientRole, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved, WorktreeMerged, WorktreeRemoved, WorktreeStatus, WorktreeTabCreated } from "../shared/protocol.ts";
+import type { AgentKind, AgentRenameRequest, AgentStatus, ArchiveCheck, ClientMessage, ClientRole, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved, WorktreeMerged, WorktreeRemoved, WorktreeStatus, WorktreeTabCreated } from "../shared/protocol.ts";
 import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
@@ -37,6 +37,8 @@ import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent }
 import { listDirectories } from "./directories.ts";
 import { fileResponse, locateFile } from "./file-view.ts";
 import { chatVideo } from "./video-file.ts";
+import { createFolder, storageUsage } from "./storage.ts";
+import { archiveResponse, archiveSlotFree, planArchive } from "./archive.ts";
 import { DocumentPreviews, PreviewError, previewResponse } from "./file-preview.ts";
 import {
   agentManifests,
@@ -1926,6 +1928,61 @@ export function createServer(
         const video = chatVideo(url.searchParams.get("path") ?? "");
         if (video === null) return jsonResponse({ error: { code: "video_refused", message: "only an .mp4 or .webm file inside the work folder plays here" } }, 403);
         return fileResponse(video, false);
+      }
+
+      // what a folder or a file takes on the disk (storage.ts); a large folder is walked for seconds
+      if (pathname === "/api/fs/usage") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        // a walk reads the whole tree the URL names: only this app may ask, never a page elsewhere
+        if (!sameOrigin(request)) return jsonResponse({ error: { code: "invalid_origin", message: "Ask for sizes from this app" } }, 403);
+        bunServer.timeout(request, 60);
+        try {
+          const usage = await storageUsage(url.searchParams.get("path") ?? "", request.signal);
+          return usage === null ? jsonResponse({ error: { code: "not_found", message: "no readable folder or file at that path" } }, 404) : jsonResponse(usage);
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/fs/folder") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { path?: unknown; name?: unknown };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (!isJsonObject(payload) || typeof payload.path !== "string") return badRequest("invalid_body", "path and name are required");
+        try {
+          const made = createFolder(payload.path, payload.name);
+          if ("created" in made) return jsonResponse(made.created, 201);
+          if (made.refused === "invalid_name") return badRequest("invalid_name", "a folder cannot have that name");
+          if (made.refused === "exists") return conflictResponse("exists", "something here already has that name");
+          if (made.refused === "not_allowed") return jsonResponse({ error: { code: "not_allowed", message: "this user cannot make a folder there" } }, 403);
+          return jsonResponse({ error: { code: "not_found", message: "no folder at that path" } }, 404);
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      // a folder as a .zip (archive.ts): streamed for as long as the download takes
+      if (pathname === "/api/fs/archive") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        if (!sameOrigin(request)) return jsonResponse({ error: { code: "invalid_origin", message: "Download folders from this app" } }, 403);
+        if (!archiveSlotFree()) return jsonResponse({ error: { code: "busy", message: "other folders are being downloaded; try again when one ends" } }, 429);
+        try {
+          const plan = await planArchive(url.searchParams.get("path") ?? "");
+          if (plan === null) return jsonResponse({ error: { code: "not_found", message: "no readable folder at that path" } }, 404);
+          if (plan === "too_many_files") return jsonResponse({ error: { code: "too_many_files", message: "this folder holds too many files to download as one archive" } }, 413);
+          // asked first by the app: a refusal is then a sentence in the page, not a failed download
+          if (url.searchParams.get("check") === "1") {
+            return jsonResponse({ name: plan.name, entries: plan.entries.length, size: plan.entries.reduce((sum, entry) => sum + entry.size, 0) } satisfies ArchiveCheck);
+          }
+          bunServer.timeout(request, 0);
+          return archiveResponse(plan);
+        } catch (error) {
+          return errorResponse(error);
+        }
       }
 
       if (pathname === "/api/fs/stat" || pathname === "/api/fs/file" || pathname === "/api/fs/preview") {

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
 
-import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
+import { FileBrowser } from "./FileBrowser.tsx";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 
@@ -14,7 +14,7 @@ export interface FilesDialogProps {
   onClose: () => void;
 }
 
-/** The files of the pane's folder (and any other), each opened in the file viewer. */
+/** The files of the pane's folder (and any other): what each takes, opened in the file viewer or downloaded (FileBrowser). */
 export function FilesDialog({ start, viewing, onOpenFile, onClose }: FilesDialogProps) {
   const t = useT();
   const surface = useFocusTrap<HTMLElement>(true);
@@ -33,7 +33,7 @@ export function FilesDialog({ start, viewing, onOpenFile, onClose }: FilesDialog
           <button type="button" className="icon-button" aria-label={t("Close files")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body">
-          <DirectoryBrowser start={start} onOpenFile={onOpenFile} />
+          <FileBrowser start={start} onOpenFile={onOpenFile} />
         </div>
       </section>
     </div>

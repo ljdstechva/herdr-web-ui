@@ -6,7 +6,7 @@ import { isJsonObject, jsonResponse } from "./http.ts";
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
 /** git, then agent.start or the repository's hooks: these wait longer than any other PC call */
 export const SLOW_WORKTREE_PATH = /^worktree\/(?:create|tab|merge)$/;
-export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove|tab|status|merge)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file|preview(?:\/pdf)?))$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove|tab|status|merge)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file|preview(?:\/pdf)?|usage|folder|archive))$/;
 
 
 /**
@@ -106,7 +106,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const ifNoneMatch = request.headers.get("if-none-match");
       if (ifNoneMatch) headers.set("if-none-match", ifNoneMatch);
       const abort = new AbortController();
-      if (path === "fs/file" || path === "fs/preview/pdf") {
+      if (path === "fs/file" || path === "fs/preview/pdf" || path === "fs/archive") {
         // a file (a video, say, or a document's PDF) streams through, with its ranges, never held
         // here; it can play or load for longer than any request timeout
         const range = request.headers.get("range");

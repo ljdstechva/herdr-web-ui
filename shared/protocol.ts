@@ -594,6 +594,65 @@ export interface DirectoryListing {
   files?: { name: string; size: number }[];
 }
 
+/**
+ * GET /api/fs/usage (`path`: absolute or `~/…`): the storage a folder or a file takes. A folder
+ * is walked whole, links not followed and other volumes mounted inside it left out; a walk that
+ * ran out of time or entries answers what it counted with `partial`, a lower bound.
+ * 404 `not_found` when nothing readable is there.
+ */
+export interface StorageUsage {
+  /** the path measured, absolute, links resolved */
+  path: string;
+  name: string;
+  kind: "folder" | "file";
+  /** bytes of the files inside (a file: its own length): what a download carries */
+  size: number;
+  /** bytes held on the disk: whole blocks, a file with several names counted once */
+  disk: number;
+  /** files inside, at any depth (a file: 1) */
+  files: number;
+  /** folders inside, at any depth */
+  folders: number;
+  /** ISO time of the last change to the folder or file itself */
+  modified: string;
+  /** the walk stopped early: every number is "at least" */
+  partial: boolean;
+  /** a folder's own folders by name, each with what is inside it */
+  children?: Record<string, { size: number; files: number }>;
+  /** the volume it is on; null where the system does not say */
+  volume: { total: number; free: number } | null;
+}
+
+/**
+ * POST /api/fs/folder `{ path, name }`: makes the folder `name` inside the folder `path`
+ * (absolute or `~/…`). 400 `invalid_name` for a name shared/storage.ts refuses, 404 `not_found`
+ * when `path` is not a folder, 409 `exists` when something has that name, 403 `not_allowed`
+ * when this user cannot write there.
+ */
+export interface FolderCreated {
+  /** the new folder, absolute */
+  path: string;
+  name: string;
+}
+
+/**
+ * GET /api/fs/archive (`path`: a folder, absolute or `~/…`): the folder as a .zip, streamed as it
+ * is read (stored, not compressed) and saved by the browser as `<folder>.zip`. Links are left
+ * out. 404 `not_found` when it is not a folder, 413 `too_many_files` past the entry cap, 429
+ * `busy` while as many archives as the server makes at once are already streaming.
+ *
+ * With `check=1` it answers this instead of the archive, or the same refusals: the app asks
+ * first, so a folder it cannot send is said in the page and the download's size is known.
+ */
+export interface ArchiveCheck {
+  /** the file name the archive is saved under */
+  name: string;
+  /** folders and files it will hold */
+  entries: number;
+  /** bytes of the files in it: the archive is this plus its headers */
+  size: number;
+}
+
 /** How the file viewer shows a file. */
 /**
  * `document` (Word, OpenDocument text, RTF) and `presentation` open as the PDF GET /api/fs/preview
