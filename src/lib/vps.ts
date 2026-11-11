@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
+  CabinetPreview,
+  CabinetStatus,
   DiskCleanResult,
   DiskScan,
   DoctorAgentRequest,
@@ -57,6 +59,10 @@ export const fetchDoctorProcesses = (): Promise<DoctorProcesses> => call("/api/v
 export const processAction = (pid: number, startTicks: number, action: ProcessAction): Promise<ProcessActionResult> =>
   post("/api/vps/doctor/process", { pid, start_ticks: startTicks, action });
 export const startDoctorAgent = (request: DoctorAgentRequest): Promise<DoctorAgentResult> => post("/api/vps/doctor/agent", request);
+/** "Move unused files to Drive" (lib/cabinet.ts): neither POST carries anything, the server's command is fixed. */
+export const fetchCabinetStatus = (): Promise<CabinetStatus> => call("/api/vps/cabinet");
+export const previewCabinet = (): Promise<CabinetPreview> => post("/api/vps/cabinet/preview");
+export const startCabinet = (): Promise<CabinetStatus> => post("/api/vps/cabinet/tidy");
 
 /**
  * The server's numbers while the page is visible. `unavailable`: this server has no VPS status

@@ -5,6 +5,7 @@
  */
 
 import type { DoctorAgentRequest, ProcessAction } from "../shared/vps.ts";
+import { CabinetError, type CabinetService } from "./cabinet.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { DoctorError, type VpsDoctor } from "./vps-doctor.ts";
 import type { VpsMonitor } from "./vps.ts";
@@ -14,6 +15,8 @@ export interface VpsServices {
   doctor: Pick<VpsDoctor, "options" | "scanDisk" | "cleanDisk" | "processes" | "processAction" | "startAgent">;
   /** sends a test VPS alert to every subscribed device */
   testAlert(): Promise<void>;
+  /** moves unused work folders to Drive (server/cabinet.ts); unset, /api/vps/cabinet answers 404 */
+  cabinet?: CabinetService;
 }
 
 const PROCESS_ACTIONS = new Set<ProcessAction>(["terminate", "kill", "close-pane"]);
@@ -24,8 +27,11 @@ async function body(request: Request): Promise<Record<string, unknown> | Respons
   return isJsonObject(payload) ? payload : badRequest("invalid_body", "request body must be a JSON object");
 }
 
-/** `timeout` raises Bun's idle limit for a request that takes long before its first byte (a disk scan). */
-export async function handleVpsRequest(request: Request, pathname: string, services: VpsServices | undefined, timeout: (seconds: number) => void): Promise<Response> {
+/**
+ * `timeout` raises Bun's idle limit for a request that takes long before its first byte (a disk scan).
+ * `readOnly`: a watching device asks. Its POSTs never get here (the central gate); what it may not read either says so itself.
+ */
+export async function handleVpsRequest(request: Request, pathname: string, services: VpsServices | undefined, timeout: (seconds: number) => void, readOnly = false): Promise<Response> {
   if (!services) return jsonResponse({ error: { code: "not_available", message: "VPS status is not available on this server" } }, 404);
   const { monitor, doctor } = services;
   const route = `${request.method} ${pathname}`;
@@ -90,11 +96,25 @@ export async function handleVpsRequest(request: Request, pathname: string, servi
         timeout(90);
         return jsonResponse(await doctor.startAgent({ engine, model: model || null, effort: effort || null, issue_id: issueId, note } satisfies DoctorAgentRequest));
       }
+      // Neither cabinet POST reads its body: the command and its arguments are fixed (server/cabinet.ts).
+      case "GET /api/vps/cabinet":
+      case "POST /api/vps/cabinet/preview":
+      case "POST /api/vps/cabinet/tidy": {
+        const { cabinet } = services;
+        if (!cabinet) return jsonResponse({ error: { code: "not_available", message: "Moving files to Drive is not available on this server" } }, 404);
+        // a run's result names work folders: the shape of the work folder, which a watching device is not shown (as with /api/fs)
+        if (readOnly) return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
+        if (request.method === "GET") return jsonResponse(cabinet.status());
+        if (pathname === "/api/vps/cabinet/tidy") return jsonResponse(cabinet.start(), 202);
+        // the dry run has 30 s (PREVIEW_TIMEOUT_MS), as long as Bun's idle limit
+        timeout(45);
+        return jsonResponse(await cabinet.preview());
+      }
       default:
         return jsonResponse({ error: { code: "not_found", message: `${request.method} ${pathname} is not a VPS route` } }, 404);
     }
   } catch (error) {
-    if (error instanceof DoctorError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
+    if (error instanceof DoctorError || error instanceof CabinetError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
     return errorResponse(error);
   }
 }

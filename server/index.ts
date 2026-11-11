@@ -109,6 +109,7 @@ import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { browserStreamId, browserViewRefusal, handleBrowserRequest, type BrowserViewService } from "./browser-view-api.ts";
 import { BrowserViews, type BrowserStream } from "./browser-view.ts";
+import { CabinetTidy, type CabinetService } from "./cabinet.ts";
 import { handleVpsRequest, type VpsServices } from "./vps-api.ts";
 import { VpsDoctor } from "./vps-doctor.ts";
 import { VpsMonitor, vpsAlertMessage, vpsResolvedMessage } from "./vps.ts";
@@ -475,6 +476,8 @@ export function createServer(
     vps?: VpsMonitor;
     /** Controlled Doctor operations for fixtures; defaults to the host Doctor when VPS is enabled. */
     vpsDoctor?: VpsServices["doctor"];
+    /** Moves unused work folders to Drive (server/cabinet.ts); defaults to the PC's own cabinet program (HERDR_CABINET_BIN) when VPS is enabled. Tests pass one that runs a stand-in. */
+    cabinet?: CabinetService;
     /** the browsers on this PC's virtual displays (server/browser-view.ts); unset, /api/browsers answers 404. Only the real entrypoint passes one. */
     browsers?: BrowserViewService;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
@@ -1562,6 +1565,7 @@ export function createServer(
       monitor,
       doctor: options.vpsDoctor ?? new VpsDoctor({ monitor, stateDir: options.stateDir ?? defaultStateDir(), codexHome: options.codexHome, launchAgent: agentLaunch }),
       testAlert: () => push.notifySystem({ pane_id: null, title: `${monitor.status().hostname}: VPS alerts are on`, body: "This device will hear when the server runs short of disk, memory or CPU.", tag: "herdr-vps-test" }, "normal", true),
+      cabinet: options.cabinet ?? new CabinetTidy({ stateDir: options.stateDir ?? defaultStateDir() }),
     };
   }
 
@@ -1831,7 +1835,7 @@ export function createServer(
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       if (pathname === "/api/sign-in" || pathname.startsWith("/api/sign-in/")) return handleSignInRequest(request, pathname, url, signIn);
-      if (pathname === "/api/vps" || pathname.startsWith("/api/vps/")) return handleVpsRequest(request, pathname, vps, (seconds) => bunServer.timeout(request, seconds));
+      if (pathname === "/api/vps" || pathname.startsWith("/api/vps/")) return handleVpsRequest(request, pathname, vps, (seconds) => bunServer.timeout(request, seconds), readOnly);
       if (pathname === "/api/browsers" || pathname.startsWith("/api/browsers/")) {
         const streamId = browserStreamId(pathname);
         if (streamId === null) return handleBrowserRequest(request, pathname, options.browsers, readOnly);

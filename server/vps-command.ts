@@ -9,8 +9,12 @@ export interface CommandResult {
   truncated?: boolean;
 }
 
-/** Bounded output, one deadline, and no resolution until the child and its pipes close. */
-export function run(argv: string[], timeoutMs = 60_000, signal?: AbortSignal, maxBytes = 4 * 1024 ** 2): Promise<CommandResult> {
+/**
+ * Bounded output, one deadline, and no resolution until the child and its pipes close.
+ * `env`: the child's whole environment; unset, this process's with `LC_ALL=C`, so a tool's
+ * words can be matched. A caller that only reads JSON passes the environment it wants kept.
+ */
+export function run(argv: string[], timeoutMs = 60_000, signal?: AbortSignal, maxBytes = 4 * 1024 ** 2, env?: NodeJS.ProcessEnv): Promise<CommandResult> {
   if (signal?.aborted) return Promise.resolve({ code: null, stdout: "", stderr: "", timedOut: true });
   // sudo can put a root child in a group this uid cannot kill. The watchdog must
   // run INSIDE that privilege boundary and escalate even if the command ignores TERM.
@@ -19,7 +23,7 @@ export function run(argv: string[], timeoutMs = 60_000, signal?: AbortSignal, ma
   return new Promise((resolve) => {
     const child = spawn(argv[0]!, argv.slice(1), {
       stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
-      env: { ...process.env, LC_ALL: "C" },
+      env: env ?? { ...process.env, LC_ALL: "C" },
     });
     const output: Buffer[][] = [[], []];
     let bytes = 0;

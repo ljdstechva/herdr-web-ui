@@ -460,6 +460,8 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
 | `HERDR_WEB_APP_NAME` | unset (`herdr`) | The name the installed app has on a phone or computer, for example the PC's name. Each PC installs as an app of its own, and without it they are all called `herdr`. An app already installed takes the new name when the browser next updates it, usually within a day or two, without a reinstall. Keep it short: a home screen cuts a long label |
 | `HERDR_WEB_PASTE_DIR` | `<pane cwd>/.herdr-web-ui` | Where pasted and attached files are saved: an absolute path or `~/…`. If the default project folder cannot be written, uploads use the server's private `stateDir/attachments` folder instead. An explicit value never falls back. An agent may ask before reading a file outside its project. It covers the panes of this server's PC; a remote PC keeps the default |
+| `HERDR_CABINET_BIN` | `/usr/local/bin/cabinet` | The `cabinet` program behind **Move unused files to Drive** in the VPS dialog. The app runs only `tidy --dry-run --json` and `tidy --json` with it. Where the file is missing or not executable, the entry is not shown |
+| `HERDR_CABINET_STATE` | `/var/lib/cabinet/state.json` | cabinet's own state file, read for the result of its last tidy when a run outlived the server that started it |
 | `CODEX_HOME` | `~/.codex` | Where Codex sessions are read |
 
 ## Updates

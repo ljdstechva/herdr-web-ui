@@ -1,0 +1,269 @@
+/* "Move unused files to Drive" in the VPS dialog: the entry under the disk meter, and the view
+   with the dry run, the run under way and its result. Read on a phone first: one column, words
+   that wrap instead of being cut, and controls a thumb can hit. */
+
+/* ── the entry ── */
+.cabinet-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--row-h);
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .cabinet-entry:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+  }
+}
+
+.cabinet-entry:active {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.cabinet-entry > svg {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--primary);
+}
+
+.cabinet-entry[data-running] > svg:first-child {
+  color: var(--status-working);
+}
+
+.cabinet-entry > .cabinet-entry-go {
+  color: var(--text-dim);
+}
+
+.cabinet-entry-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cabinet-entry-text strong {
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.cabinet-entry-text span {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+/* ── the view ── */
+.cabinet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cabinet-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cabinet-lead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+.cabinet-lead svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--status-working);
+}
+
+.cabinet-lead.is-ok svg,
+.cabinet[data-state="nothing"] .cabinet-lead svg {
+  color: var(--status-done);
+}
+
+.cabinet-lead.is-problem {
+  font-size: var(--fs-lg);
+}
+
+.cabinet-lead.is-problem svg {
+  color: var(--status-blocked);
+}
+
+.cabinet-free {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.cabinet-explain,
+.cabinet-more,
+.cabinet-said {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+}
+
+/* the program's own words, as it gave them */
+.cabinet-said {
+  padding: var(--space-2) var(--space-3);
+  border-left: var(--rail-w) solid var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.cabinet-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.cabinet-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  list-style: none;
+}
+
+/* the folder's own name and its size on one line; where it is, and why it waits, under them */
+.cabinet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.cabinet-row + .cabinet-row {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.cabinet-row-name {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.cabinet-row-size {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cabinet-row-where,
+.cabinet-row-why {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.cabinet-row-why {
+  color: var(--status-blocked);
+}
+
+/* the last run in one line: a tap opens what it moved, what waited and what failed */
+.cabinet-last {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cabinet-last > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cabinet-last > svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) {
+  .cabinet-last:hover { background: var(--bg-hover); }
+}
+
+.cabinet-last:active {
+  background: var(--bg-hover);
+}
+
+/* the controls stay at the dialog's lower edge however long the lists are (as .vps-sticky does) */
+.cabinet-actions {
+  position: sticky;
+  bottom: calc(-1 * var(--space-4));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: var(--hairline) solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* a phone: each control is a full row a thumb can hit, the one that acts on top */
+@media (pointer: coarse), (max-width: 640px) {
+  .cabinet-actions {
+    flex-direction: column-reverse;
+    flex-wrap: nowrap;
+  }
+
+  .cabinet-actions .btn {
+    width: 100%;
+    height: auto;
+    min-height: calc(var(--touch-target) + var(--space-2));
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--fs-md);
+    white-space: normal;
+  }
+}

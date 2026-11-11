@@ -12,9 +12,13 @@
  *   GET  /api/vps/doctor/processes       -> DoctorProcesses
  *   POST /api/vps/doctor/process { pid, start_ticks, action } -> ProcessActionResult
  *   POST /api/vps/doctor/agent DoctorAgentRequest -> DoctorAgentResult
+ *   GET  /api/vps/cabinet                -> CabinetStatus (the run under way or the last one)
+ *   POST /api/vps/cabinet/preview        -> CabinetPreview (`cabinet tidy --dry-run --json`)
+ *   POST /api/vps/cabinet/tidy           -> 202 CabinetStatus (`cabinet tidy --json`, started detached)
  *
  * Every POST needs `x-herdr-vps: 1` beside the app's same-origin check; a watch device is
- * refused every one of them by the central read-only gate.
+ * refused every one of them by the central read-only gate, and GET /api/vps/cabinet too
+ * (403 read_only): a run's result names work folders.
  * Scan age defaults to 30 and otherwise must be an integer 1..3650. Equivalent in-flight
  * scans join; another age, or scan/clean overlap, answers 409 doctor_busy. A scan has one
  * 240-second deadline (408 scan_timeout), 200,000 visited entries and 4 MiB per-command
@@ -35,6 +39,16 @@
  * resolve a known issue. Delivered alerts resolve once, using their original notification tag;
  * recovery pushes wait while the app is active or no device subscribes. A recurrence cancels
  * pending recovery and is news again. Legacy alert records infer delivery from saved alerts.
+ * Cabinet (server/cabinet.ts) moves work folders nobody used for a day to Google Drive with the
+ * PC's own `cabinet` program; where there is none, `available` is false and the POSTs answer
+ * 404 cabinet_missing. Neither POST reads a body: the command and its arguments are fixed.
+ * A preview has one 30-second deadline (504 preview_timeout); an answer that is not the
+ * program's one JSON line is 502 bad_output, a dry run that failed (the message is the program's
+ * own last sentence) 502 preview_failed. One run at a time: a
+ * second start, or a preview meanwhile, answers 409 tidy_running, a start during a preview
+ * 409 preview_running, and cabinet's own lock (another cabinet job, its exit code 3) answers
+ * a preview 409 cabinet_busy and ends a run in state `busy`. A run is not this request: it is started detached, outlives the page and a
+ * server restart, and is read with GET until its state is no longer `running`.
  */
 
 export type VpsSeverity = "ok" | "warning" | "critical";
@@ -245,4 +259,80 @@ export interface DoctorAgentResult {
   agent_started: boolean;
   brief_path: string;
   error?: { code: string; message: string };
+}
+
+/** A work folder `cabinet tidy` would move to Drive. */
+export interface CabinetFolder {
+  path: string;
+  bytes: number;
+  /** hours since it was last used; null when the program does not say */
+  idle_hours: number | null;
+}
+
+/** A folder left where it is because something is using it. */
+export interface CabinetWaiting {
+  path: string;
+  bytes: number;
+  /** the program's own words for what holds it */
+  why: string;
+}
+
+export interface CabinetPreview {
+  /** how many folders would move, and what they take together */
+  folders: number;
+  bytes: number;
+  /** the largest of them, largest first; `folders` counts them all */
+  items: CabinetFolder[];
+  /** how many folders wait, and the first of them */
+  waiting: number;
+  busy: CabinetWaiting[];
+  /** free on the disk now, GiB; null when the program does not say */
+  free_gb: number | null;
+  /** a folder moves after this many days without use */
+  idle_days: number | null;
+}
+
+export interface CabinetResult {
+  /** false: something failed (`fails`); what moved before it stays moved */
+  ok: boolean;
+  moved: number;
+  bytes: number;
+  waiting: number;
+  busy: CabinetWaiting[];
+  failed: number;
+  /** the folders that could not be moved, as the program names them */
+  fails: string[];
+  /** the run's other clean-ups, the nightly run's own: idle agent scratch removed, old browser output packed to Drive */
+  scratch_folders: number;
+  scratch_bytes: number;
+  browser_files: number;
+  free_before_gb: number | null;
+  free_after_gb: number | null;
+  seconds: number | null;
+}
+
+/**
+ * `running`: under way. `done`: it ended and `result` says what moved. `busy`: another cabinet
+ * job held the lock, nothing was changed. `failed`: it ended without a result this app can read.
+ */
+export type CabinetRunState = "running" | "done" | "busy" | "failed";
+
+export interface CabinetRun {
+  id: string;
+  state: CabinetRunState;
+  /** ms since the epoch, on the server's clock */
+  started_at: number;
+  finished_at: number | null;
+  result: CabinetResult | null;
+  /** for `busy` and `failed`: why, in words */
+  message: string | null;
+}
+
+export interface CabinetStatus {
+  /** false: this PC has no cabinet program, and nothing is offered */
+  available: boolean;
+  /** the server's clock, ms: what `started_at` is counted from */
+  now: number;
+  /** the run under way, else the last one (started here, or cabinet's own record of it) */
+  run: CabinetRun | null;
 }

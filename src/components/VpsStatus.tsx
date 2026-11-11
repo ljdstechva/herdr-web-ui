@@ -20,8 +20,10 @@ import type {
   VpsThresholds,
 } from "../../shared/vps.ts";
 import { fetchSession } from "../lib/api.ts";
+import { useCabinet, type CabinetState } from "../lib/cabinet.ts";
 import { watchReadNotifications } from "../lib/notifications.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { CabinetEntry, CabinetView } from "./CabinetTidy.tsx";
 import {
   cleanDisk,
   fetchDoctorOptions,
@@ -131,11 +133,13 @@ function VpsToast({ host, issues, onOpen, onDismiss }: { host: string; issues: V
   </div>;
 }
 
-type View = { kind: "status" } | { kind: "doctor"; issue: VpsIssue | null };
+type View = { kind: "status" } | { kind: "doctor"; issue: VpsIssue | null } | { kind: "cabinet" };
 
 function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsStatus | null; error: string | null; refresh(): void; onClose(): void; onSelect: Select }) {
   const [view, setView] = useState<View>({ kind: "status" });
   const [busy, setBusy] = useState(false);
+  // "Move unused files to Drive" (CabinetTidy.tsx): read here, so the entry and its view tell of the same run
+  const cabinet = useCabinet();
   const surface = useFocusTrap<HTMLDivElement>(true);
   const statusShown = status !== null && view.kind === "status";
   useEffect(() => {
@@ -149,7 +153,7 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
       if (event.key !== "Escape" || nativeModalOver(surface.current)) return;
       event.preventDefault();
       if (busy) return;
-      if (view.kind === "doctor") setView({ kind: "status" });
+      if (view.kind !== "status") setView({ kind: "status" });
       else onClose();
     };
     document.addEventListener("keydown", onKeyDown);
@@ -159,19 +163,20 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
   const closeFromScrim = (event: MouseEvent<HTMLDivElement>): void => {
     if (!busy && event.target === event.currentTarget) onClose();
   };
-  const title = view.kind === "status" ? `VPS status${status ? ` · ${status.hostname}` : ""}` : `Doctor · ${view.issue?.title ?? "check-up"}`;
+  const title = view.kind === "status" ? `VPS status${status ? ` · ${status.hostname}` : ""}` : view.kind === "cabinet" ? "Move unused files to Drive" : `Doctor · ${view.issue?.title ?? "check-up"}`;
 
   return <div className="modal-scrim vps-scrim" onMouseDown={closeFromScrim}>
     <div ref={surface} className="modal vps-modal" role="dialog" aria-modal="true" aria-labelledby="vps-title" tabIndex={-1}>
       <header className="modal-header">
-        {view.kind === "doctor" && <button type="button" className="icon-button" aria-label="Back to status" title="Back to status" disabled={busy} onClick={() => setView({ kind: "status" })}><ChevronLeft aria-hidden="true" /></button>}
+        {view.kind !== "status" && <button type="button" className="icon-button" aria-label="Back to status" title="Back to status" disabled={busy} onClick={() => setView({ kind: "status" })}><ChevronLeft aria-hidden="true" /></button>}
         <h2 className="modal-title vps-title" id="vps-title">{title}</h2>
-        {view.kind === "status" && <button type="button" className="icon-button" aria-label="Refresh" title="Refresh" onClick={refresh}><RefreshCw aria-hidden="true" /></button>}
+        {view.kind === "status" && <button type="button" className="icon-button" aria-label="Refresh" title="Refresh" onClick={() => { refresh(); void cabinet.refresh(); }}><RefreshCw aria-hidden="true" /></button>}
         <button type="button" className="icon-button" aria-label="Close dialog" disabled={busy} onClick={onClose}><X aria-hidden="true" /></button>
       </header>
       <div className="modal-body vps-body">
         {!status ? <p className="vps-note" role="status">{error ?? "Measuring…"}</p>
-          : view.kind === "status" ? <StatusView status={status} refresh={refresh} onDoctor={(issue) => setView({ kind: "doctor", issue })} />
+          : view.kind === "status" ? <StatusView status={status} refresh={refresh} cabinet={cabinet} onCabinet={() => setView({ kind: "cabinet" })} onDoctor={(issue) => setView({ kind: "doctor", issue })} />
+          : view.kind === "cabinet" ? <CabinetView cabinet={cabinet} onDiskChanged={refresh} onDone={() => setView({ kind: "status" })} />
           : <DoctorView status={status} issue={view.issue} setBusy={setBusy} refresh={refresh} onStarted={(paneId) => { onClose(); onSelect("local", paneId); }} />}
       </div>
     </div>
@@ -180,7 +185,7 @@ function VpsDialog({ status, error, refresh, onClose, onSelect }: { status: VpsS
 
 // ── status ──────────────────────────────────────────────────────────────────────────────
 
-function StatusView({ status, refresh, onDoctor }: { status: VpsStatus; refresh(): void; onDoctor(issue: VpsIssue | null): void }) {
+function StatusView({ status, refresh, cabinet, onCabinet, onDoctor }: { status: VpsStatus; refresh(): void; cabinet: CabinetState; onCabinet(): void; onDoctor(issue: VpsIssue | null): void }) {
   const t = status.config.thresholds;
   const ago = Math.max(0, Math.round((Date.now() - status.sampled_at) / 1000));
   return <div className="vps-status">
@@ -217,6 +222,8 @@ function StatusView({ status, refresh, onDoctor }: { status: VpsStatus; refresh(
         detail={`${formatBytes(status.swap.used_bytes)} of ${formatBytes(status.swap.total_bytes)}`} />}
       {status.disks.map((disk) => <Meter key={disk.mount} label={`Disk ${disk.mount}`} value={disk.used_percent} level={meterLevel(disk.used_percent, t.disk_warning, t.disk_critical)}
         detail={`${formatBytes(disk.used_bytes)} used · ${formatBytes(disk.available_bytes)} free of ${formatBytes(disk.total_bytes)} · ${disk.device}`} />)}
+      {/* under the disk it frees: work folders nobody used for a day go to Drive, after a look at the list */}
+      <CabinetEntry cabinet={cabinet} onOpen={onCabinet} />
     </section>
 
     <section className="vps-section" aria-label="Top processes">

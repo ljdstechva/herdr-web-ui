@@ -77,6 +77,7 @@ run_script scripts/document-preview-regression.ts
 run_script scripts/agent-activity-regression.ts
 run_script scripts/download-regression.ts
 run_script scripts/file-browser-regression.ts
+run_script scripts/cabinet-tidy-regression.ts
 run_script scripts/droplet-demo-regression.ts
 run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/restored-draft-demo-regression.ts

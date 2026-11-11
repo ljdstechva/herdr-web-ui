@@ -8,6 +8,19 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Move unused files to Drive, from the VPS dialog.** On a server that has the `cabinet`
+  program, **VPS status** shows **Move unused files to Drive** under the disk's meter. A tap
+  first shows what would move, from a dry run that changes nothing: how many work folders and
+  how much, the free space now, the largest folders (named inside the work folder) and the
+  folders that wait because something is using them. **Move N folders to Drive** then starts the
+  run on the server. It is not tied to the page: close the dialog, the app or the phone and it
+  goes on, and the dialog opened again shows it working, or what it did: "Moved 3 folders,
+  118 MB. Free: 37.1 GB → 41.2 GB", with what waited and what could not be moved. Nothing to
+  move is a plain answer, and when another cabinet job is running the dialog says so, changes
+  nothing and offers another try. It is cabinet's `tidy`, so like the nightly run it also clears
+  old agent scratch and packs old browser files, and the result says so when it did. One run at
+  a time; a watching device is not offered it. `HERDR_CABINET_BIN` names the program
+  (default `/usr/local/bin/cabinet`).
 - **Files shows what everything takes, makes folders and downloads them.** In **⋯ → Browse
   files** (and a folder opened from the chat) every folder now shows the size of what is inside
   it and every file its own, with a bar for its part of the largest; the folder's total, its
