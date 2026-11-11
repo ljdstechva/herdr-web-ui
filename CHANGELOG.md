@@ -19,7 +19,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   `.zip`), **Storage details** (size, size on disk, contents, last change, location) and **Copy
   path**. A download is saved by the browser that asked, so a phone saves to the phone and a
   desktop to the desktop. Sizes are a walk of the folder on the PC that has it: links are not
-  followed, a drive mounted inside is left out, and a folder too large to walk in 12 s reads
+  followed, a drive mounted inside is left out, and a folder too large to walk in 30 s reads
   "At least …". A `.zip` is stored, not compressed, streamed as it is read (ZIP64 past 4 GB),
   holds at most 100,000 entries, and names anything it could not read in a note inside.
 - **A subagent opens in the chat's place.** Tapping a subagent or a command in the working list,

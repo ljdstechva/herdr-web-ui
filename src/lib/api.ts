@@ -606,7 +606,7 @@ export function fileUrl(path: string, paneId: string | null, machineId = "local"
   return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
 }
 
-/** A large folder is walked for up to 12 s on the PC that has it, and a PC behind the proxy adds its own way. */
+/** A large folder is walked for up to 30 s on the PC that has it, and a PC behind the proxy adds its own way. */
 const USAGE_TIMEOUT_MS = 45_000;
 
 /** GET /api/fs/usage: the storage a folder (with what each of its own folders holds) or a file takes. */

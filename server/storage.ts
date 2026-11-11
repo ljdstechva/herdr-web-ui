@@ -28,7 +28,11 @@ export interface UsageLimits {
   /** and one that counted this many entries */
   maxEntries: number;
 }
-export const USAGE_LIMITS: UsageLimits = { deadlineMs: 12_000, maxEntries: 2_000_000 };
+/**
+ * 30 s: a home folder of 400,000 files took 20 s the first time it was read from the disk (3 s
+ * the next), and at 12 s it answered less than half of what it holds.
+ */
+export const USAGE_LIMITS: UsageLimits = { deadlineMs: 30_000, maxEntries: 2_000_000 };
 
 /** A folder asked again within this long (back to the parent, a second device) is not walked again. */
 const KEPT_MS = 15_000;
