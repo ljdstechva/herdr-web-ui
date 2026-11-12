@@ -111,6 +111,7 @@ import { browserStreamId, browserViewRefusal, handleBrowserRequest, type Browser
 import { BrowserViews, type BrowserStream } from "./browser-view.ts";
 import { CabinetTidy, type CabinetService } from "./cabinet.ts";
 import { handleVpsRequest, type VpsServices } from "./vps-api.ts";
+import { CabinetReports, type NotificationsService } from "./vps-notifications.ts";
 import { VpsDoctor } from "./vps-doctor.ts";
 import { VpsMonitor, vpsAlertMessage, vpsResolvedMessage } from "./vps.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
@@ -478,6 +479,8 @@ export function createServer(
     vpsDoctor?: VpsServices["doctor"];
     /** Moves unused work folders to Drive (server/cabinet.ts); defaults to the PC's own cabinet program (HERDR_CABINET_BIN) when VPS is enabled. Tests pass one that runs a stand-in. */
     cabinet?: CabinetService;
+    /** cabinet's reports and what of them is unread (server/vps-notifications.ts); defaults to the PC's own feed (HERDR_CABINET_REPORTS) when VPS is enabled. Tests pass one that reads a feed of their own. */
+    notifications?: NotificationsService;
     /** the browsers on this PC's virtual displays (server/browser-view.ts); unset, /api/browsers answers 404. Only the real entrypoint passes one. */
     browsers?: BrowserViewService;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
@@ -1566,6 +1569,7 @@ export function createServer(
       doctor: options.vpsDoctor ?? new VpsDoctor({ monitor, stateDir: options.stateDir ?? defaultStateDir(), codexHome: options.codexHome, launchAgent: agentLaunch }),
       testAlert: () => push.notifySystem({ pane_id: null, title: `${monitor.status().hostname}: VPS alerts are on`, body: "This device will hear when the server runs short of disk, memory or CPU.", tag: "herdr-vps-test" }, "normal", true),
       cabinet: options.cabinet ?? new CabinetTidy({ stateDir: options.stateDir ?? defaultStateDir() }),
+      notifications: options.notifications ?? new CabinetReports({ stateDir: options.stateDir ?? defaultStateDir() }),
     };
   }
 

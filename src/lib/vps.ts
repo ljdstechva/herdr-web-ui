@@ -28,20 +28,23 @@ export class VpsError extends Error {
   }
 }
 
+/** A refusal as the server worded it (the `{ error: { code, message } }` envelope), else its status line. */
+export async function vpsRefusal(response: Response): Promise<VpsError> {
+  let code: string | null = null;
+  let message = `${response.status} ${response.statusText}`;
+  try {
+    const body = (await response.json()) as { error?: { code?: string; message?: string } };
+    code = body.error?.code ?? null;
+    message = body.error?.message ?? message;
+  } catch {
+    /* not the JSON envelope */
+  }
+  return new VpsError(response.status, code, message);
+}
+
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  if (!response.ok) {
-    let code: string | null = null;
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = (await response.json()) as { error?: { code?: string; message?: string } };
-      code = body.error?.code ?? null;
-      message = body.error?.message ?? message;
-    } catch {
-      /* not the JSON envelope */
-    }
-    throw new VpsError(response.status, code, message);
-  }
+  if (!response.ok) throw await vpsRefusal(response);
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 

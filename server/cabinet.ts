@@ -203,6 +203,18 @@ function readBounded(path: string): string {
   }
 }
 
+/** The cabinet program named `bin` (a path, or a name on PATH) as a path; null when this PC has none that this user may run. */
+export function cabinetProgram(bin: string = process.env["HERDR_CABINET_BIN"] || DEFAULT_CABINET_BIN): string | null {
+  const path = bin.includes("/") ? bin : Bun.which(bin);
+  if (!path) return null;
+  try {
+    accessSync(path, constants.X_OK);
+    return statSync(path).isFile() ? path : null;
+  } catch {
+    return null;
+  }
+}
+
 export class CabinetTidy implements CabinetService {
   private readonly bin: string;
   private readonly cabinetState: string;
@@ -229,14 +241,7 @@ export class CabinetTidy implements CabinetService {
 
   /** The program to run, as a path; null when this PC has none that this user may run. */
   private program(): string | null {
-    const path = this.bin.includes("/") ? this.bin : Bun.which(this.bin);
-    if (!path) return null;
-    try {
-      accessSync(path, constants.X_OK);
-      return statSync(path).isFile() ? path : null;
-    } catch {
-      return null;
-    }
+    return cabinetProgram(this.bin);
   }
 
   private required(): string {

@@ -1,0 +1,266 @@
+/* Notifications: the button in the app bar with the number of reports not looked at yet, and the
+   list it opens (a dialog; the bottom sheet of `.modal` on a phone). Read on a phone first: one
+   column, words that wrap instead of being cut, and controls a thumb can hit. */
+
+/* ── the button ── */
+.vps-inbox-button {
+  position: relative;
+  color: var(--text-dim);
+}
+
+/* something new: the glyph reads as strongly as the number on it */
+.vps-inbox-button[data-unread] {
+  color: var(--text-strong);
+}
+
+/* the number sits on the button's upper right corner. It starts just right of the middle, so a
+   wider one ("9+") grows outward over the gap beside the button, never inward over the glyph */
+.vps-inbox-badge {
+  position: absolute;
+  top: 0;
+  left: calc(50% + var(--space-1));
+  box-sizing: border-box;
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  color: var(--primary-text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--space-4);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* A phone's bar has no room to spare: the pane's title already shortens beside the lens switch,
+   the browser and More. So the button is in the bar only while it has a number to show, and
+   while its list is open; with nothing new the list is the More menu's "Notifications" (App.tsx).
+   The same width at which the palette's button gives its room to the title (styles.css). */
+@media (max-width: 480px) {
+  .vps-inbox-button:not([data-unread]):not([aria-expanded="true"]) {
+    display: none;
+  }
+}
+
+/* ── the list ── */
+.vps-inbox {
+  width: min(100%, 640px);
+}
+
+.vps-inbox-body {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-4);
+}
+
+.vps-inbox-empty {
+  margin: var(--space-4) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+}
+
+.vps-inbox-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* one report: its level's mark in a column of its own, then everything it says */
+.vps-inbox-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) 0 var(--space-4);
+}
+
+.vps-inbox-item + .vps-inbox-item {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.vps-inbox-mark {
+  display: inline-flex;
+  /* on the title's first line */
+  height: calc(var(--fs-lg) * var(--lh-tight));
+  align-items: center;
+}
+
+.vps-inbox-mark svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--status-working);
+}
+
+.vps-inbox-item[data-level="ok"] .vps-inbox-mark svg {
+  color: var(--status-done);
+}
+
+.vps-inbox-item[data-level="warning"] .vps-inbox-mark svg,
+.vps-inbox-item[data-level="critical"] .vps-inbox-mark svg {
+  color: var(--status-blocked);
+}
+
+.vps-inbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.vps-inbox-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+/* when it was written, with "New" before it while it is, and the level in a word when it asks for a look */
+.vps-inbox-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* not looked at before this opening: said in a word, and by the weight of the title beside it */
+.vps-inbox-new {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.vps-inbox-level {
+  color: var(--status-blocked);
+  font-weight: var(--fw-semibold);
+}
+
+.vps-inbox-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+/* opens the folders the report names: a row a thumb can hit, as wide as its words */
+.vps-inbox-toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  margin-top: var(--space-1);
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.vps-inbox-toggle svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.vps-inbox-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+@media (hover: hover) {
+  .vps-inbox-toggle:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+  }
+}
+
+.vps-inbox-toggle:active {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+@media (pointer: coarse) {
+  .vps-inbox-toggle {
+    min-height: var(--touch-target);
+  }
+}
+
+/* the folders: a row of the report's own, under its words */
+.vps-inbox-details {
+  display: flex;
+  grid-column: 2;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  animation: fade-in var(--dur-base) var(--ease-out);
+}
+
+/* the look of the VPS dialog's section labels (.vps-heading) */
+.vps-inbox-heading {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+/* a phone: the sheet's side padding is the page's, and the mark's column stays narrow */
+@media (max-width: 640px) {
+  .vps-inbox-body {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+
+  .vps-inbox-item {
+    gap: var(--space-2);
+  }
+
+  /* the folders take the sheet's whole width, from under the mark: a path needs the room */
+  .vps-inbox-details {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vps-inbox-toggle,
+  .vps-inbox-toggle svg {
+    transition: none;
+  }
+
+  .vps-inbox-details {
+    animation: none;
+  }
+}

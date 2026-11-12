@@ -15,6 +15,8 @@
  *   GET  /api/vps/cabinet                -> CabinetStatus (the run under way or the last one)
  *   POST /api/vps/cabinet/preview        -> CabinetPreview (`cabinet tidy --dry-run --json`)
  *   POST /api/vps/cabinet/tidy           -> 202 CabinetStatus (`cabinet tidy --json`, started detached)
+ *   GET  /api/vps/notifications          -> VpsNotifications (cabinet's reports, newest first, and how many are unread)
+ *   POST /api/vps/notifications/read     -> VpsNotifications (everything in the feed now is read, on every device)
  *
  * Every POST needs `x-herdr-vps: 1` beside the app's same-origin check; a watch device is
  * refused every one of them by the central read-only gate, and GET /api/vps/cabinet too
@@ -49,6 +51,14 @@
  * 409 preview_running, and cabinet's own lock (another cabinet job, its exit code 3) answers
  * a preview 409 cabinet_busy and ends a run in state `busy`. A run is not this request: it is started detached, outlives the page and a
  * server restart, and is read with GET until its state is no longer `running`.
+ * Notifications (server/vps-notifications.ts) are the reports cabinet writes to its feed file,
+ * one JSON line per event: the 12:00 a.m. run, a later move of folders that waited, a health
+ * message. The server only reads that file (no program is run), keeps the newest 50 and counts
+ * as unread those written after the list was last opened. That moment is kept on the server
+ * (stateDir/vps-notifications.json), not per device, so a phone and a desktop show one number.
+ * The GET carries an ETag and answers 304 to `If-None-Match`: it is polled. The POST reads no
+ * body. Both answer 404 not_available without a cabinet service and 403 read_only to a watch
+ * device, since a report names work folders.
  */
 
 export type VpsSeverity = "ok" | "warning" | "critical";
@@ -335,4 +345,54 @@ export interface CabinetStatus {
   now: number;
   /** the run under way, else the last one (started here, or cabinet's own record of it) */
   run: CabinetRun | null;
+}
+
+/** `info` is also what a level this app does not know is shown as. */
+export type VpsNotificationLevel = "ok" | "warning" | "critical" | "info";
+
+/** A work folder a report names. */
+export interface VpsNotificationFolder {
+  path: string;
+  /** null when the report gives no size */
+  bytes: number | null;
+  /** for a folder that waits: the program's own words for what holds it; empty otherwise */
+  why: string;
+}
+
+/** The folders of one kind in a report: the first of them, and how many there were in all. */
+export interface VpsNotificationFolders {
+  total: number;
+  items: VpsNotificationFolder[];
+}
+
+/** One report of the server's `cabinet` program, as its feed file holds it. */
+export interface VpsNotification {
+  id: string;
+  /**
+   * `nightly`: the 12:00 a.m. run (backup, move, clean-ups). `retry`: folders in use at midnight,
+   * moved by a later hourly try. `alert`: a problem, or "fine again", from cabinet's health check.
+   * Any other kind is shown as an alert is: its title and lines.
+   */
+  kind: string;
+  level: VpsNotificationLevel;
+  /** when it was written, unix seconds */
+  ts: number;
+  /** ready-to-show sentences, in the program's own words */
+  title: string;
+  lines: string[];
+  /** for the details: what went to Drive, what came back from it, what stayed because it was in use; null where the report names none */
+  moved: VpsNotificationFolders | null;
+  returned: VpsNotificationFolders | null;
+  waiting: VpsNotificationFolders | null;
+}
+
+export interface VpsNotifications {
+  /** false: this PC has no cabinet program and no feed, and nothing is offered */
+  available: boolean;
+  /** newest first, at most 50 */
+  items: VpsNotification[];
+  /** how many reports in the feed are newer than `read_ts` */
+  unread: number;
+  /** `ts` of the newest report there was when the list was last opened, on any device; 0 before the first time */
+  read_ts: number;
 }

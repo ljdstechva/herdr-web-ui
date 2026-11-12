@@ -171,7 +171,8 @@ export function CabinetView({ cabinet, onDiskChanged, onDone }: { cabinet: Cabin
   </div>;
 }
 
-function FolderRow({ path, bytes, why }: { path: string; bytes: number | null; why?: string }) {
+/** One folder of a list: its own name and size, then where it is inside the work folder and, for one that waits, why. Also the rows of a notification's folders (VpsNotifications.tsx). */
+export function FolderRow({ path, bytes, why }: { path: string; bytes: number | null; why?: string }) {
   const { name, where } = folderLabel(path);
   return <li className="cabinet-row" title={path}>
     <span className="cabinet-row-name">{name}</span>

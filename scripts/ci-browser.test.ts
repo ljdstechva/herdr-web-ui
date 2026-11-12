@@ -59,7 +59,7 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(45);
+    expect(rows(text)).toHaveLength(46);
     expect(rows(text).map((row) => row.script)).toContain("scripts/download-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-browser-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/cabinet-tidy-regression.ts");
@@ -67,6 +67,7 @@ describe("browser lane", () => {
     expect(rows(text).map((row) => row.script)).toContain("scripts/chat-selection-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/task-view-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/browser-view-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/vps-notifications-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/model-label-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pending-pane-switch-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/instant-send-demo-regression.ts");

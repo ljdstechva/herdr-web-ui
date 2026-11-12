@@ -8,6 +8,7 @@ import type { DoctorAgentRequest, ProcessAction } from "../shared/vps.ts";
 import { CabinetError, type CabinetService } from "./cabinet.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { DoctorError, type VpsDoctor } from "./vps-doctor.ts";
+import type { NotificationsService } from "./vps-notifications.ts";
 import type { VpsMonitor } from "./vps.ts";
 
 export interface VpsServices {
@@ -17,6 +18,8 @@ export interface VpsServices {
   testAlert(): Promise<void>;
   /** moves unused work folders to Drive (server/cabinet.ts); unset, /api/vps/cabinet answers 404 */
   cabinet?: CabinetService;
+  /** cabinet's reports and what of them is unread (server/vps-notifications.ts); unset, /api/vps/notifications answers 404 */
+  notifications?: NotificationsService;
 }
 
 const PROCESS_ACTIONS = new Set<ProcessAction>(["terminate", "kill", "close-pane"]);
@@ -109,6 +112,21 @@ export async function handleVpsRequest(request: Request, pathname: string, servi
         // the dry run has 30 s (PREVIEW_TIMEOUT_MS), as long as Bun's idle limit
         timeout(45);
         return jsonResponse(await cabinet.preview());
+      }
+      // The POST reads no body either: it marks what the feed holds now, nothing a request names.
+      case "GET /api/vps/notifications":
+      case "POST /api/vps/notifications/read": {
+        const { notifications } = services;
+        if (!notifications) return jsonResponse({ error: { code: "not_available", message: "Notifications are not available on this server" } }, 404);
+        // a report names work folders, as a run's result does: a watching device is not shown them
+        if (readOnly) return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
+        const reading = request.method === "GET";
+        const answer = JSON.stringify(reading ? notifications.list() : notifications.markRead());
+        // the page asks every minute: an answer it already has comes back as a bodyless 304
+        const etag = `W/"${Bun.hash(answer).toString(36)}"`;
+        const headers = { etag, "cache-control": "no-store" };
+        if (reading && request.headers.get("if-none-match")?.replace(/^W\//, "") === etag.slice(2)) return new Response(null, { status: 304, headers });
+        return new Response(answer, { headers: { "content-type": "application/json; charset=utf-8", ...headers } });
       }
       default:
         return jsonResponse({ error: { code: "not_found", message: `${request.method} ${pathname} is not a VPS route` } }, 404);

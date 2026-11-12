@@ -8,6 +8,24 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Notifications: what the server did overnight, with a number.** On a server that has the
+  `cabinet` program the app bar carries a **Notifications** button, on a phone and on a desktop,
+  with the number of reports you have not looked at yet (**9+** above nine, no number at zero).
+  It opens the list, newest first: each report with its level (a mark and, for a warning or a
+  critical one, the word), its title, when it was written on your device's clock ("Today
+  12:01 AM", "Yesterday 2:43 AM", then the date) and what it says, in cabinet's own words: what
+  the 12:00 a.m. run backed up, what it moved to Drive, how much it freed and how much is free
+  now; folders that were in use at midnight and moved on a later try; a problem with Drive, or
+  that it is fine again. A report that names folders opens to them, each with its name, where
+  it is inside the work folder and its size. Opening the list marks everything read, and the
+  number goes on every device, since the server keeps what was read, not the browser; what was
+  new stays marked **New** until the list is closed. The app asks about once a minute while it
+  is on screen and when you come back to it, and never while hidden. Nothing sounds, pushes or
+  pops up for these. On a phone the bar has no room to spare beside the pane's title, so the
+  button is there only while it has a number to show; with nothing new, **⋯ → Notifications**
+  opens the same list. This is not **Alerts**, which switches this device's own pop-ups about
+  panes. A watching device is not offered it. `HERDR_CABINET_REPORTS` names the feed file
+  (default `/var/lib/cabinet/reports.jsonl`).
 - **Move unused files to Drive, from the VPS dialog.** On a server that has the `cabinet`
   program, **VPS status** shows **Move unused files to Drive** under the disk's meter. A tap
   first shows what would move, from a dry run that changes nothing: how many work folders and

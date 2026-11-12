@@ -462,6 +462,7 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_PASTE_DIR` | `<pane cwd>/.herdr-web-ui` | Where pasted and attached files are saved: an absolute path or `~/…`. If the default project folder cannot be written, uploads use the server's private `stateDir/attachments` folder instead. An explicit value never falls back. An agent may ask before reading a file outside its project. It covers the panes of this server's PC; a remote PC keeps the default |
 | `HERDR_CABINET_BIN` | `/usr/local/bin/cabinet` | The `cabinet` program behind **Move unused files to Drive** in the VPS dialog. The app runs only `tidy --dry-run --json` and `tidy --json` with it. Where the file is missing or not executable, the entry is not shown |
 | `HERDR_CABINET_STATE` | `/var/lib/cabinet/state.json` | cabinet's own state file, read for the result of its last tidy when a run outlived the server that started it |
+| `HERDR_CABINET_REPORTS` | `/var/lib/cabinet/reports.jsonl` | The feed file the `cabinet` program writes its reports to, one JSON line each (the 12:00 a.m. run, folders moved later, a health message). The app only reads it, for **Notifications** in the app bar; what was read is kept in `vps-notifications.json` under `HERDR_WEB_STATE_DIR`, so every device shows the same number |
 | `CODEX_HOME` | `~/.codex` | Where Codex sessions are read |
 
 ## Updates

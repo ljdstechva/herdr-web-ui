@@ -345,7 +345,8 @@ One set for both themes: the card is island black wherever it shows.
   iPhone home screen app reports a visual viewport shorter than the screen without a keyboard.
 - The header is one line at every width. Anatomy, left to right: mobile drawer toggle / desktop
   sidebar toggle and the command palette (`.header-side`); the flexible context, agent mark and
-  title then the PC › workspace › folder crumb; segmented Chat/Terminal switch; the connection
+  title then the PC › workspace › folder crumb; segmented Chat/Terminal switch; the server's
+  browser, the notifications inbox with its unread number, the connection
   chip while the bridge is not live (herdr version in its tooltip), the offline pill, sign out and
   the More menu (`⋯`). Theme lives in Settings and the palette; the herdr version is also read
   in Settings.
@@ -738,12 +739,38 @@ One set for both themes: the card is island black wherever it shows.
 - The More menu (`.header-more-button`, the `RowMenu` popover, a bottom sheet at `<=640px`) opens
   with the location on two lines, "PC › workspace" then the full path in mono, and holds **New
   tab** (the selected pane's workspace), **Browse files** and **Alerts**, each under the condition
-  its own button had; at `<=480px` **Command palette** is its first item. The Alerts item says
+  its own button had; at `<=480px` **Command palette** is its first item and **Notifications** its last. The Alerts item says
   this device's state in words after its label ("On in the app", "On in this tab", "On, pushed to
   this device", "Off on this device") and switches it: it is a `menuitemcheckbox` with
   `aria-checked` in the popover and a button with `aria-pressed` in the sheet. While alerts are off on this device the
   More button carries a `--dot-size` `--accent` dot and its name says "alerts are off": the dot
   marks the state that needs a look, never "on".
+- **Notifications** (`.vps-inbox-button`, lucide `Inbox`, in `.header-meta` after the browser's
+  button; drawn only where the server has a cabinet) is an inbox of what the server reports, not
+  the Alerts switch: its glyph is `--text-dim`, `--text-strong` while something is new, and the
+  number of reports not looked at yet sits on its upper right corner as a `--radius-pill` chip,
+  `--space-4` high, `--primary` under `--primary-text`, `--fs-2xs` bold: the count to nine, then
+  **9+**, and no chip at zero. The chip starts just right of the button's middle, so a wider
+  number grows outward over the gap, never inward over the glyph. The button's name says the
+  number in words ("Notifications: 2 new"). At `<=480px`, where the palette's button already
+  gives its room to the title, the button is drawn only while it has a number or its list is
+  open; with nothing new the list is the More menu's last item, **Notifications**, with "N new"
+  after its label when there is. Nothing sounds, pushes or drops in for a report.
+- The list is a `.modal` (640px; the bottom sheet at `<=640px`): reports newest first, a
+  hairline between them. A report is a level mark in a column of its own (`--icon-size`:
+  circle-check `--status-done` for ok, triangle `--status-blocked` for warning, octagon
+  `--status-blocked` for critical, info `--status-working` otherwise; the mark carries the
+  level's word for a screen reader, and warning and critical also write it out beside the time,
+  so colour is never the only signal), then the title (`--fs-lg` semibold, wrapping), one
+  `--fs-sm` `--text-dim` line with **New** (a `--chip-h` `--primary` pill, uppercase) while the
+  report was not looked at before this opening and the time on the device's clock ("Today
+  12:01 AM", "Yesterday 2:43 AM", then "Nov 10, 2:43 AM", with the year once it is another), then
+  the report's own lines at `--fs-md`. A report that names folders has a bordered **Show folders
+  (N)** row (`--control-h`, `--touch-target` under a finger, a chevron that turns) that opens the
+  lists in place: a dim uppercase micro label with the count, then the `.cabinet-list` rows of
+  "Move unused files to Drive" (name and size, where it is inside the work folder, why it
+  waits). Opening the list is reading it: the number goes at once, and what was new keeps its
+  **New** until the list is closed. Empty, it says what will come after the next night run.
 - The segmented Chat/Terminal view switch lives in the header. There is no floating view-toggle pill.
 - Connection is one quiet chip, drawn only while the bridge is not live: a pulsing dot plus the
   written reconnecting/disconnected state. Below `900px` it keeps only its dot; the word stays as

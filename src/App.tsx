@@ -1,5 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, Ellipsis, FolderInput, FolderOpen, Link, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, Ellipsis, FolderInput, FolderOpen, Inbox, Link, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
@@ -22,6 +22,8 @@ import { CommandPalette } from "./components/CommandPalette.tsx";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { BrowserViewButton } from "./components/BrowserView.tsx";
+import { NotificationsButton, NotificationsDialog } from "./components/VpsNotifications.tsx";
+import { useVpsNotifications } from "./lib/vpsNotifications.ts";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -264,6 +266,10 @@ export function App() {
   }, [moreOpen]);
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
+  // what the server's cabinet reports (the night run), and the number of reports not looked at yet
+  const inbox = useVpsNotifications(locked === false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const closeInbox = useCallback(() => setInboxOpen(false), []);
   const [movingPane, setMovingPane] = useState<{ machineId: string; paneId: string; anchor: HTMLElement } | null>(null);
   const movingOwner = movingPane ? machines.find((machine) => machine.id === movingPane.machineId) : null;
   const movingLivePane = movingOwner?.state === "connected" ? movingOwner.snapshot?.panes.find((pane) => pane.pane_id === movingPane?.paneId) : null;
@@ -1008,6 +1014,9 @@ export function App() {
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
   ];
+  // At phone width the inbox's button is in the bar only while it has a number to show
+  // (VpsNotifications.css): with nothing new, this item is the way to the list.
+  const inboxItem: RowMenuItem = { id: "notifications", label: t("Notifications"), ...(inbox.unread > 0 ? { hint: t("{count} new", { count: inbox.unread }) } : {}), icon: Inbox, run: () => setInboxOpen(true) };
 
   // the chat's surface is what the pane column shows: the header's pane zone and the tab strip
   // take it (from 769px). A pane herdr could not restore draws a placeholder, not the chat.
@@ -1114,6 +1123,7 @@ export function App() {
         )}
         <div className="header-meta">
           <BrowserViewButton />
+          <NotificationsButton inbox={inbox} open={inboxOpen} onOpen={() => setInboxOpen(true)} />
           {/* speaks only while the bridge is not live; live, it stays in the document for a screen
               reader (and the browser scripts that wait on it), drawn by nothing (styles.css) */}
           <span
@@ -1159,7 +1169,7 @@ export function App() {
                 {crumb.path !== null && <span className="header-more-path">{crumb.path}</span>}
               </div>
             ) : undefined}
-            items={more.phone ? [paletteItem, ...moreItems] : moreItems}
+            items={more.phone ? [paletteItem, ...moreItems, ...(inbox.available ? [inboxItem] : [])] : moreItems}
             onClose={closeMore}
           />
         )}
@@ -1244,6 +1254,7 @@ export function App() {
       /></MachineContext.Provider>
       {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={closeMachineDialog} onConnected={(id) => { closeMachineDialog(); selectTarget(id, null); void load(); }} />}
       <DownloadCenter />
+      {inboxOpen && <NotificationsDialog inbox={inbox} onClose={closeInbox} />}
       <Droplet onOpen={(machineId, paneId) => {
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing
         if (!machinesRef.current.find((m) => m.id === machineId)?.snapshot?.panes.some((p) => p.pane_id === paneId)) return;
