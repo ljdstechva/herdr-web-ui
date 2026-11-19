@@ -663,7 +663,8 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   return finishPrompt("claude", {
     kind: "question", title, question, body: null,
     options: optionRows.map((row) => ({ label: row.label, description: row.description ?? null })),
-    multi_select: multiSelect, custom_option_index: multiSelect || preview ? null : customIndex,
+    // a multiple choice takes its typed answer where its Submit row shows: Enter there sends it
+    multi_select: multiSelect, custom_option_index: preview || (multiSelect && !submit) ? null : customIndex,
   }, {
     responder: "claude-question",
     menuLabels: submit ? [...rows.slice(0, -1).map((row) => row.label), "Submit", rows.at(-1)!.label] : rows.map((row) => row.label),
@@ -674,8 +675,8 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
     // emptied first, after the cursor and before it (ctrl+k, ctrl+u; measured on 2.1.295)
     ...(drafted ? {
       customSteps: (text: string) => [
-        ...keySteps([...navigationKeys(customIndex - rows.findIndex((row) => row.selected)), "ctrl+k", "ctrl+u"]),
-        { text }, ...keySteps([KEY.enter]),
+        ...keySteps([...navigationKeys(customIndex - selectedIndex), "ctrl+k", "ctrl+u"]),
+        { text }, ...keySteps(multiSelect ? [KEY.down, KEY.enter] : [KEY.enter]),
       ],
     } : {}),
   });
@@ -723,16 +724,24 @@ function claudeQuestionText(lines: string[], tabsIndex: number, firstRow: number
   return text.length > 0 ? normalizeText(text.join(" ")) : null;
 }
 
-/** After several questions Claude shows the answers and asks before sending them. */
+/**
+ * After several questions Claude shows the answers and asks before sending them. The review is one
+ * panel from its tabs down to its question, with no rule inside it. A review taller than the pane
+ * (long answers, a phone-width pane) is cut off at the top, tabs and heading out of view: then the
+ * screen's first line starts it, and only Claude's own answers (`→ …`) and rows make it the review.
+ */
 function parseClaudeSubmit(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const questionIndex = findLastIndex(lines, (line) => /^Ready to submit your answers\?$/i.test(cleanLine(line)));
   if (questionIndex < 0) return null;
   const tabsIndex = findLastIndex(lines.slice(0, questionIndex), (line) => CLAUDE_TABS_RE.test(cleanLine(line)));
-  if (tabsIndex < 0 || questionIndex - tabsIndex > 40) return null;
+  const panel = lines.slice(tabsIndex + 1, questionIndex);
+  if (panel.some((line) => isDivider(line))) return null;
   const rows = parseNumberedRows(lines, questionIndex + 1, lines.length);
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
-  const body = lines.slice(tabsIndex + 1, questionIndex).map(cleanLine)
+  if (tabsIndex < 0 && (!panel.some((line) => /^→\s/.test(cleanLine(line)))
+    || rows.map((row) => row.label).join("\n") !== "Submit answers\nCancel")) return null;
+  const body = panel.map(cleanLine)
     .filter((line) => line && !isDivider(line) && !/^Review your answers$/i.test(line)).join("\n");
   return finishPrompt("claude", {
     // a menu, not a question: a typed pick submits every answer at once, so it waits for Confirm
@@ -1304,13 +1313,26 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
 
   const requiredIndex = findLastIndex(lines, (line) => /This command requires approval/i.test(cleanLine(line)));
   const dangerousRmIndex = findLastIndex(lines, (line) => /^Dangerous rm operation\b/i.test(cleanLine(line)));
-  const approvalIndex = Math.max(requiredIndex, dangerousRmIndex);
+  const markerIndex = Math.max(requiredIndex, dangerousRmIndex);
   // "Do you want to proceed?", "Do you want to create hello.txt?", "Do you want to make this edit to a.ts?"
   const questionIndex = findLastIndex(lines, (line) => /^Do you want to .+\?$/i.test(cleanLine(line)));
   if (questionIndex < 0) return null;
+  // a marker with a later tool call or panel rule under it is an earlier asking's: it names
+  // neither this panel's title nor its action
+  const approvalIndex = markerIndex >= 0 && lines.slice(markerIndex + 1, questionIndex)
+    .some((line) => SOLID_RULE_RE.test(cleanLine(line)) || isCallRow(line)) ? -1 : markerIndex;
   // options end at the key hint: a line under the last one is then only its wrapped label
   const hintIndex = findLastIndex(lines, (_, index) => /esc to cancel/i.test(wrapped(lines, index)));
-  const rows = parseNumberedRows(lines, questionIndex + 1, hintIndex > questionIndex ? hintIndex : lines.length);
+  const rowsEnd = hintIndex > questionIndex ? hintIndex : lines.length;
+  const numbered = parseNumberedRows(lines, questionIndex + 1, rowsEnd);
+  // unnumbered rows are a held approval only under the safety check's own words in this panel,
+  // read across the rows a narrow pane wraps them on, never from above the panel's rule
+  const panelTop = findLastIndex(lines.slice(0, questionIndex), (line) => SOLID_RULE_RE.test(cleanLine(line)) || isDivider(cleanLine(line)));
+  const held = numbered.length === 0 && !isBoxedRow(lines[questionIndex]!)
+    && lines.slice(Math.max(0, panelTop + 1, questionIndex - 12), questionIndex).map((line) => isBoxedRow(line) ? "" : cleanLine(line))
+      .join("\n").split(/\n\s*\n/).some((paragraph) => /automatic safety check flagged this action/i.test(paragraph.replace(/\s+/g, " ")));
+  // no digits there: the answer moves the cursor with ↑/↓ from the row it is on and sends Enter (answerKeys)
+  const rows = held ? heldApprovalRows(lines, questionIndex + 1, rowsEnd) : numbered;
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
   // a hint of its own under the last row and over the last hint, whole or wrapped by a narrow
   // pane: the panel was answered, and what ends the screen now is another prompt ("Password:"
@@ -1363,6 +1385,43 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     responder: "claude-approval", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
   });
+}
+
+/** a tool call Claude drew at the top level ("● Bash(…)", "● server - tool (MCP)(…)"), not one quoted inside a boxed preview (`│ ● Bash(…)`) */
+const CLAUDE_CALL_RE = /^[●⏺]\s+(?:[\w.:/-]+|\S.* \(MCP\))\(/;
+function isCallRow(line: string): boolean {
+  return CLAUDE_CALL_RE.test(line.replace(ANSI_RE, "").trimStart());
+}
+
+/** a row of a boxed preview (`│ …`): what it quotes is the command's text, not Claude's dialog */
+function isBoxedRow(line: string): boolean {
+  return line.replace(ANSI_RE, "").trimStart().startsWith("│");
+}
+
+/**
+ * An approval Claude Code's safety check held (`defaultToNo`: "Claude Code's automatic safety
+ * check flagged this action, so the action hasn't run") hides its numbers so that no single
+ * key approves it, and opens on No (2.1.323; asked even in bypass-permissions mode):
+ *
+ *   Do you want to proceed?
+ *     Yes
+ *   ❯ No
+ *
+ *   Esc to cancel
+ *
+ * Only Yes/No rows count: any other line between the question and the hint is not such a menu.
+ * Ported from upstream f95dcb84 (#3797).
+ */
+function heldApprovalRows(lines: string[], start: number, end: number): NumberedRow[] {
+  const rows: NumberedRow[] = [];
+  for (let index = start; index < end; index += 1) {
+    const text = cleanLine(lines[index]!);
+    if (!text || isDivider(text)) continue;
+    const label = text.replace(SELECTED_RE, "").trim();
+    if (isBoxedRow(lines[index]!) || !/^(?:Yes|No)\b/i.test(label)) return [];
+    rows.push({ number: rows.length + 1, label, selected: SELECTED_RE.test(text), checked: false, lineIndex: index });
+  }
+  return rows.length >= 2 && rows.length <= 4 ? rows : [];
 }
 
 /**
@@ -2067,6 +2126,8 @@ const CLAUDE_TASK_ROW_RE = /^[◻◼✔]\s/;
 const CLAUDE_TASKS_MORE_RE = /^…\s\+\d+ pending$/;
 const LABELED_RULE_RE = /^─{3,}\s.*─$/;
 const CLAUDE_HINT_TAIL_RE = /\besc to (?:cancel|exit|go back)\b/i;
+/** the last row of Claude's review of several answers, which ends it in place of a hint */
+const CLAUDE_SUBMIT_TAIL_RE = /^(?:[›>❯]\s*)?\d+\.\s+Cancel$/i;
 /** `hintEnds`: whether the panel's hint ends at line `end`; a hint a narrow pane wrapped needs its own reading */
 function withoutClaudeTasks(shown: string[], hintEnds: (lines: string[], end: number) => boolean = (lines, end) => CLAUDE_HINT_TAIL_RE.test(lines[end - 1] ?? "")): string[] {
   let end = shown.length;
@@ -2094,7 +2155,9 @@ function withoutClaudeTasks(shown: string[], hintEnds: (lines: string[], end: nu
 function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   const cleanLines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine);
   const visible = cleanLines.filter((line) => line && !isDivider(line));
-  const shown = prompt.responder.startsWith("claude-") ? withoutClaudeTasks(visible) : visible;
+  // Claude's review has no hint of its own: its last row ends the panel, the session's rule and task list come after it
+  const shown = prompt.responder === "claude-submit" ? withoutClaudeTasks(visible, (lines, end) => CLAUDE_SUBMIT_TAIL_RE.test(lines[end - 1] ?? ""))
+    : prompt.responder.startsWith("claude-") ? withoutClaudeTasks(visible) : visible;
   const last = shown.at(-1) ?? "";
   // The menu is still at the bottom. A narrow pane wraps its hint, so the last line alone can
   // be the hint's tail (`cancel`): the lines before it count only when the match runs into
@@ -2109,7 +2172,7 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   if (prompt.responder === "codex-question") return ends(CODEX_ASK_HINT_RE);
   if (prompt.responder === "codex-async-question") return cleanLines.slice(-4).some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line)) || ends(CODEX_ASYNC_ASK_HINT_RE);
   if (prompt.responder === "claude-question") return ends(CLAUDE_ASK_HINT_RE);
-  if (prompt.responder === "claude-submit") return /^(?:[›>❯]\s*)?\d+\.\s+Cancel$/i.test(last);
+  if (prompt.responder === "claude-submit") return CLAUDE_SUBMIT_TAIL_RE.test(last);
   // the last row carries the cursor once a move has put it there
   if (prompt.responder === "codex-approval") return ends(/press enter to confirm|esc to cancel|enter continue.*esc back|^(?:[›>❯]\s*)?\d+\.\s+(?:No|Reject|Cancel|Deny)\b/i);
   if (prompt.responder === "omp-approval") return ends(/^(?:[›>❯•]\s*)?(?:Approve|Deny)$|esc.*cancel/i);
@@ -2175,7 +2238,28 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
     return hintAtEnd(shown, PI_MENU_HINT_AT_END_RE, PI_FOOTER_LINES, 4)
       || hintAtEnd(shown, PI_INPUT_HINT_AT_END_RE, PI_FOOTER_LINES, 4);
   }
-  return ends(/ctrl\+g to edit|shift\+tab to approve with this feedback/i);
+  // Claude's plan: its footer, wrapped or not, ends the screen
+  return ends(/ctrl\+g to edit|shift\+tab to approve with this feedback/i) || claudePlanFooterEnds(shown);
+}
+
+const CLAUDE_PLAN_FOOTER_RE = /^ctrl\+g to edit in [^·]+?[ \n]·[ \n]([^]+)$/i;
+
+/**
+ * Whether Claude's plan footer, `ctrl+g to edit in VS Code · ~/.claude/plans/x.md`, ends the screen. A narrow pane
+ * (a phone) wraps it with nothing marking the breaks: at a space before the path, or anywhere inside the path, even
+ * between `.m` and `d`, and over as many lines as the path needs. Missed, the plan fell to the generic card, whose
+ * Enter approves the plan and runs it. So the path's lines are joined as one word, and `.md` may show only at its
+ * very end: output under an answered plan (`⏺ Updated README.md`, a bare `README.md`, even one written on the
+ * footer's last row) comes after a path already complete, so it never extends it; a plan folder with `.md` in its
+ * name goes unread instead. The folder may hold a `·` (`CLAUDE_CONFIG_DIR`), so only the first `·` after the
+ * editor's name separates the path. Ported from upstream 53542d68 and 54020a93.
+ */
+function claudePlanFooterEnds(shown: string[]): boolean {
+  const at = findLastIndex(shown, (line) => /^ctrl\+g to edit\b/i.test(line));
+  const path = at < 0 ? undefined : CLAUDE_PLAN_FOOTER_RE.exec(shown.slice(at).join("\n"))?.[1];
+  if (path === undefined) return false;
+  const joined = path.replaceAll("\n", "");
+  return joined.indexOf(".md") === joined.length - 3;
 }
 
 /**
@@ -2607,8 +2691,11 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   if (answer.custom_text !== undefined) {
     if (typeof answer.custom_text !== "string") throw new InvalidAnswer("Custom text must be a string.");
     const text = answer.custom_text.trim();
-    if (!text || parsed.customMenuIndex === null || parsed.multi_select) throw new InvalidAnswer("This prompt does not accept a custom answer.");
+    if (!text || parsed.customMenuIndex === null || (parsed.multi_select && parsed.responder !== "claude-question")) throw new InvalidAnswer("This prompt does not accept a custom answer.");
     if (parsed.customSteps) return parsed.customSteps(text);
+    // Claude's multiple choice: typing into the row ticks it, and Enter on Submit, the row under
+    // it, sends the choice (→ in the row would move the text's cursor; measured on 2.1.301)
+    if (parsed.multi_select) return [...keySteps(navigationKeys(parsed.customMenuIndex - parsed.selectedIndex)), { text }, ...keySteps([KEY.down, KEY.enter])];
     const navigation = navigationKeys(parsed.customMenuIndex - parsed.selectedIndex);
     // Codex's queue types into its last row once it is selected: no enter first. pi's text
     // dialog is the same but for a worse reason: its `>` line already owns the input, so an
@@ -2619,11 +2706,9 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
     // what was typed into pi's line in the terminal would stay around the answer: the line is
     // emptied first, after the cursor and before it (pi's editor keys, measured on 0.87.1)
     if (parsed.responder === "pi-input") navigation.push("ctrl+k", "ctrl+u");
-    return [
-      ...keySteps(navigation),
-      { text },
-      ...(parsed.responder === "claude-plan" ? keySteps([KEY.backtab]) : keySteps([KEY.enter])),
-    ];
+    // Claude's plan too: Enter on "Tell Claude what to change" sends the words and keeps planning,
+    // where shift+tab approves the plan with them (measured on 2.1.316, still so on 2.1.328)
+    return [...keySteps(navigation), { text }, ...keySteps([KEY.enter])];
   }
 
   if (answer.option_indices !== undefined) {

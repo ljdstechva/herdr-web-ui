@@ -121,8 +121,10 @@ Claude has written up a plan and is ready to execute. Would you like to proceed?
     expect(answerKeys(plan!, { custom_text: "Keep the existing introduction" })).toEqual([
       { keys: ["down"] }, { keys: ["down"] }, { keys: ["down"] },
       { text: "Keep the existing introduction" },
-      { keys: ["shift+tab"] },
+      // Enter keeps planning: shift+tab approves the plan with the feedback
+      { keys: ["enter"] },
     ]);
+    expect(answerKeys(plan!, { custom_text: "Keep the existing introduction" }).some((step) => step.keys?.includes("shift+tab"))).toBe(false);
   });
 
   test("parses omp single, multi-select, and approval prompts", () => {
@@ -306,6 +308,150 @@ Ready to submit your answers?
 `);
     expect(bash).toMatchObject({ kind: "approval", title: "Bash command", question: "Do you want to proceed?", body: "rm -rf junk\nDelete the junk directory" });
     expect(labels(bash)).toEqual(["Yes", "Yes, and always allow access to /tmp/prompt-lab/junk from this project", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+    // a safety-check hold hides the numbers and opens on No: the card still offers both (upstream f95dcb84)
+    const held = parseInteractivePrompt("claude", `
+● claude.ai Claude Docs - batch (MCP)(container: {"kind":"project"})
+────────────────────────────────────────
+ Tool use
+   claude.ai Claude Docs - batch (MCP)
+ A save or delete of a project doc. It needs a person's approval.
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`);
+    expect(held).toMatchObject({ kind: "approval", title: "Tool use", question: "Do you want to proceed?" });
+    expect(labels(held)).toEqual(["Yes", "No"]);
+    expect(answerKeys(held!, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
+    // other unnumbered lines under the question are no such menu
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Tool use
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Something else
+ ❯ No
+ Esc to cancel
+`)).toBeNull();
+    // nor is a Yes/No list without the safety check's words over it (an example in Claude's text)
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Example dialog
+ Do you want to proceed?
+   Yes
+ > No
+ Esc to cancel
+`)).toBeNull();
+    // the words of an earlier asking above a later panel name neither its title nor its action
+    const later = parseInteractivePrompt("claude", `
+● Bash(rm -rf old)
+  This command requires approval
+  ⎿ done
+
+● Write(notes.md)
+────────────────────────────────────────
+ Create file
+   notes.md
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`);
+    expect(later).toMatchObject({ kind: "approval", title: "Create file" });
+    expect(later!.body).toContain("notes.md");
+    expect(later!.body).not.toContain("rm -rf old");
+    const laterMcp = parseInteractivePrompt("claude", `
+● Bash(rm -rf old)
+  This command requires approval
+  ⎿ done
+
+● plugin/thing - do (MCP)(id: 1)
+────────────────────────────────────────
+ Tool use
+   plugin/thing - do (MCP)
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`);
+    expect(laterMcp).toMatchObject({ kind: "approval", title: "Tool use" });
+    expect(laterMcp!.body).not.toContain("rm -rf old");
+    // a narrow pane wraps the safety check's words
+    expect(labels(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Tool use
+ Claude Code's automatic safety check
+ flagged this action, so the action
+ hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`))).toEqual(["Yes", "No"]);
+    // nor do two paragraphs that only together read as the words
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ About the automatic safety check
+
+ Flagged this action? Here is how it looks:
+ Do you want to proceed?
+   Yes
+ > No
+ Esc to cancel
+`)).toBeNull();
+    // a call quoted in a boxed preview is not the panel's call: the approval keeps its card
+    const boxed = parseInteractivePrompt("claude", `
+● Bash(cat <<'EOF' > notes.md)
+────────────────────────────────────────
+ Bash command
+   │ cat <<'EOF' > notes.md
+   │ ● plugin/thing - do (MCP)(id: 1)
+   │ EOF
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel
+`);
+    expect(boxed).toMatchObject({ kind: "approval", title: "Bash command" });
+    // a held menu quoted inside a boxed preview is the command's text, not Claude's dialog
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Bash command
+   │ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+   │ Do you want to proceed?
+   │   Yes
+   │ ❯ No
+   │ Esc to cancel
+`)).toBeNull();
+    // a call-less held approval under an earlier, finished MCP panel keeps its own title
+    expect(parseInteractivePrompt("claude", `
+● plugin/thing - do (MCP)(id: 1)
+────────────────────────────────────────
+ Tool use
+   plugin/thing - do (MCP)
+  ⎿ done
+────────────────────────────────────────
+ Bash command
+   sleep 100
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`)).toMatchObject({ kind: "approval", title: "Bash command" });
+    // the words quoted above a rule do not make an example under it a held approval
+    expect(parseInteractivePrompt("claude", `
+● The safety check says "Claude Code's automatic safety check flagged this action" when it holds one.
+────────────────────────────────────────
+ Example dialog
+ Do you want to proceed?
+   Yes
+ > No
+ Esc to cancel
+`)).toBeNull();
     // a narrow pane wraps a long option: its label still reads whole
     const wrapped = parseInteractivePrompt("claude", `
 ────────────────────────────────────────
@@ -694,6 +840,96 @@ tab to add notes | enter to submit answer | esc to interrupt
   });
 });
 
+describe("Claude's plan in a narrow pane", () => {
+  // upstream 53542d68 + 54020a93: Claude Code 2.1.316's plan dialog with a made-up plan, wrapped as Claude wraps it: a 58-column pane
+  // (two side by side) breaks the footer inside the plan's path or before it, a 44-column phone pane
+  // spreads it over three lines
+  const split = (footer: string) => `  ────────────────────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   Plan: add a heading to the README
+
+   1. Add a heading line at the top of README.md.
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+  ────────────────────────────────────────────────────────
+   Claude has written up a plan and is ready to execute.
+   Would you like to proceed?
+
+   ❯ 1. Yes, and use auto mode
+     2. Yes, manually approve edits
+     3. Tell Claude what to change
+        shift+tab to approve with this feedback
+
+${footer}
+`;
+  const phone = `  ──────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   Plan: add a heading to the README
+
+   1. Add a heading line at the top of
+   README.md.
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+  ──────────────────────────────────────────
+   Claude has written up a plan and is
+   ready to execute. Would you like to
+   proceed?
+
+   ❯ 1. Yes, and use auto mode
+     2. Yes, manually approve edits
+     3. Tell Claude what to change
+        shift+tab to approve with this
+        feedback
+
+   ctrl+g to edit in VS Code ·
+   ~/.claude/plans/plan-add-a-heading-to-th
+   e-readme-mellow-pike.md
+`;
+  const screens = [
+    ["wrapped inside the path", split("   ctrl+g to edit in VS Code · ~/.claude/plans/plan-add-a\n   -heading-to-the-readme-mellow-pike.md")],
+    ["wrapped before the path", split("   ctrl+g to edit in VS Code ·\n   ~/.claude/plans/plan-readme-heading-mellow-pike.md")],
+    ["over three lines", phone],
+    ["on one line", split("   ctrl+g to edit in VS Code · ~/.claude/plans/plan-a.md")],
+    ["wrapped inside the extension", split("   ctrl+g to edit in VS Code · ~/.claude/plans/aaaaaaaaa.m\n   d")],
+    ["over four lines", phone.replace("   e-readme-mellow-pike.md", "   e-readme-and-the-changelog-in-one-go-m\n   ellow-pike.md")],
+    ["over seven lines", phone.replace("   e-readme-mellow-pike.md", "   e-readme-and-the-changelog-in-one-go-m\n   ellow-pike-and-a-much-longer-name-tha\n   n-anyone-would-ever-give-a-plan-file-o\n   n-their-own-disk-or-anywhere-else-at-a\n   ll.md")],
+    ["with a space in its wrapped folder", split("   ctrl+g to edit in VS Code · ~/Library/Application\n   Support/Claude Code/plans/plan-a.md")],
+    ["wrapped inside the editor's name", split("   ctrl+g to edit in VS\n   Code · ~/.claude/plans/\n   example.md")],
+    ["with a · in its folder", phone.replace("   ~/.claude/plans/plan-add-a-heading-to-th\n   e-readme-mellow-pike.md", "   ~/claude·work/plans/plan-add-a-heading-t\n   o-the-readme-mellow-pike.md")],
+  ];
+
+  test.each(screens)("reads the plan with its footer %s", (_footer, screen) => {
+    const prompt = parseInteractivePrompt("claude", screen);
+    expect(prompt).toMatchObject({
+      kind: "plan", title: "Ready to code?", custom_option_index: 2,
+      options: [{ label: "Yes, and use auto mode" }, { label: "Yes, manually approve edits" }, { label: "Tell Claude what to change" }],
+    });
+    expect(prompt?.body).toContain("Add a heading line");
+    // a phone's plan takes its words as a wide one does: typed on its row, then Enter, never shift+tab
+    expect(answerKeys(prompt!, { custom_text: "Name it greet.txt" })).toEqual([
+      { keys: ["down"] }, { keys: ["down"] }, { text: "Name it greet.txt" }, { keys: ["enter"] },
+    ]);
+  });
+
+  test.each(screens)("reads no plan once output follows its footer %s", (_footer, screen) => {
+    expect(parseInteractivePrompt("claude", `${screen}\n⏺ User approved Claude's plan\n`)).toBeNull();
+    expect(parseInteractivePrompt("claude", `${screen}\n⏺ Updated README.md\n`)).toBeNull();
+    expect(parseInteractivePrompt("claude", `${screen}\nREADME.md\n`)).toBeNull();
+  });
+
+  test("reads no plan once output runs on from its wrapped footer's last row", () => {
+    expect(parseInteractivePrompt("claude", split("   ctrl+g to edit in VS Code ·\n   ~/.claude/plans/\n   old-plan.m\n   dREADME.md"))).toBeNull();
+  });
+});
+
 describe("Claude's question in a narrow pane", () => {
   // live-captured from Claude Code 2.1.283 in a 44-column herdr pane: the hint wraps
   const narrow = `────────────────────────────────────────────
@@ -1013,6 +1249,81 @@ ${rows}
 
   test("does not take a rule of another program under the panel for Claude's own", () => {
     expect(parseInteractivePrompt("claude", question + "\n⏺ Done.\n──── user@host:~/project ─\n")).toBeNull();
+  });
+});
+
+describe("Claude's review of several answers in a named session", () => {
+  // live-captured from Claude Code 2.1.299 (CLAUDE_CODE_NO_FLICKER=1, `--name`, 120x40): the review
+  // has no key hint of its own, its last row is Cancel, and the session's rule follows it
+  const rule = `${"─".repeat(107)} session-name ─`;
+  const review = `❯ ASKREPRO 7
+
+${"─".repeat(120)}
+←  ☒ Route  ☒ Author  ☒ Notes  ✔ Submit  →
+
+Review your answers
+
+ ● Which way should the PR go?
+   → my own words typed in the chat my own words t
+ ● Who should author the commits?
+   → Repo owner
+ ● What should the release notes say?
+   → my own words typed in the chat my own words typed in the chat my own w
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+`;
+  const withRule = (rows = "") => `${review}${rule}\n${rows ? `\n${rows}\n` : ""}`;
+  // a review taller than the pane, same capture: the tabs and the heading are cut off at the top
+  const tall = `
+ │ ● The PC splits traffic between the main server and the reserve almost evenly, because both servers sit in the same
+ │   city and answer equally fast. Which way should we go?
+   → my own words typed in the chat my own words typed in the chat my own words typed in the chat my own words typed in
+   the chat my own words typed in the chat
+ │ ● After every subscription update the client restarts the tunnel. How often should the subscription be updated?
+   → Once a day
+ │ ● The client has no leak protection. What should we do?
+   → my own words typed in the chat my own words typed in the chat my own words typed in the chat my own words typed in
+   my own words typed in the chat my o
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+${rule}
+`;
+
+  test("reads the review under the session's rule, with or without the task list", () => {
+    for (const rows of ["", "  3 tasks (0 done, 1 in progress, 2 open)\n  ◼ 구현\n    Running tests…\n  ◻ 검증\n  ◻ 정리"]) {
+      const card = parseInteractivePrompt("claude", withRule(rows));
+      expect(card).toMatchObject({ kind: "menu", title: "Review your answers", question: "Ready to submit your answers?", custom_option_index: null });
+      expect(labels(card)).toEqual(["Submit answers", "Cancel"]);
+      expect(card?.body).toContain("→ Repo owner");
+      expect(answerKeys(card!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    }
+  });
+
+  test("reads a review cut off at the top of the pane, its tabs and heading out of view", () => {
+    const card = parseInteractivePrompt("claude", tall);
+    expect(card).toMatchObject({ kind: "menu", title: "Review your answers", question: "Ready to submit your answers?" });
+    expect(labels(card)).toEqual(["Submit answers", "Cancel"]);
+    expect(card?.body).toContain("→ Once a day");
+  });
+
+  test("does not take an answered review above later output and the session's rule for an open one", () => {
+    expect(parseInteractivePrompt("claude", `${review}\n⏺ Done.\n\n${rule}\n`)).toBeNull();
+    expect(parseInteractivePrompt("claude", `${review}\n⏺ Done.\n──── user@host:~/project ─\n`)).toBeNull();
+  });
+
+  test("takes no screen without the review's own tabs, answers and rows for one", () => {
+    // no tabs and no answer of the review's above the question: some other text that says the same
+    expect(parseInteractivePrompt("claude", `Notes for the release\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n${rule}\n`)).toBeNull();
+    // cut off at the top, but the rows are not the review's
+    expect(parseInteractivePrompt("claude", tall.replace("1. Submit answers", "1. Ship it"))).toBeNull();
+    // tabs far above, with another panel's rule between them and the question: not this review's
+    expect(parseInteractivePrompt("claude", `←  ☒ Route  ✔ Submit  →\n ● Which way?\n   → Fork\n${"─".repeat(120)}\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n`)).toBeNull();
   });
 });
 
@@ -3804,7 +4115,19 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         draw: (at) => `\nBash command\n\n  curl -I https://example.com\n  Fetch HTTP headers.\n\nThis command requires approval\n\nDo you want to proceed?\n${mark(at, 0)} 1. Yes\n${mark(at, 1)} 2. Yes, and don’t ask again for: curl *\n${mark(at, 2)} 3. No\n\nEsc to cancel · Tab to amend · ctrl+e to explain\n`,
       },
       {
+        // the safety check's hold draws no numbers and opens on No: Yes is one ↑ away, then Enter
+        name: "Claude's approval the safety check held, up from No to Yes", agent: "claude", rows: 2, start: 1, choice: { option_index: 0 }, sent: ["up", "enter"],
+        draw: (at) => `\n● Bash(rm -rf build)\n${"─".repeat(40)}\n Bash command\n   rm -rf build\n   Remove the build folder\n Claude Code's automatic safety check flagged this action, so the action hasn't run.\n Do you want to proceed?\n ${mark(at, 0)} Yes\n ${mark(at, 1)} No\n\n Esc to cancel\n`,
+      },
+      {
         name: "Claude's plan", agent: "claude", rows: 4, choice: { option_index: 1 }, sent: ["down", "enter"],
+        draw: (at) => `\nReady to code?\n\nHere is Claude's plan:\nAdd a heading to the README file.\n\nClaude has written up a plan and is ready to execute. Would you like to proceed?\n\n${mark(at, 0)} 1. Yes, auto-accept edits\n${mark(at, 1)} 2. Yes, manually approve edits\n${mark(at, 2)} 3. No, refine with Ultraplan on Claude Code on the web\n${mark(at, 3)} 4. Tell Claude what to change\n     shift+tab to approve with this feedback\n`,
+      },
+      {
+        // the words go in on "Tell Claude what to change" and Enter sends them: Claude keeps planning
+        // (shift+tab there approves the plan with the words, and it runs)
+        name: "Claude's plan: words for Claude, never an approval", agent: "claude", rows: 4, choice: { custom_text: "Name the file greet.txt" },
+        sent: ["down", "down", "down", "text:Name the file greet.txt", "enter"],
         draw: (at) => `\nReady to code?\n\nHere is Claude's plan:\nAdd a heading to the README file.\n\nClaude has written up a plan and is ready to execute. Would you like to proceed?\n\n${mark(at, 0)} 1. Yes, auto-accept edits\n${mark(at, 1)} 2. Yes, manually approve edits\n${mark(at, 2)} 3. No, refine with Ultraplan on Claude Code on the web\n${mark(at, 3)} 4. Tell Claude what to change\n     shift+tab to approve with this feedback\n`,
       },
       {
@@ -4771,6 +5094,41 @@ describe("Claude Code 2.1.29x approvals and questions", () => {
 
 // Claude Code 2.1.296's multiple choice, captured in #752: a ticked row is drawn [✔], and the
 // unnumbered Submit row between the typed answer and "Chat about this" takes the cursor too
+describe("Claude's multiple choice answered with its own text", () => {
+  // Claude Code 2.1.301: typing into "Type something" ticks that row, and Enter on Submit, under
+  // it, takes the answer to the next question or the review (→ there moves the text's cursor)
+  const screen = (at: "Manzana" | "Submit", typed = false) => [
+    "←  ☐ Frutas  ✔ Submit  →",
+    "¿Qué frutas?",
+    `${at === "Manzana" ? "❯" : " "} 1. [ ] Manzana`,
+    "         Manzana",
+    "  2. [ ] Pera",
+    "         Pera",
+    typed ? "  3. [✔] Kiwi" : "  3. [ ] Type something",
+    `${at === "Submit" ? "❯" : " "}    Submit`,
+    "─".repeat(119),
+    "  4. Chat about this",
+    "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ].join("\n");
+
+  test("offers the typed answer, and types it in its row before Enter on Submit", () => {
+    const prompt = parseInteractivePrompt("claude", screen("Manzana"))!;
+    expect(prompt).toMatchObject({ multi_select: true, custom_option_index: 2 });
+    expect(labels(prompt)).toEqual(["Manzana", "Pera"]);
+    expect(answerKeys(prompt, { custom_text: "Kiwi" })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { text: "Kiwi" }, { keys: ["down"] }, { keys: ["enter"] }]);
+    // from Submit, the row is one up
+    expect(answerKeys(parseInteractivePrompt("claude", screen("Submit"))!, { custom_text: "Kiwi" })).toEqual([{ keys: ["up"] }, { text: "Kiwi" }, { keys: ["down"] }, { keys: ["enter"] }]);
+    // the choices still go as they did
+    expect(answerKeys(prompt, { option_indices: [1] })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }, { keys: ["right"] }]);
+  });
+
+  test("empties a draft already typed into the row first", () => {
+    const prompt = parseInteractivePrompt("claude", screen("Manzana", true))!;
+    expect(prompt).toMatchObject({ multi_select: true, custom_option_index: 2 });
+    expect(answerKeys(prompt, { custom_text: "Uva" })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "Uva" }, { keys: ["down"] }, { keys: ["enter"] }]);
+  });
+});
+
 describe("Claude's multiple choice ticked in the terminal", () => {
   const screen = (ticked: boolean, at: "A" | "B" | "Submit" | "Chat") => [
     `←  ${ticked ? "☒" : "☐"} Pick  ✔ Submit  →`,
@@ -4788,7 +5146,7 @@ describe("Claude's multiple choice ticked in the terminal", () => {
 
   test("reads [✔] rows as ticked, without the box in their labels", () => {
     const prompt = parseInteractivePrompt("claude", screen(true, "B"))!;
-    expect(prompt).toMatchObject({ kind: "question", title: "Multiple choice", question: "Which ones?", multi_select: true, custom_option_index: null });
+    expect(prompt).toMatchObject({ kind: "question", title: "Multiple choice", question: "Which ones?", multi_select: true, custom_option_index: 2 });
     expect(prompt.options.map((option) => option.label)).toEqual(["Option A", "Option B"]);
     // both are ticked: only A is wanted, so B (under the cursor) is unticked, never ticked again
     expect(answerKeys(prompt, { option_indices: [0] })).toEqual([{ keys: ["enter"] }, { keys: ["right"] }]);
