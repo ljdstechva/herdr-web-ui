@@ -279,16 +279,20 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     const notice = taskNotification(block);
     if (notice === null) return false;
     const key = `${notice.taskId}\0${notice.toolUseId ?? ""}`;
-    if (notice.agent && !noticed.has(key)) {
+    // Claude Code 2.1.30x sends the report as a hand-back message and the notification only
+    // points at it: the report is drawn in the card, as a report in the notification itself is
+    const pointed = notice.agent ? CLAUDE_HANDBACK_POINTER.exec(notice.result)?.[1] : undefined;
+    const held = pointed === undefined ? undefined : handbacks.get(pointed);
+    // A subagent resumed after it ended reports each later run with a notification that names no
+    // tool call, so it has the key of the run before. A report waiting in this turn for its card
+    // is still a run of its own: a record repeating a drawn run finds its card already filled.
+    const waiting = held?.report !== undefined && held.card === undefined;
+    if (notice.agent && (!noticed.has(key) || waiting)) {
       noticed.add(key);
       const card = agentTaskResult(notice, options.subagents?.get(notice.taskId));
       const turn: ConversationTurn = { role: "user", ts, parts: [{ kind: "task_result", tasks: [card] }] };
-      // Claude Code 2.1.30x sends the report as a hand-back message and the notification only
-      // points at it: the report is drawn in the card, as a report in the notification itself is
-      const pointed = CLAUDE_HANDBACK_POINTER.exec(card.result)?.[1];
-      const held = pointed === undefined ? undefined : handbacks.get(pointed);
-      if (held?.report !== undefined && held.card === undefined) {
-        fillCard(card, held.report);
+      if (held !== undefined && waiting) {
+        fillCard(card, held.report!);
         held.card = card;
         // the card takes the row the report was drawn in, before what the agent said after it
         const at = held.notice === undefined ? -1 : turns.indexOf(held.notice);

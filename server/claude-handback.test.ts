@@ -75,6 +75,20 @@ describe("a subagent's hand-back report in its task card", () => {
     expect(tasks(turns).map((task) => task.result)).toEqual([other.trim()]);
   });
 
+  it("gives a resumed subagent's later run its own card, though its notification repeats the run before's key", () => {
+    // a run resumed after the agent ended is reported without a tool-use id, every time
+    const { handback, ended, report } = handbackRecords();
+    const later = ended.replace("<tool-use-id>toolu_a3e6</tool-use-id>", "");
+    const resumed = notification("a3e6", "", "Second run's report, in the notification.").replace("<tool-use-id></tool-use-id>", "");
+    const turns = parseClaudeTranscript(jsonl(
+      user("Price it"), assistant("Started."), enqueue(notification("a3e6", "toolu_a3e6", "First run's report.")),
+      user("Ask it again"), assistant("Asked."), enqueue(resumed), user(resumed),
+      user("And once more"), assistant("Asked."), handback, enqueue(later), assistant("Noted."), enqueue(later), queuedNotice(later),
+    ));
+    expect(notices(turns)).toEqual([]);
+    expect(tasks(turns).map((task) => task.result)).toEqual(["First run's report.", "Second run's report, in the notification.", report]);
+  });
+
   it("keeps the first line's own indentation, a report that opens with code", () => {
     const { handback, ended } = handbackRecords(["", "    const x = 1;", "", "That is the line."]);
     expect(tasks(parseClaudeTranscript(jsonl(enqueue(ended), handback, user(ended)))).map((task) => task.result)).toEqual(["    const x = 1;\n\nThat is the line."]);
