@@ -70,6 +70,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   queued attachment mid-turn, and the chat skipped both, so the work it started was appended to
   the answer before it. It now shows as a folded **Message from another session: {name}**; a
   delivery recorded twice is one notice. (Upstream #870.)
+- **A background subagent's report is in its task card again.** Claude Code 2.1.30x has a
+  subagent send its report back with `SubagentHandback`, as a separate message, and the task's
+  notification only says "This agent's report was delivered to you as a message…". The card
+  showed that sentence and the report was dropped. The report now fills the card, read as
+  Markdown, whichever of the two Claude Code records first. A report over 16,000 characters, or
+  one whose notification comes only after a new prompt, stays a folded message of its own.
+  (Upstream #3660, #3667.)
 - **A subagent's final report was hidden.** Claude Code 2.1.31x has a subagent hand its report
   back through a `SubagentHandback` call instead of a reply, so the look inside showed only
   "Worked for 43s · 1 other tool". The report now reads as the subagent's answer.
