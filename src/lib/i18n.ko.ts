@@ -52,6 +52,8 @@ export const KO: Record<string, string> = {
   "Catppuccin": "Catppuccin",
   "Lilac": "연보라",
   "Forest": "포레스트",
+  "Message from another session: {name}": "다른 세션에서 온 메시지: {name}",
+  "Message from another session": "다른 세션에서 온 메시지",
   "Density": "밀도",
   "Comfortable": "여유",
   "Compact": "촘촘",

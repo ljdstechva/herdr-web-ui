@@ -65,6 +65,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   On a phone every row is a finger's height and the agent type and time give way first.
 
 ### Fixed
+- **A message from another Claude session opens its own turn.** Claude Code records a message
+  another session sends into a pane (a peer message) as a meta entry between turns, or as a
+  queued attachment mid-turn, and the chat skipped both, so the work it started was appended to
+  the answer before it. It now shows as a folded **Message from another session: {name}**; a
+  delivery recorded twice is one notice. (Upstream #870.)
 - **A subagent's final report was hidden.** Claude Code 2.1.31x has a subagent hand its report
   back through a `SubagentHandback` call instead of a reply, so the look inside showed only
   "Worked for 43s · 1 other tool". The report now reads as the subagent's answer.
