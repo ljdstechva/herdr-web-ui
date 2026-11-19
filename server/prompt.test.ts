@@ -121,8 +121,10 @@ Claude has written up a plan and is ready to execute. Would you like to proceed?
     expect(answerKeys(plan!, { custom_text: "Keep the existing introduction" })).toEqual([
       { keys: ["down"] }, { keys: ["down"] }, { keys: ["down"] },
       { text: "Keep the existing introduction" },
-      { keys: ["shift+tab"] },
+      // Enter keeps planning: shift+tab approves the plan with the feedback
+      { keys: ["enter"] },
     ]);
+    expect(answerKeys(plan!, { custom_text: "Keep the existing introduction" }).some((step) => step.keys?.includes("shift+tab"))).toBe(false);
   });
 
   test("parses omp single, multi-select, and approval prompts", () => {
@@ -3805,6 +3807,13 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
       },
       {
         name: "Claude's plan", agent: "claude", rows: 4, choice: { option_index: 1 }, sent: ["down", "enter"],
+        draw: (at) => `\nReady to code?\n\nHere is Claude's plan:\nAdd a heading to the README file.\n\nClaude has written up a plan and is ready to execute. Would you like to proceed?\n\n${mark(at, 0)} 1. Yes, auto-accept edits\n${mark(at, 1)} 2. Yes, manually approve edits\n${mark(at, 2)} 3. No, refine with Ultraplan on Claude Code on the web\n${mark(at, 3)} 4. Tell Claude what to change\n     shift+tab to approve with this feedback\n`,
+      },
+      {
+        // the words go in on "Tell Claude what to change" and Enter sends them: Claude keeps planning
+        // (shift+tab there approves the plan with the words, and it runs)
+        name: "Claude's plan: words for Claude, never an approval", agent: "claude", rows: 4, choice: { custom_text: "Name the file greet.txt" },
+        sent: ["down", "down", "down", "text:Name the file greet.txt", "enter"],
         draw: (at) => `\nReady to code?\n\nHere is Claude's plan:\nAdd a heading to the README file.\n\nClaude has written up a plan and is ready to execute. Would you like to proceed?\n\n${mark(at, 0)} 1. Yes, auto-accept edits\n${mark(at, 1)} 2. Yes, manually approve edits\n${mark(at, 2)} 3. No, refine with Ultraplan on Claude Code on the web\n${mark(at, 3)} 4. Tell Claude what to change\n     shift+tab to approve with this feedback\n`,
       },
       {
