@@ -192,6 +192,16 @@ const PANE_GONE_CODES = new Set(["pane_not_found", "pane_not_restored", "no_term
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
 /**
+ * Claude Code reads `\` + Enter as a new line, so the Enter after a message whose last character is
+ * a backslash adds a line instead of sending: the message stays in Claude's box while Chat clears
+ * its own (upstream #2277, Claude Code 2.1.312). A space after it lets the Enter send, and Claude
+ * Code records the message without the space. A payload in paste markers gets it inside the
+ * closing one. Only a Chat or queued message to Claude gets it: the terminal's input line types
+ * `\` + Enter as the keyboard does.
+ */
+export const closeBackslash = (agent: string | null | undefined, text: string): string =>
+  agent === "claude" ? text.replace(/\\(\u001b\[201~)?$/, "\\ $1") : text;
+/**
  * herdr holds a lone ESC typed through the attach pty ~150ms (measured) to tell it from
  * an Alt+key: a composer message waits this long after the pane's last keystroke, so a
  * Stop tapped just before Send still reaches the pane first.
@@ -660,6 +670,8 @@ export function createServer(
     if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
     lastTyped.delete(paneId);
     inTime();
+    /** the pane's agent as herdr names it: null for the terminal's input line, which types as the keyboard does */
+    let agent: string | null = null;
     // the terminal's input line stands in for the keyboard: it types what the user wrote, an
     // answer into an open menu included, where agent.prompt would refuse
     try {
@@ -669,6 +681,7 @@ export function createServer(
           throw error;
         });
         inTime();
+        agent = pane?.agent ?? pane?.agent_session?.agent ?? null;
         const identity = pane ? pendingIdentity(pane) : null;
         const sameClaude = (current: PendingIdentity | null): boolean => current?.agent === "claude"
           && confirmation !== undefined && confirmation.draft === clearDraft
@@ -741,7 +754,7 @@ export function createServer(
           if (clearDraft !== undefined && !claudeInputEmpty(...reads)) throw new InputDraftError(null);
         }
         try {
-          await agentPrompt(paneId, closeMention(text));
+          await agentPrompt(paneId, closeMention(closeBackslash(agent, text)));
           noteSubmitted(paneId, text);
           return;
         } catch (error) {
@@ -755,7 +768,7 @@ export function createServer(
       // a mirrored pane's browser never learned the program's paste mode, so `payload` came as bare
       // lines: several of them are shaped here as the same block typed into the mirror is. herdr is
       // asked only for such a block, so a one-line message never waits on it.
-      const shaped = await mirrorInput(closeMention(payload), async () => await terminalAttach() ? null : (await paneContext(paneId)).agent);
+      const shaped = await mirrorInput(closeMention(closeBackslash(agent, payload)), async () => await terminalAttach() ? null : (await paneContext(paneId)).agent);
       inTime();
       await paneSendText(paneId, shaped);
       await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
@@ -941,7 +954,7 @@ export function createServer(
       // Pending input is a guarded literal paste + Enter, never Codex's native Tab queue.
       // Keep the final key here so a disconnect, pane switch or new menu can cancel it.
       wrote = true;
-      await paneSendText(paneId, `\u001b[200~${closeMention(text)}\u001b[201~`, undefined, allowed).catch((error: unknown) => {
+      await paneSendText(paneId, `\u001b[200~${closeMention(closeBackslash(context.identity.agent, text))}\u001b[201~`, undefined, allowed).catch((error: unknown) => {
         // a paste the guard refused was never written: the message is unsent, not uncertain
         if (error instanceof HerdrError && error.code === "cancelled") { wrote = false; authorizePending(owner, paneId, lease); }
         throw error;

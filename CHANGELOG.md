@@ -70,6 +70,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   queued attachment mid-turn, and the chat skipped both, so the work it started was appended to
   the answer before it. It now shows as a folded **Message from another session: {name}**; a
   delivery recorded twice is one notice. (Upstream #870.)
+- **A Chat message to Claude that ends in a backslash is sent.** Claude Code reads `\` and the
+  Enter after it as a new line, so such a message stayed in Claude's input box while Chat
+  cleared its own. A Chat or queued message to Claude now gets a space after a last backslash,
+  which Claude Code does not record; the terminal's input line still types it as written.
+  (Upstream #2278.)
 - **Replies after a hook or a background notice stay separate.** When a Stop hook's feedback or a
   task notification resumes Claude without a new prompt, the next reply was glued to the
   finished answer before it, or folded into its work group. A reply that ended its turn now
