@@ -70,6 +70,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   queued attachment mid-turn, and the chat skipped both, so the work it started was appended to
   the answer before it. It now shows as a folded **Message from another session: {name}**; a
   delivery recorded twice is one notice. (Upstream #870.)
+- **Claude's progress messages between tool calls show again.** Claude Code records the short
+  updates it prints between its tool calls as `thinking` on entries marked
+  `"thinkingDisplay": "updates"`, so the chat hid them unless Show thinking was on. They now read
+  as narration in the work block, never as the answer; other thinking stays thinking.
+  (Upstream #1029.)
 - **A background subagent's report is in its task card again.** Claude Code 2.1.30x has a
   subagent send its report back with `SubagentHandback`, as a separate message, and the task's
   notification only says "This agent's report was delivered to you as a message…". The card
