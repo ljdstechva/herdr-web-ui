@@ -226,7 +226,7 @@ interface TranscriptEntry {
   isCompactSummary?: boolean;
   /** "updates": Claude Code shows the entry's thinking text as a progress message, not as reasoning */
   thinkingDisplay?: unknown;
-  message?: { role?: string; content?: unknown; stop_reason?: unknown };
+  message?: { id?: unknown; role?: string; content?: unknown; stop_reason?: unknown };
   attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } };
 }
 
@@ -260,6 +260,11 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
   /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
   let atWork = false;
+  /** The reply that ended its turn (`end_turn`), by its message id. Hook feedback or a notification
+   *  can resume the model without a prompt, and the reply after that is a turn of its own. Claude
+   *  Code 2.1.32x writes each block of one reply as its own entry, all with the reply's id and stop
+   *  reason, so a later entry of that same reply (the answer after its thinking) still joins it. */
+  let completed: { id: unknown } | null = null;
   /** where a notice goes: before the turn at work it was written in, else at the end */
   const noticeAt = (): number => atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
   /** the notifications already drawn: a completion is recorded in up to three places */
@@ -298,10 +303,11 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     return true;
   };
 
-  const assistantTurn = (ts?: string): ConversationTurn => {
+  const assistantTurn = (entry: TranscriptEntry): ConversationTurn => {
     const last = turns[turns.length - 1];
-    if (last !== undefined && last.role === "assistant") return last;
-    const turn: ConversationTurn = { role: "assistant", ts: ts ?? null, parts: [] };
+    const sameReply = completed !== null && typeof completed.id === "string" && completed.id === entry.message?.id;
+    if (last !== undefined && last.role === "assistant" && (completed === null || sameReply)) return last;
+    const turn: ConversationTurn = { role: "assistant", ts: entry.timestamp ?? null, parts: [] };
     turns.push(turn);
     return turn;
   };
@@ -454,9 +460,10 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
     if (entry.type === "assistant" && Array.isArray(content)) {
       markPromptAnswered();
-      const turn = assistantTurn(entry.timestamp);
+      const turn = assistantTurn(entry);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
+      completed = stop === "end_turn" ? { id: entry.message?.id } : null;
       atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use"));
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {

@@ -70,6 +70,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   queued attachment mid-turn, and the chat skipped both, so the work it started was appended to
   the answer before it. It now shows as a folded **Message from another session: {name}**; a
   delivery recorded twice is one notice. (Upstream #870.)
+- **Replies after a hook or a background notice stay separate.** When a Stop hook's feedback or a
+  task notification resumes Claude without a new prompt, the next reply was glued to the
+  finished answer before it, or folded into its work group. A reply that ended its turn now
+  closes it, so each answer shows on its own with its own time. One reply that Claude Code writes
+  as several entries (its thinking, then its answer) stays one. (Upstream #1024.)
 - **Claude's progress messages between tool calls show again.** Claude Code records the short
   updates it prints between its tool calls as `thinking` on entries marked
   `"thinkingDisplay": "updates"`, so the chat hid them unless Show thinking was on. They now read
