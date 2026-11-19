@@ -117,6 +117,7 @@ import { VpsMonitor, vpsAlertMessage, vpsResolvedMessage } from "./vps.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { handleSignInRequest, SignInService } from "./sign-in.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
+import { ClaudeVoice, claudeRecorderInstalled, claudeVoiceSettings, voiceDir, type ClaudeVoiceEvent, type ClaudeVoiceTake } from "./claude-voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
@@ -364,6 +365,8 @@ interface SocketData {
   relay?: MachineRelay;
   /** set on a browser-view connection (/api/browsers/<id>/stream): it carries a display's RFB bytes and none of the frames below */
   browser?: { id: string; stream: BrowserStream | null; closed: boolean };
+  /** set on a Claude voice connection (/api/voice/claude/stream): the phone's audio in, ClaudeVoiceEvents out, none of the frames below */
+  claudeVoice?: { paneId: string; take: ClaudeVoiceTake | null };
   /** A fresh claim per attach lifetime; deleting it invalidates queued terminal keys. */
   attached: Map<string, object>;
   conversationInterests: Set<string>;
@@ -487,6 +490,8 @@ export function createServer(
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
+    /** the folder of Claude voice's recorder sockets (server/claude-voice.ts); unset, a Claude pane's mic cannot use Claude Code's own dictation. The real server passes voiceDir() */
+    claudeVoiceDir?: string;
     machines?: boolean;
     registerBridge?: boolean;
     /** where a worktree tab's checkout goes when the request names no path; unset, herdr's own worktree directory */
@@ -1704,6 +1709,8 @@ export function createServer(
   waitTimer.unref?.();
 
   const envPort = process.env["PORT"];
+  /** Claude Code's own dictation for a Claude pane's mic (server/claude-voice.ts): set up once the port is known */
+  let claudeVoice: ClaudeVoice | null = null;
   const server = Bun.serve<SocketData>({
     port: options.port ?? (envPort ? Number(envPort) : DEFAULT_PORT),
     hostname,
@@ -1848,6 +1855,21 @@ export function createServer(
         if (!sameOrigin(request)) return new Response("invalid origin", { status: 403 });
         const deviceId = access.level === "full" ? access.device?.id : undefined;
         const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), conversationInterests: new Set<string>(), mode: "observe", output: new Map(), closing: false, roles: 0, deviceId, browser: { id: streamId, stream: null, closed: false } } });
+        if (upgraded) return undefined as unknown as Response;
+        return new Response("websocket upgrade required", { status: 426 });
+      }
+      if (pathname === "/api/voice/claude") {
+        if (request.method !== "GET") return jsonResponse({ error: { code: "method_not_allowed", message: "GET is required." } }, 405);
+        return jsonResponse(claudeVoice?.status() ?? { available: false, recorder: claudeRecorderInstalled(), voice: claudeVoiceSettings(), reason: "unavailable" });
+      }
+      if (pathname === "/api/voice/claude/stream") {
+        // it taps Space and Esc in the pane: a watching device only watches
+        if (readOnly) return jsonResponse({ error: { code: "read_only", message: "This device can only watch" } }, 403);
+        if (!sameOrigin(request)) return new Response("invalid origin", { status: 403 });
+        const paneId = url.searchParams.get("pane_id")?.trim();
+        if (!paneId) return jsonResponse({ error: { code: "invalid_request", message: "pane_id is required" } }, 400);
+        const deviceId = access.level === "full" ? access.device?.id : undefined;
+        const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), conversationInterests: new Set<string>(), mode: "observe", output: new Map(), closing: false, roles: 0, deviceId, claudeVoice: { paneId, take: null } } });
         if (upgraded) return undefined as unknown as Response;
         return new Response("websocket upgrade required", { status: 426 });
       }
@@ -2973,9 +2995,22 @@ export function createServer(
       closeOnBackpressureLimit: true,
       drain(client) {
         if (client.data.browser) { client.data.browser.stream?.resume(); return; }
+        if (client.data.claudeVoice) return;
         for (const paneId of client.data.attached.keys()) reconcileOutput(paneId);
       },
       async open(client) {
+        const dictation = client.data.claudeVoice;
+        if (dictation) {
+          if (client.data.deviceId) client.data.unwatchDevice = devices.onRevoke(client.data.deviceId, () => client.close(1008, "Device access revoked"));
+          const send = (event: ClaudeVoiceEvent): void => {
+            if (client.data.closing) return;
+            try { client.send(JSON.stringify(event)); } catch { /* the phone left */ }
+            if (event.type === "final" || event.type === "error") client.close(1000, "done");
+          };
+          if (!claudeVoice) send({ type: "error", code: "unavailable", message: "Claude voice is not running on this server" });
+          else dictation.take = claudeVoice.open(dictation.paneId, send);
+          return;
+        }
         const view = client.data.browser;
         if (view) {
           if (client.data.deviceId) client.data.unwatchDevice = devices.onRevoke(client.data.deviceId, () => client.close(1008, "Device access revoked"));
@@ -3018,6 +3053,15 @@ export function createServer(
       async message(client, raw) {
         if (client.data.browser) {
           if (typeof raw !== "string") client.data.browser.stream?.write(raw);
+          return;
+        }
+        const dictation = client.data.claudeVoice;
+        if (dictation) {
+          if (typeof raw !== "string") { dictation.take?.audio(raw); return; }
+          let kind: unknown = null;
+          try { kind = (JSON.parse(raw) as { type?: unknown }).type; } catch { /* not a control frame */ }
+          if (kind === "finish") dictation.take?.finish();
+          else if (kind === "cancel") dictation.take?.cancel();
           return;
         }
         if (stopped || client.data.closing) return;
@@ -3591,6 +3635,8 @@ export function createServer(
       close(client) {
         client.data.unwatchDevice?.();
         client.data.closing = true;
+        // a dictation the phone left before its words came back is cancelled (Esc, never Enter)
+        if (client.data.claudeVoice) { client.data.claudeVoice.take?.cancel(); return; }
         if (client.data.browser) {
           client.data.browser.closed = true;
           client.data.browser.stream?.close();
@@ -3618,6 +3664,23 @@ export function createServer(
   }, 100);
   outputTimer.unref();
 
+  if (options.claudeVoiceDir) {
+    const voiceService = new ClaudeVoice({
+      dir: options.claudeVoiceDir,
+      name: `p${server.port}`,
+      pane: async (paneId) => { const pane = await paneGet(paneId); return { agent: pane.agent ?? null, status: pane.agent_status }; },
+      boxReads: claudeBoxReads,
+      screen: async (paneId) => (await paneRead({ paneId, source: "visible", format: "text" })).text,
+      keys: (paneId, keys) => paneSendKeys(paneId, keys),
+      blocked: (screen) => parseInteractivePrompt("claude", screen) !== null || modelListWaits("claude", screen),
+      settings: () => claudeVoiceSettings(),
+      recorderInstalled: () => claudeRecorderInstalled(),
+    });
+    voiceService.listen().then(() => { if (!stopped) claudeVoice = voiceService; else voiceService.close(); }, (error: unknown) => {
+      console.error(`claude voice: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
   return {
     port: server.port ?? 0,
     hostname,
@@ -3635,6 +3698,7 @@ export function createServer(
       clearInterval(waitTimer);
       machines?.stop();
       registration?.close();
+      claudeVoice?.close();
       for (const client of clients) killWatches(client);
       for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
       server.stop(true);
@@ -3648,7 +3712,7 @@ if (import.meta.main) {
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
   const vps = process.platform === "linux" ? new VpsMonitor({ stateDir: defaultStateDir() }) : undefined;
   const browsers = process.platform === "linux" ? new BrowserViews({ stateDir: defaultStateDir() }) : undefined;
-  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, browsers, registerBridge: true });
+  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, browsers, registerBridge: true, claudeVoiceDir: voiceDir() });
   telemetry.start();
   vps?.start();
   let stopping = false;

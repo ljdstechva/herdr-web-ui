@@ -442,6 +442,7 @@ describe("createVoiceEngine", () => {
       language: () => ({ locale, ui: "en" }),
       recorder: () => ({ mimeType: "audio/webm", extension: "webm" }),
       speech: () => provider === "browser" ? FakeSpeech : null,
+      claudePane: () => null,
     });
     const reached = (state: string) => new Promise<void>((resolve) => { waiting.push({ state, resolve }); });
     return { voice, states, texts, reached };

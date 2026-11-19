@@ -3146,6 +3146,12 @@ export function claudeInputDraft(live: string, colors: string | null): boolean {
   return cursor && !grey;
 }
 
+/** Claude Code's message box as plain rows (claudeInputBox), or null when the screen shows no whole box. */
+export function claudeInputBoxRows(screen: string): string[] | null {
+  const box = claudeInputBox(screen);
+  return box === null || box === "clipped" ? null : box.plain;
+}
+
 /** Positive proof of an ordinary empty input box, never absence of a readable box. */
 export function claudeInputEmpty(live: string, colors: string | null): boolean {
   const box = claudeInputBox(live);

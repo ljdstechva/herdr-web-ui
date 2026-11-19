@@ -9,6 +9,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchVoiceStatus } from "./api.ts";
+import { claudeVoiceError, claudeVoiceUrl, createPcm16Resampler, loadClaudeVoiceStatus } from "./claudeVoice.ts";
+import type { ClaudeVoiceEvent, ClaudeVoiceStatus } from "../../shared/claude-voice.ts";
 import { LOCALE_TAGS, type Language, type LanguageSetting } from "./i18n.ts";
 import { useSettings, type DictationLanguage } from "./settings.ts";
 import {
@@ -23,9 +25,11 @@ import {
 } from "../../shared/voice.ts";
 
 export type VoiceState = "idle" | "starting" | "recording" | "transcribing";
-export type VoiceEngine = "server" | "browser";
+/** `claude`: a Claude Code pane's own dictation, run by Claude Code on the server (claudeVoice.ts) */
+export type VoiceEngine = "server" | "browser" | "claude";
 /** why the last dictation failed, short enough to key a translated message on */
-export type VoiceError = "insecure" | "permission" | "no_mic" | "not_configured" | "provider_auth" | "provider" | "network" | "too_large" | "no_speech";
+export type VoiceError = "insecure" | "permission" | "no_mic" | "not_configured" | "provider_auth" | "provider" | "network" | "too_large" | "no_speech"
+  | "claude_setup" | "claude_blocked" | "claude_draft" | "claude_busy" | "claude_not_listening" | "claude_stopped";
 /** why the mic button is off: the setting, no https, or neither a server key nor browser speech */
 export type VoiceUnavailable = "disabled" | "insecure" | "not_configured" | "unsupported";
 /** `take` numbers each press-to-text run, so a late answer never lands on another run's words */
@@ -369,6 +373,18 @@ function useVoiceStatus(enabled: boolean): VoiceStatus | null | undefined {
   return status;
 }
 
+/** GET /api/voice/claude for a Claude pane's mic: undefined while it is asked, null when the server cannot say. */
+function useClaudeVoiceStatus(enabled: boolean): ClaudeVoiceStatus | null | undefined {
+  const [status, setStatus] = useState<ClaudeVoiceStatus | null | undefined>(undefined);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    void loadClaudeVoiceStatus().then((value) => { if (live) setStatus(value); });
+    return () => { live = false; };
+  }, [enabled]);
+  return enabled ? status : null;
+}
+
 export interface VoiceInputOptions {
   mode: VoiceMode;
   enabled: boolean;
@@ -378,6 +394,8 @@ export interface VoiceInputOptions {
   onText: (result: VoiceText) => void;
   /** the transcript so far, for a live preview; superseded by onText */
   onPartial?: (text: string) => void;
+  /** a Claude Code pane on this PC: its mic uses Claude Code's own dictation where the server carries it */
+  claudePane?: string | null;
 }
 
 export interface VoiceInput {
@@ -411,6 +429,8 @@ interface EngineIO {
   language(): { locale: string; ui: Language };
   recorder(): { mimeType: string; extension: string } | null;
   speech(): SpeechRecognitionCtor | null;
+  /** the Claude pane a `claude` take dictates into */
+  claudePane(): string | null;
 }
 
 /** One press-to-text run while it records; it becomes "pending" work once finished. */
@@ -432,6 +452,12 @@ interface Take {
   startedAt: number | null;
   recognition: SpeechRecognitionLike | null;
   finalText: string;
+  /** a `claude` take's connection to the pane's dictation, the node that feeds it, and audio waiting for it to open */
+  socket: WebSocket | null;
+  capture: { node: ScriptProcessorNode; mute: GainNode } | null;
+  queued: ArrayBuffer[];
+  /** a `claude` take got its final words or its error */
+  answered: boolean;
 }
 
 /** The imperative half of useVoiceInput: mic, recorder, meter loop, uploads. Outlives renders. */
@@ -486,7 +512,7 @@ export function createVoiceEngine(io: EngineIO) {
     meter.last = now;
     const current = take;
     let rms = 0;
-    if (audio && current?.engine === "server" && current.recorder) {
+    if (audio && current && (current.engine === "server" ? current.recorder !== null : current.engine === "claude" && current.capture !== null)) {
       audio.analyser.getFloatTimeDomainData(audio.samples);
       let sum = 0;
       for (const sample of audio.samples) {
@@ -508,7 +534,7 @@ export function createVoiceEngine(io: EngineIO) {
     const elapsed = now - current.startedAt;
     const second = Math.floor(elapsed / 1000);
     if (second !== meter.second) { meter.second = second; io.setElapsed(second * 1000); }
-    if (current.engine === "server") {
+    if (current.engine !== "browser") {
       if (rms >= SILENT_RMS) meter.loudAt = now;
       const silent = now - meter.loudAt >= SILENT_AFTER_MS;
       if (silent !== meter.silent) { meter.silent = silent; io.setSilent(silent); }
@@ -580,34 +606,43 @@ export function createVoiceEngine(io: EngineIO) {
     void audio?.context.resume().catch(() => undefined);
   }
 
+  /**
+   * The microphone for `current`, warm or newly opened, wired to the meter. False: the take was
+   * cancelled or finished while the mic opened (the stream then stays warm or closes).
+   */
+  async function acquire(current: Take): Promise<boolean> {
+    if (warmTimer !== null) clearTimeout(warmTimer);
+    warmTimer = null;
+    if (!stream || !stream.getAudioTracks().some((track) => track.readyState === "live")) {
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+      const opened = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (take !== current) {
+        // this request was cancelled or finished while the mic opened: only its own stream may
+        // close, never the one a newer take is recording from
+        if (take !== null || stream || current.releaseMic || document.hidden) opened.getTracks().forEach((track) => track.stop());
+        else { stream = opened; keepWarm(); }
+        return false;
+      }
+      // an overlapping earlier start may have opened one meanwhile; keep a single stream
+      if (stream) opened.getTracks().forEach((track) => track.stop());
+      else stream = opened;
+    }
+    if (warmTimer !== null) clearTimeout(warmTimer);
+    warmTimer = null;
+    if (audio && audio.stream !== stream) {
+      audio.source?.disconnect();
+      audio.source = audio.context.createMediaStreamSource(stream);
+      audio.source.connect(audio.analyser);
+      if (audio.delay) audio.source.connect(audio.delay);
+      audio.stream = stream;
+    }
+    return true;
+  }
+
   async function beginServer(current: Take, mime: { mimeType: string; extension: string }): Promise<void> {
     try {
-      if (warmTimer !== null) clearTimeout(warmTimer);
-      warmTimer = null;
-      if (!stream || !stream.getAudioTracks().some((track) => track.readyState === "live")) {
-        stream?.getTracks().forEach((track) => track.stop());
-        stream = null;
-        const opened = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-        if (take !== current) {
-          // this request was cancelled or finished while the mic opened: only its own stream may
-          // close, never the one a newer take is recording from
-          if (take !== null || stream || current.releaseMic || document.hidden) opened.getTracks().forEach((track) => track.stop());
-          else { stream = opened; keepWarm(); }
-          return;
-        }
-        // an overlapping earlier start may have opened one meanwhile; keep a single stream
-        if (stream) opened.getTracks().forEach((track) => track.stop());
-        else stream = opened;
-      }
-      if (warmTimer !== null) clearTimeout(warmTimer);
-      warmTimer = null;
-      if (audio && audio.stream !== stream) {
-        audio.source?.disconnect();
-        audio.source = audio.context.createMediaStreamSource(stream);
-        audio.source.connect(audio.analyser);
-        if (audio.delay) audio.source.connect(audio.delay);
-        audio.stream = stream;
-      }
+      if (!(await acquire(current)) || !stream) return;
       // gated: the recorder takes the delayed copy and starts paused until the first word
       const delayed = audio?.stream === stream ? audio.delayed?.stream ?? null : null;
       let recorder: MediaRecorder;
@@ -626,6 +661,111 @@ export function createVoiceEngine(io: EngineIO) {
       if (take !== current) return;
       take = null;
       io.setError(error instanceof DOMException ? micErrorReason(error.name) : "no_mic");
+      setPhase("idle");
+    }
+  }
+
+  /** audio for a `claude` take: sent once its connection is open, kept until then (about 10 s at most) */
+  function sendAudio(current: Take, chunk: ArrayBuffer): void {
+    const socket = current.socket;
+    if (socket && socket.readyState === WebSocket.OPEN) { socket.send(chunk); return; }
+    if (current.queued.length < 120) current.queued.push(chunk);
+  }
+
+  function sendControl(current: Take, type: "finish" | "cancel"): void {
+    const socket = current.socket;
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type }));
+  }
+
+  function stopCapture(current: Take): void {
+    const capture = current.capture;
+    if (!capture) return;
+    current.capture = null;
+    capture.node.onaudioprocess = null;
+    try { audio?.source?.disconnect(capture.node); } catch { /* already apart */ }
+    capture.node.disconnect();
+    capture.mute.disconnect();
+  }
+
+  /** A `claude` take's end, by its words, an error or a lost connection: nothing more comes from it. */
+  function closeClaude(current: Take): void {
+    current.answered = true;
+    stopCapture(current);
+    const socket = current.socket;
+    current.socket = null;
+    if (socket && socket.readyState <= WebSocket.OPEN) socket.close();
+    if (take === current) {
+      // ended while recording (an error): the mic stays warm for the next press
+      take = null;
+      if (document.hidden) releaseStream(); else keepWarm();
+    }
+    if (current.closing) pending.delete(current.closing);
+    settle();
+  }
+
+  function onClaudeEvent(current: Take, event: ClaudeVoiceEvent): void {
+    if (current.answered) return;
+    if (event.type === "listening") {
+      if (take === current && phase === "starting") markRecording(current, performance.now());
+      return;
+    }
+    if (event.type === "partial") {
+      if (!current.discard && current.id === lastTakeId) io.options().onPartial?.(tidy(event.text));
+      return;
+    }
+    if (!current.discard) {
+      if (event.type === "error") io.setError(claudeVoiceError(event.code));
+      else if (tidy(event.text) === "") io.setError("no_speech");
+      else io.options().onText({ text: tidy(event.text), phase: "raw", take: current.id });
+    }
+    if (event.type === "error" && (event.code === "unavailable" || event.code === "recorder_missing")) void loadClaudeVoiceStatus(true);
+    closeClaude(current);
+  }
+
+  async function beginClaude(current: Take, paneId: string): Promise<void> {
+    const socket = new WebSocket(claudeVoiceUrl(paneId));
+    socket.binaryType = "arraybuffer";
+    current.socket = socket;
+    socket.onopen = () => {
+      for (const chunk of current.queued) socket.send(chunk);
+      current.queued = [];
+    };
+    socket.onmessage = (message) => {
+      let event: ClaudeVoiceEvent | null = null;
+      try { event = JSON.parse(String(message.data)) as ClaudeVoiceEvent; } catch { /* not ours */ }
+      if (event && typeof event.type === "string") onClaudeEvent(current, event);
+    };
+    socket.onclose = () => {
+      if (current.answered) return;
+      if (!current.discard) io.setError("network");
+      closeClaude(current);
+    };
+    try {
+      if (!(await acquire(current)) || !stream || !audio?.source) {
+        if (take !== current && !current.answered) { sendControl(current, "cancel"); closeClaude(current); }
+        return;
+      }
+      const context = audio.context;
+      const node = context.createScriptProcessor(4096, 1, 1);
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      const resample = createPcm16Resampler(context.sampleRate);
+      node.onaudioprocess = (processed) => {
+        if (current.capture === null) return;
+        const samples = processed.inputBuffer.getChannelData(0);
+        for (const sample of samples) if (sample !== 0) { current.heard = true; break; }
+        const pcm = resample(samples);
+        if (pcm.length > 0) sendAudio(current, pcm.buffer as ArrayBuffer);
+      };
+      audio.source.connect(node);
+      node.connect(mute);
+      mute.connect(context.destination);
+      current.capture = { node, mute };
+    } catch (error) {
+      if (take !== current) return;
+      io.setError(error instanceof DOMException ? micErrorReason(error.name) : "no_mic");
+      sendControl(current, "cancel");
+      closeClaude(current);
       setPhase("idle");
     }
   }
@@ -678,6 +818,14 @@ export function createVoiceEngine(io: EngineIO) {
       if (recorder.state !== "inactive") recorder.stop();
     }
     current.recognition?.abort();
+    if (current.engine === "claude" && !current.answered) {
+      sendControl(current, "cancel");
+      current.answered = true;
+      stopCapture(current);
+      const socket = current.socket;
+      current.socket = null;
+      if (socket && socket.readyState <= WebSocket.OPEN) socket.close();
+    }
   }
 
   async function transcribe(id: number, blob: Blob, extension: string, signal: AbortSignal): Promise<void> {
@@ -749,6 +897,15 @@ export function createVoiceEngine(io: EngineIO) {
       current.recognition?.stop();
       return;
     }
+    if (current.engine === "claude") {
+      // Claude Code settles the last words, the server reads them and empties its box: they come as `final`
+      current.closing = controller;
+      controller.signal.addEventListener("abort", () => { current.discard = true; discardTake(current); pending.delete(controller); settle(); });
+      stopCapture(current);
+      sendControl(current, "finish");
+      if (release || document.hidden) releaseStream(); else keepWarm();
+      return;
+    }
     const mime = io.recorder();
     const recorder = current.recorder;
     const gate = current.gate;
@@ -793,12 +950,13 @@ export function createVoiceEngine(io: EngineIO) {
     if (engine === null) return;
     const mime = io.recorder();
     const Speech = io.speech();
-    if (engine === "server" ? !mime : !Speech) return;
+    const claudePane = io.claudePane();
+    if (engine === "server" ? !mime : engine === "browser" ? !Speech : !claudePane) return;
     io.setError(null);
     io.setElapsed(0);
     io.setSilent(false);
     meter.silent = false;
-    const current: Take = { id: ++lastTakeId, engine, discard: false, releaseMic: false, closing: null, recorder: null, recorderAt: null, gate: null, chunks: [], heard: false, startedAt: null, recognition: null, finalText: "" };
+    const current: Take = { id: ++lastTakeId, engine, discard: false, releaseMic: false, closing: null, recorder: null, recorderAt: null, gate: null, chunks: [], heard: false, startedAt: null, recognition: null, finalText: "", socket: null, capture: null, queued: [], answered: false };
     take = current;
     pressedAt = performance.now();
     // the pill shows on this very frame; the mic catches up
@@ -807,6 +965,10 @@ export function createVoiceEngine(io: EngineIO) {
       if (!navigator.mediaDevices?.getUserMedia) { take = null; io.setError("insecure"); setPhase("idle"); return; }
       ensureAudioContext();
       void beginServer(current, mime);
+    } else if (engine === "claude" && claudePane) {
+      if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") { take = null; io.setError("insecure"); setPhase("idle"); return; }
+      ensureAudioContext();
+      void beginClaude(current, claudePane);
     } else if (Speech) beginBrowser(current, Speech);
   }
 
@@ -845,6 +1007,7 @@ export function createVoiceEngine(io: EngineIO) {
 export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const { settings, resolvedLanguage } = useSettings();
   const status = useVoiceStatus(options.enabled);
+  const claudeStatus = useClaudeVoiceStatus(options.enabled && !!options.claudePane);
   const mime = useMemo(recorderMime, []);
   const Speech = useMemo(speechRecognitionCtor, []);
   const secure = typeof window !== "undefined" && window.isSecureContext;
@@ -853,6 +1016,9 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   let unavailableReason: VoiceUnavailable | null = null;
   if (!options.enabled) unavailableReason = "disabled";
   else if (!secure) unavailableReason = "insecure";
+  // a Claude pane waits for the answer about Claude voice before it settles on another engine
+  else if (options.claudePane && claudeStatus === undefined) unavailableReason = null;
+  else if (options.claudePane && claudeStatus?.available && typeof AudioContext !== "undefined" && !!navigator.mediaDevices?.getUserMedia) engine = "claude";
   else if (status === undefined) unavailableReason = null;
   else if (status?.configured && mime) engine = "server";
   else if (Speech) engine = "browser";
@@ -878,6 +1044,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
     language: () => latest.current.language,
     recorder: () => mime,
     speech: () => Speech,
+    claudePane: () => latest.current.options.claudePane ?? null,
   }));
 
   useEffect(() => {
@@ -890,7 +1057,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   useEffect(() => () => voice.cancel(), [voice, engine]);
 
   useEffect(() => {
-    if (engine !== "server") return;
+    if (engine === null || engine === "browser") return;
     if (typeof requestIdleCallback === "undefined") {
       const timer = setTimeout(voice.prewarm, 1000);
       return () => clearTimeout(timer);

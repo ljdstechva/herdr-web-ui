@@ -1,0 +1,99 @@
+#!/usr/bin/python3 -I
+# herdr-web-ui claude voice recorder
+"""
+The microphone Claude Code's voice mode hears when the phone dictates (server/claude-voice.ts).
+
+Claude Code 2.1.32x records voice on Linux by running
+
+    arecord -f S16_LE -r 16000 -c 1 -t raw -q -
+
+and streaming what it prints (16 kHz mono 16-bit) to the claude.ai voice service with its own
+login; the words land in its message box. A server has no microphone, so this program stands in
+for arecord, linked as ~/.local/bin/arecord by scripts/claude-voice/install.sh. It asks the web
+UI, over the private unix sockets in ~/.local/state/herdr-web-ui/voice/, for the audio a phone is
+sending to the pane it runs in (HERDR_PANE_ID, inherited from Claude Code), and prints it.
+
+With no dictation for its pane (Space tapped in a terminal) it prints nothing until Claude Code
+stops it, as a quiet microphone would. It never reads or writes anything else.
+"""
+import json
+import os
+import signal
+import socket
+import sys
+import time
+
+VERSION = "arecord: version 1.2.11 (herdr-web-ui claude voice recorder)"
+VOICE_DIR = os.environ.get("HERDR_WEB_UI_VOICE_DIR") or os.path.join(os.path.expanduser("~"), ".local", "state", "herdr-web-ui", "voice")
+# Claude Code's own limit is two minutes; a recorder nobody stops ends on its own after this
+LONGEST_S = 150
+
+
+def stop(*_):
+    sys.exit(0)
+
+
+def wait_for_stop():
+    deadline = time.monotonic() + LONGEST_S
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+    sys.exit(0)
+
+
+def connect(pane):
+    """A socket of a web UI server that has a dictation waiting for this pane, else None."""
+    try:
+        names = sorted(name for name in os.listdir(VOICE_DIR) if name.endswith(".sock"))
+    except OSError:
+        return None
+    hello = (json.dumps({"pane": pane, "pid": os.getppid()}) + "\n").encode()
+    for name in names:
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.settimeout(1.0)
+        try:
+            conn.connect(os.path.join(VOICE_DIR, name))
+            conn.sendall(hello)
+            answer = b""
+            while not answer.endswith(b"\n") and len(answer) < 64:
+                part = conn.recv(1)
+                if not part:
+                    break
+                answer += part
+            if answer.strip() == b"ok":
+                conn.settimeout(None)
+                return conn
+        except OSError:
+            pass
+        conn.close()
+    return None
+
+
+def main(args):
+    if "--version" in args:
+        print(VERSION)
+        return
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    # Claude Code's probe (`... /dev/null`): a recorder that opens and keeps running is a working one
+    if "/dev/null" in args:
+        wait_for_stop()
+    pane = os.environ.get("HERDR_PANE_ID", "")
+    conn = connect(pane) if pane else None
+    if conn is None:
+        wait_for_stop()
+    out = sys.stdout.buffer
+    try:
+        while True:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            out.write(chunk)
+            out.flush()
+    except (BrokenPipeError, OSError):
+        sys.exit(0)
+    # the server finished sending: Claude Code stops the recorder when it is done listening
+    wait_for_stop()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

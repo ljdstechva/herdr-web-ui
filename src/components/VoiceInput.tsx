@@ -26,6 +26,12 @@ function errorNote(t: Translate, error: VoiceError | VoiceUnavailable): string |
     case "too_large": return t("Recording is too long");
     case "no_speech": return t("No speech was heard");
     case "unsupported": return t("This browser cannot record audio");
+    case "claude_setup": return t("Claude voice is not set up on the server");
+    case "claude_blocked": return t("Claude is waiting for an answer: answer it first");
+    case "claude_draft": return t("Claude's message box has text: send or clear it first");
+    case "claude_busy": return t("Another dictation is running in this pane");
+    case "claude_not_listening": return t("Claude did not start listening: send /voice tap first");
+    case "claude_stopped": return t("Claude stopped listening");
     case "disabled": return null;
   }
 }
@@ -101,6 +107,8 @@ export interface DictationOptions {
   maxLength?: number;
   /** the input's one-line note: a failed dictation's reason, null to clear it */
   onNote: (note: string | null) => void;
+  /** a Claude Code pane on this PC: the chat's mic uses Claude Code's own dictation where the server carries it */
+  claudePane?: string | null;
 }
 
 export interface Dictation {
@@ -124,6 +132,9 @@ export function useDictation(options: DictationOptions): Dictation {
   const t = useT();
   const { settings } = useSettings();
   const wanted = wantsVoiceInput(settings.voiceInput, options.mode, options.phone === true);
+  // Claude Code's own dictation is what a Claude pane's mic is for: on auto it is offered on a phone too
+  const claudePane = options.mode === "chat" ? options.claudePane ?? null : null;
+  const claudeWanted = settings.voiceInput !== "off" && claudePane !== null;
   const [partial, setPartial] = useState("");
   const latest = useRef(options);
   latest.current = options;
@@ -176,7 +187,8 @@ export function useDictation(options: DictationOptions): Dictation {
 
   const voice = useVoiceInput({
     mode: options.mode,
-    enabled: wanted,
+    enabled: wanted || claudeWanted,
+    claudePane,
     polish: options.polish,
     keywords: options.keywords,
     onText,
@@ -185,7 +197,7 @@ export function useDictation(options: DictationOptions): Dictation {
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
   // nobody asked for the button on auto, so one that cannot work here is left out, not shown disabled
-  const shown = wanted && (settings.voiceInput === "on" || voice.available);
+  const shown = (wanted && (settings.voiceInput === "on" || voice.available)) || (claudeWanted && voice.engine === "claude");
 
   // a transcript waiting for an IME composition to end is part of what the user cancels
   const engineCancel = voice.cancel;

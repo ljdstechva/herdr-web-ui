@@ -621,6 +621,8 @@ export function Composer({
   const dictation = useDictation({
     mode: "chat",
     active,
+    // Claude voice taps keys in this PC's own herdr: a pane of another PC keeps the other engines
+    claudePane: agent === "claude" && machineId === "local" ? paneId : null,
     connected,
     phone: mobile,
     polish: settings.voicePolishChat,
