@@ -5019,6 +5019,41 @@ describe("Claude Code 2.1.29x approvals and questions", () => {
 
 // Claude Code 2.1.296's multiple choice, captured in #752: a ticked row is drawn [✔], and the
 // unnumbered Submit row between the typed answer and "Chat about this" takes the cursor too
+describe("Claude's multiple choice answered with its own text", () => {
+  // Claude Code 2.1.301: typing into "Type something" ticks that row, and Enter on Submit, under
+  // it, takes the answer to the next question or the review (→ there moves the text's cursor)
+  const screen = (at: "Manzana" | "Submit", typed = false) => [
+    "←  ☐ Frutas  ✔ Submit  →",
+    "¿Qué frutas?",
+    `${at === "Manzana" ? "❯" : " "} 1. [ ] Manzana`,
+    "         Manzana",
+    "  2. [ ] Pera",
+    "         Pera",
+    typed ? "  3. [✔] Kiwi" : "  3. [ ] Type something",
+    `${at === "Submit" ? "❯" : " "}    Submit`,
+    "─".repeat(119),
+    "  4. Chat about this",
+    "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ].join("\n");
+
+  test("offers the typed answer, and types it in its row before Enter on Submit", () => {
+    const prompt = parseInteractivePrompt("claude", screen("Manzana"))!;
+    expect(prompt).toMatchObject({ multi_select: true, custom_option_index: 2 });
+    expect(labels(prompt)).toEqual(["Manzana", "Pera"]);
+    expect(answerKeys(prompt, { custom_text: "Kiwi" })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { text: "Kiwi" }, { keys: ["down"] }, { keys: ["enter"] }]);
+    // from Submit, the row is one up
+    expect(answerKeys(parseInteractivePrompt("claude", screen("Submit"))!, { custom_text: "Kiwi" })).toEqual([{ keys: ["up"] }, { text: "Kiwi" }, { keys: ["down"] }, { keys: ["enter"] }]);
+    // the choices still go as they did
+    expect(answerKeys(prompt, { option_indices: [1] })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }, { keys: ["right"] }]);
+  });
+
+  test("empties a draft already typed into the row first", () => {
+    const prompt = parseInteractivePrompt("claude", screen("Manzana", true))!;
+    expect(prompt).toMatchObject({ multi_select: true, custom_option_index: 2 });
+    expect(answerKeys(prompt, { custom_text: "Uva" })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "Uva" }, { keys: ["down"] }, { keys: ["enter"] }]);
+  });
+});
+
 describe("Claude's multiple choice ticked in the terminal", () => {
   const screen = (ticked: boolean, at: "A" | "B" | "Submit" | "Chat") => [
     `←  ${ticked ? "☒" : "☐"} Pick  ✔ Submit  →`,
@@ -5036,7 +5071,7 @@ describe("Claude's multiple choice ticked in the terminal", () => {
 
   test("reads [✔] rows as ticked, without the box in their labels", () => {
     const prompt = parseInteractivePrompt("claude", screen(true, "B"))!;
-    expect(prompt).toMatchObject({ kind: "question", title: "Multiple choice", question: "Which ones?", multi_select: true, custom_option_index: null });
+    expect(prompt).toMatchObject({ kind: "question", title: "Multiple choice", question: "Which ones?", multi_select: true, custom_option_index: 2 });
     expect(prompt.options.map((option) => option.label)).toEqual(["Option A", "Option B"]);
     // both are ticked: only A is wanted, so B (under the cursor) is unticked, never ticked again
     expect(answerKeys(prompt, { option_indices: [0] })).toEqual([{ keys: ["enter"] }, { keys: ["right"] }]);

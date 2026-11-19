@@ -649,7 +649,8 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   return finishPrompt("claude", {
     kind: "question", title, question, body: null,
     options: optionRows.map((row) => ({ label: row.label, description: row.description ?? null })),
-    multi_select: multiSelect, custom_option_index: multiSelect || preview ? null : customIndex,
+    // a multiple choice takes its typed answer where its Submit row shows: Enter there sends it
+    multi_select: multiSelect, custom_option_index: preview || (multiSelect && !submit) ? null : customIndex,
   }, {
     responder: "claude-question",
     menuLabels: submit ? [...rows.slice(0, -1).map((row) => row.label), "Submit", rows.at(-1)!.label] : rows.map((row) => row.label),
@@ -660,8 +661,8 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
     // emptied first, after the cursor and before it (ctrl+k, ctrl+u; measured on 2.1.295)
     ...(drafted ? {
       customSteps: (text: string) => [
-        ...keySteps([...navigationKeys(customIndex - rows.findIndex((row) => row.selected)), "ctrl+k", "ctrl+u"]),
-        { text }, ...keySteps([KEY.enter]),
+        ...keySteps([...navigationKeys(customIndex - selectedIndex), "ctrl+k", "ctrl+u"]),
+        { text }, ...keySteps(multiSelect ? [KEY.down, KEY.enter] : [KEY.enter]),
       ],
     } : {}),
   });
@@ -2606,8 +2607,11 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   if (answer.custom_text !== undefined) {
     if (typeof answer.custom_text !== "string") throw new InvalidAnswer("Custom text must be a string.");
     const text = answer.custom_text.trim();
-    if (!text || parsed.customMenuIndex === null || parsed.multi_select) throw new InvalidAnswer("This prompt does not accept a custom answer.");
+    if (!text || parsed.customMenuIndex === null || (parsed.multi_select && parsed.responder !== "claude-question")) throw new InvalidAnswer("This prompt does not accept a custom answer.");
     if (parsed.customSteps) return parsed.customSteps(text);
+    // Claude's multiple choice: typing into the row ticks it, and Enter on Submit, the row under
+    // it, sends the choice (→ in the row would move the text's cursor; measured on 2.1.301)
+    if (parsed.multi_select) return [...keySteps(navigationKeys(parsed.customMenuIndex - parsed.selectedIndex)), { text }, ...keySteps([KEY.down, KEY.enter])];
     const navigation = navigationKeys(parsed.customMenuIndex - parsed.selectedIndex);
     // Codex's queue types into its last row once it is selected: no enter first. pi's text
     // dialog is the same but for a worse reason: its `>` line already owns the input, so an
