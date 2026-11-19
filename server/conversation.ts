@@ -37,7 +37,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import nodePath, { type PlatformPath } from "node:path";
 
-import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
+import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, OmoTaskResult, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexPaneStartedAt, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
@@ -55,7 +55,7 @@ import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { invokedSkill } from "./skill-activity.ts";
-import { agentTaskResult, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
+import { agentTaskResult, CLAUDE_HANDBACK_POINTER, claudeHandback, claudePeerId, claudePeerNotice, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
 import { forgetSubagents, lineNotifications, subagentDetails, taskNotification, type SubagentDetail } from "./claude-subagents.ts";
 
 export { isOmoProcess } from "./omo.ts";
@@ -224,7 +224,9 @@ interface TranscriptEntry {
   parentUuid?: string | null;
   isMeta?: boolean;
   isCompactSummary?: boolean;
-  message?: { role?: string; content?: unknown; stop_reason?: unknown };
+  /** "updates": Claude Code shows the entry's thinking text as a progress message, not as reasoning */
+  thinkingDisplay?: unknown;
+  message?: { id?: unknown; role?: string; content?: unknown; stop_reason?: unknown };
   attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } };
 }
 
@@ -232,6 +234,12 @@ function claudeResultText(output: unknown): string {
   return typeof output === "string" ? output
     : Array.isArray(output) ? output.map((part) => (typeof part === "object" && part !== null && "text" in part ? String((part as { text: unknown }).text) : "")).join("")
       : "";
+}
+
+/** a subagent's hand-back report as its card's result (claudeHandback reads only one a card holds whole) */
+function fillCard(card: OmoTaskResult, report: string): void {
+  card.result = report;
+  delete card.result_cut;
 }
 
 /** The image types a chat shows; anything else stays out of the page. */
@@ -252,26 +260,58 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
   /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
   let atWork = false;
+  /** The reply that ended its turn (`end_turn`), by its message id. Hook feedback or a notification
+   *  can resume the model without a prompt, and the reply after that is a turn of its own. Claude
+   *  Code 2.1.32x writes each block of one reply as its own entry, all with the reply's id and stop
+   *  reason, so a later entry of that same reply (the answer after its thinking) still joins it. */
+  let completed: { id: unknown } | null = null;
   /** where a notice goes: before the turn at work it was written in, else at the end */
   const noticeAt = (): number => atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
   /** the notifications already drawn: a completion is recorded in up to three places */
   const noticed = options.noticed ?? new Set<string>();
+  /** By task id, a subagent's SubagentHandback report and the card of its notification that points
+   *  at it, whichever came first, until the report is in the card. Only within one turn: the page
+   *  reader parses each settled turn on its own (turnStarts), so whatever opens a turn there (a
+   *  prompt, another session's message) ends the wait here too, and a warm read and a cold one agree. */
+  const handbacks = new Map<string, { report?: string; notice?: ConversationTurn; card?: OmoTaskResult }>();
   /** True when the block was a notification (shown or not): it is no turn of anyone's typing. */
   const notified = (block: string, ts: string | null): boolean => {
     const notice = taskNotification(block);
     if (notice === null) return false;
     const key = `${notice.taskId}\0${notice.toolUseId ?? ""}`;
-    if (notice.agent && !noticed.has(key)) {
+    // Claude Code 2.1.30x sends the report as a hand-back message and the notification only
+    // points at it: the report is drawn in the card, as a report in the notification itself is
+    const pointed = notice.agent ? CLAUDE_HANDBACK_POINTER.exec(notice.result)?.[1] : undefined;
+    const held = pointed === undefined ? undefined : handbacks.get(pointed);
+    // A subagent resumed after it ended reports each later run with a notification that names no
+    // tool call, so it has the key of the run before. A report waiting in this turn for its card
+    // is still a run of its own: a record repeating a drawn run finds its card already filled.
+    const waiting = held?.report !== undefined && held.card === undefined;
+    if (notice.agent && (!noticed.has(key) || waiting)) {
       noticed.add(key);
-      turns.splice(noticeAt(), 0, { role: "user", ts, parts: [{ kind: "task_result", tasks: [agentTaskResult(notice, options.subagents?.get(notice.taskId))] }] });
+      const card = agentTaskResult(notice, options.subagents?.get(notice.taskId));
+      const turn: ConversationTurn = { role: "user", ts, parts: [{ kind: "task_result", tasks: [card] }] };
+      if (held !== undefined && waiting) {
+        fillCard(card, held.report!);
+        held.card = card;
+        // the card takes the row the report was drawn in, before what the agent said after it
+        const at = held.notice === undefined ? -1 : turns.indexOf(held.notice);
+        if (at !== -1) turns[at] = { ...turn, ts: held.notice!.ts };
+        else turns.splice(noticeAt(), 0, turn);
+        delete held.notice;
+      } else {
+        turns.splice(noticeAt(), 0, turn);
+        if (pointed !== undefined) handbacks.set(pointed, { card });
+      }
     }
     return true;
   };
 
-  const assistantTurn = (ts?: string): ConversationTurn => {
+  const assistantTurn = (entry: TranscriptEntry): ConversationTurn => {
     const last = turns[turns.length - 1];
-    if (last !== undefined && last.role === "assistant") return last;
-    const turn: ConversationTurn = { role: "assistant", ts: ts ?? null, parts: [] };
+    const sameReply = completed !== null && typeof completed.id === "string" && completed.id === entry.message?.id;
+    if (last !== undefined && last.role === "assistant" && (completed === null || sameReply)) return last;
+    const turn: ConversationTurn = { role: "assistant", ts: entry.timestamp ?? null, parts: [] };
     turns.push(turn);
     return turn;
   };
@@ -283,13 +323,15 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     if (lastPrompt !== null && !lastPrompt.answered && typeof entry.parentUuid === "string" && entry.parentUuid === lastPrompt.parent) {
       const index = turns.indexOf(lastPrompt.turn);
       if (index !== -1) turns.splice(index, 1);
-    }
+    } else handbacks.clear(); // a prompt that opens a turn ends a hand-back's wait for its card
     turns.push(turn);
     lastPrompt = { turn, parent: entry.parentUuid, answered: false };
   };
   const markPromptAnswered = (): void => {
     if (lastPrompt !== null) lastPrompt.answered = true;
   };
+  // another session's deliveries seen in this text, by sender and message id: an echo is no second notice
+  const peersSeen = new Set<string>();
 
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
@@ -299,8 +341,32 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     } catch {
       continue; // a torn tail line while Claude is mid-append
     }
-    if (entry === null || typeof entry !== "object" || entry.isMeta) continue;
-    if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); lastPrompt = null; continue; }
+    if (entry === null || typeof entry !== "object") continue;
+    // another session's message: its own turn, so the work it started is not appended to the answer before it
+    const peer = claudePeerNotice(entry);
+    if (peer !== null) {
+      // a subagent's hand-back is its card's report: into the card when the card came first, else
+      // shown as the message until the card comes. Any other session's message opens a turn, and
+      // so ends the wait (handbacks).
+      const handback = claudeHandback(entry);
+      if (handback === null) handbacks.clear();
+      const id = claudePeerId(entry);
+      if (id !== null) { if (peersSeen.has(id)) continue; peersSeen.add(id); }
+      const held = handback === null ? undefined : handbacks.get(handback.taskId);
+      // the same report recorded twice (queued mid-turn, then echoed) is one
+      if (handback !== null && held?.report === handback.report) continue;
+      if (handback !== null && held?.card !== undefined && held.report === undefined) {
+        fillCard(held.card, handback.report);
+        held.report = handback.report;
+        continue;
+      }
+      const turn: ConversationTurn = { role: "user", ts: entry.timestamp ?? null, parts: [peer] };
+      turns.push(turn);
+      if (handback !== null) handbacks.set(handback.taskId, { report: handback.report, notice: turn });
+      continue;
+    }
+    if (entry.isMeta) continue;
+    if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); handbacks.clear(); lastPrompt = null; continue; }
     const content = entry.message?.content;
     // a compaction's summary marks where the conversation was folded, readable on request
     if (entry.isCompactSummary) {
@@ -398,9 +464,10 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
     if (entry.type === "assistant" && Array.isArray(content)) {
       markPromptAnswered();
-      const turn = assistantTurn(entry.timestamp);
+      const turn = assistantTurn(entry);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
+      completed = stop === "end_turn" ? { id: entry.message?.id } : null;
       atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use"));
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
@@ -410,7 +477,10 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
           turn.parts.push({ kind: "text", text: b.text });
         } else if (b.type === "thinking") {
           const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
-          if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
+          // the terminal prints an "updates" entry's thinking as narration between the tools, so it
+          // is read as that: commentary keeps it in the work block, never taken for the answer
+          if (thinking.trim().length > 0 && entry.thinkingDisplay === "updates") turn.parts.push({ kind: "text", text: thinking, phase: "commentary" });
+          else if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
         } else if (b.type === "tool_use" && typeof b.name === "string") {
           const input = (typeof b.input === "object" && b.input !== null ? b.input : {}) as Record<string, unknown>;
           const part: Extract<ConversationPart, { kind: "tool" }> = {
@@ -633,6 +703,8 @@ function applyHistoryBoundary(path: string, stream: TranscriptStream, source: Re
   if (stream.floor > 0) stream.id += `-clear-${stream.floor.toString(36)}`;
 }
 
+/** the mark of another session's message in a Claude record, in either of its forms (claudePeerNotice) */
+const PEER_MARK = Buffer.from('"kind":"peer"');
 /** Bytes that every line opening a turn contains: a cheap filter before JSON.parse. */
 const TURN_MARK: Record<StreamSource, Buffer> = {
   "codex-transcript": Buffer.from('"task_started"'),
@@ -658,6 +730,10 @@ function opensTurn(source: StreamSource, line: string): boolean {
     const message = piMessage(entry);
     return message?.role === "user" && (message.content as Record<string, unknown>[]).some((part) => part.type === "text" && typeof part.text === "string" && part.text.length > 0);
   }
+  // another session's message opens a turn in either of its forms, the meta entry and the queued
+  // attachment; a subagent's hand-back does not: it stays with the task's notification, so one
+  // parse puts the report in its card
+  if (claudePeerNotice(entry) !== null) return claudeHandback(entry) === null;
   if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary) return false;
   const content = entry.message?.content;
   if (typeof content === "string") return !isCommandEntry(content);
@@ -681,13 +757,21 @@ function turnStarts(bytes: Buffer, source: StreamSource, chain: PromptChain = { 
     const end = newline === -1 ? bytes.length : newline;
     const line = bytes.subarray(offset, end);
     if (source === "claude-transcript" && line.includes('"type":"assistant"')) chain.answered = true;
-    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) {
+    // a queued attachment carrying another session's message has no "user" in it: its own mark
+    const candidate = line.includes(TURN_MARK[source]) || (source === "claude-transcript" && line.includes(PEER_MARK));
+    if (candidate && opensTurn(source, line.toString("utf8"))) {
       if (source === "claude-transcript") {
         let parent: string | null = null;
+        let peer = false;
         try {
-          const uuid: unknown = (JSON.parse(line.toString("utf8")) as TranscriptEntry | null)?.parentUuid;
+          const entry = JSON.parse(line.toString("utf8")) as TranscriptEntry | null;
+          const uuid: unknown = entry?.parentUuid;
           parent = typeof uuid === "string" ? uuid : null;
+          peer = claudePeerNotice(entry) !== null;
         } catch { /* opensTurn already read the line as JSON */ }
+        // another session's message is never a re-send of this session's prompt: it opens a turn and
+        // leaves the prompt chain as it was, so the human re-send rule below still sees its own prompts
+        if (peer) { starts.push(offset); offset = end + 1; continue; }
         // a re-send of an unanswered prompt opens no turn of its own
         if (chain.answered || parent === null || parent !== chain.parent) starts.push(offset);
         chain.parent = parent;

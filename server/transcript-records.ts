@@ -20,6 +20,66 @@ export function isContextClear(value: unknown, source: string): boolean {
   return /^\s*<command-name>\s*\/clear\s*<\/command-name>(?:\s*<command-message>clear<\/command-message>)?(?:\s*<command-args>\s*<\/command-args>)?\s*$/.test(message.content);
 }
 
+/**
+ * Another Claude session's message (Claude Code cross-session messaging). It starts the agent's
+ * work like a prompt, but nobody typed it here: a notice, sourced `peer:<sender>`. Claude records it
+ * as a meta `user` entry when it arrives between turns, and as a queued_command attachment when it
+ * arrives mid-turn; both carry `origin: { kind: "peer", name, body }`.
+ */
+export function claudePeerNotice(value: unknown): Extract<ConversationPart, { kind: "notice" }> | null {
+  const entry = record(value);
+  const queued = entry.type === "attachment" ? record(entry.attachment) : null;
+  if (queued !== null && queued.type !== "queued_command") return null;
+  if (queued === null && !(entry.type === "user" && entry.isMeta === true)) return null;
+  const origin = record(queued !== null ? queued.origin : entry.origin);
+  if (origin.kind !== "peer") return null;
+  const envelope = queued !== null ? queued.prompt : record(entry.message).content;
+  const parsed = typeof envelope === "string" ? /<cross-session-message\b([^>]*)>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(envelope) : null;
+  const body = typeof origin.body === "string" ? origin.body : parsed?.[2] ?? "";
+  // an unnamed sender leaves the source bare (`peer:`); the chat says "another session" for it
+  const name = typeof origin.name === "string" && origin.name.trim() ? origin.name.trim() : /\bfrom-name="([^"]+)"/.exec(parsed?.[1] ?? "")?.[1] ?? "";
+  return body.trim() ? { kind: "notice", text: body, source: `peer:${name}` } : null;
+}
+
+/**
+ * A background subagent's report sent back with SubagentHandback (Claude Code 2.1.30x and later):
+ * another session's message from the subagent's task (`origin.senderTaskId`), its body a one-line
+ * `[Subagent hand-back]` frame, then the report with every line indented two spaces. 2.1.31x also
+ * records the report itself, `origin.handback: true` with `handbackReportText`, which is read
+ * first. The task's `<task-notification>` then only points at it (CLAUDE_HANDBACK_POINTER). Null
+ * for a report longer than a card holds (OMO_TASK_RESULT_MAX): it stays the message it came as, whole.
+ */
+export function claudeHandback(value: unknown): { taskId: string; report: string } | null {
+  const entry = record(value);
+  const queued = entry.type === "attachment" ? record(entry.attachment) : null;
+  const origin = record(queued !== null ? queued.origin : entry.origin);
+  const taskId = typeof origin.senderTaskId === "string" ? origin.senderTaskId : "";
+  if (origin.kind !== "peer" || !taskId) return null;
+  const framed = typeof origin.body === "string" ? /^\[Subagent hand-back\][^\n]*\n([\s\S]*)$/.exec(origin.body) : null;
+  const raw = origin.handback === true && typeof origin.handbackReportText === "string" ? origin.handbackReportText
+    : framed !== null ? framed[1]!.split("\n").map((line) => line.replace(/^ {2}/, "")).join("\n") : null;
+  if (raw === null) return null;
+  // blank rows around the report go, its first line's own indentation (a code block) stays
+  const report = raw.replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+  return report && report.length <= OMO_TASK_RESULT_MAX ? { taskId, report } : null;
+}
+
+/** A subagent's notification result that only says its report came as a SubagentHandback message, and from which task. */
+export const CLAUDE_HANDBACK_POINTER = /^This agent's report was delivered to you as a message from "([^"]+)" \(its SubagentHandback call\)/;
+
+/**
+ * One delivery of another session's message, as Claude identifies it: the sender and its message id.
+ * Claude can record the same delivery twice (queued mid-turn, then echoed as a meta entry); the second
+ * record is the same notice. Null when the record does not carry both.
+ */
+export function claudePeerId(value: unknown): string | null {
+  const entry = record(value);
+  const queued = entry.type === "attachment" ? record(entry.attachment) : null;
+  const origin = record(queued !== null ? queued.origin : entry.origin);
+  return origin.kind === "peer" && typeof origin.from === "string" && typeof origin.msg_id === "string" && origin.from && origin.msg_id
+    ? `${origin.from}|${origin.msg_id}` : null;
+}
+
 /** Pi-family providers use several spellings for the same tool call/result fields. */
 export function piMessage(value: unknown): Row | null {
   const entry = record(value);
@@ -91,7 +151,7 @@ export function piNotice(value: unknown): Extract<ConversationPart, { kind: "not
   return typeof entry.customType === "string" ? { kind: "notice", text, source: entry.customType } : { kind: "notice", text };
 }
 
-const OMO_TASK_RESULT_MAX = 16_000;
+export const OMO_TASK_RESULT_MAX = 16_000;
 const label = (value: unknown): string | null => typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 const amount = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 

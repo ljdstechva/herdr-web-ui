@@ -65,6 +65,33 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   On a phone every row is a finger's height and the agent type and time give way first.
 
 ### Fixed
+- **A message from another Claude session opens its own turn.** Claude Code records a message
+  another session sends into a pane (a peer message) as a meta entry between turns, or as a
+  queued attachment mid-turn, and the chat skipped both, so the work it started was appended to
+  the answer before it. It now shows as a folded **Message from another session: {name}**; a
+  delivery recorded twice is one notice. (Upstream #870.)
+- **A Chat message to Claude that ends in a backslash is sent.** Claude Code reads `\` and the
+  Enter after it as a new line, so such a message stayed in Claude's input box while Chat
+  cleared its own. A Chat or queued message to Claude now gets a space after a last backslash,
+  which Claude Code does not record; the terminal's input line still types it as written.
+  (Upstream #2278.)
+- **Replies after a hook or a background notice stay separate.** When a Stop hook's feedback or a
+  task notification resumes Claude without a new prompt, the next reply was glued to the
+  finished answer before it, or folded into its work group. A reply that ended its turn now
+  closes it, so each answer shows on its own with its own time. One reply that Claude Code writes
+  as several entries (its thinking, then its answer) stays one. (Upstream #1024.)
+- **Claude's progress messages between tool calls show again.** Claude Code records the short
+  updates it prints between its tool calls as `thinking` on entries marked
+  `"thinkingDisplay": "updates"`, so the chat hid them unless Show thinking was on. They now read
+  as narration in the work block, never as the answer; other thinking stays thinking.
+  (Upstream #1029.)
+- **A background subagent's report is in its task card again.** Claude Code 2.1.30x has a
+  subagent send its report back with `SubagentHandback`, as a separate message, and the task's
+  notification only says "This agent's report was delivered to you as a message…". The card
+  showed that sentence and the report was dropped. The report now fills the card, read as
+  Markdown, whichever of the two Claude Code records first, also for a subagent that was resumed
+  after it ended. A report over 16,000 characters, or one whose notification comes only after a
+  new prompt, stays a folded message of its own. (Upstream #3660, #3667.)
 - **A subagent's final report was hidden.** Claude Code 2.1.31x has a subagent hand its report
   back through a `SubagentHandback` call instead of a reply, so the look inside showed only
   "Worked for 43s · 1 other tool". The report now reads as the subagent's answer.
