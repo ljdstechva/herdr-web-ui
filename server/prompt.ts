@@ -32,17 +32,31 @@ const CLAUDE_CONFIRM_HINT_RE = /enter to confirm.*esc to (?:cancel|exit|go back)
 /** Claude Code took invisible characters out of a message and holds it in its input (2.1.294) */
 const CLAUDE_HELD_HINT_RE = /^Removed (\d+) invisible characters?\s*·\s*review and press \S+ to send$/i;
 // Claude Code's `/effort` slider (2.1.294), the same two keys in other words: Enter saves the level
-// as the default for new sessions, `s` keeps it to this session
-const CLAUDE_EFFORT_HINT_RE = /←\/→ to adjust\s*·\s*enter to confirm\s*·\s*s for this session only\s*·\s*esc to cancel/i;
+// as the default for new sessions, `s` keeps it to this session. 2.1.326 put its hints in one order
+// with other words: `←/→ to adjust · s to use this session only · Enter to save · Esc to cancel`,
+// and where the level can only be this session's, Enter says so and `s` is not drawn
+// (`←/→ to adjust · Enter to use this session only · Esc to cancel`)
+const CLAUDE_EFFORT_HINT_RE = /←\/→ to adjust\s*·\s*(?:enter to confirm\s*·\s*s for this session only|s to use this session only\s*·\s*enter to (?:save|confirm|set as default)|enter to use this session only)\s*·\s*esc to cancel/i;
+/** the slider's hint when Enter itself keeps the level to this session and `s` does nothing (2.1.326) */
+const CLAUDE_EFFORT_ENTER_SESSION_RE = /enter to use this session only/i;
 // The slider by its keys alone, for the guard that keeps the fallback card and pending input off
 // it: a hint cut inside a word, or drawn without `s`, is still a slider whose Enter saves a default
 const guardRe = (parts: string[]): RegExp => new RegExp(parts
   .map((part) => [...part.replace(/\s+/g, "")].map((char) => char.replace(/[/.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*")).join(".*"), "i");
-const CLAUDE_EFFORT_GUARD_RE = guardRe(["←/→ to adjust · Enter to confirm", "Esc to cancel"]);
+/** any of several hints, each read as guardRe reads one; hintAt still wants it to begin the lines */
+const guardAny = (...variants: string[][]): RegExp => new RegExp(variants.map((parts) => `(?:${guardRe(parts).source})`).join("|"), "i");
+const CLAUDE_EFFORT_GUARD_RE = guardAny(["←/→ to adjust · Enter to confirm", "Esc to cancel"], ["←/→ to adjust", "Enter to", "Esc to cancel"]);
 // Claude Code's `/model` list, by the two keys it takes a pick with: Enter saves it as the default
 // for new sessions, `s` keeps it to this session. Read with spaces optional, as the slider's, for a
-// hint a narrow pane cut inside a word (#542)
-const CLAUDE_MODEL_GUARD_RE = guardRe(["Enter to set as default", "s to use this session only", "Esc to cancel"]);
+// hint a narrow pane cut inside a word (#542). 2.1.326 draws `s` first and Enter's word after
+// (`s to use this session only · Enter to save · Esc to cancel`), and with the cursor on the
+// `More models` row only that row's key (`Enter to expand · Esc to cancel`, `collapse` when open)
+const CLAUDE_MODEL_GUARD_RE = guardAny(
+  ["Enter to set as default", "s to use this session only", "Esc to cancel"],
+  ["s to use this session only", "Enter to", "Esc to cancel"],
+  ["Enter to expand · Esc to cancel"],
+  ["Enter to collapse · Esc to cancel"],
+);
 /** lines a hint is read over at most: a phone-width pane wraps the model list's over seven (#542) */
 const CLAUDE_HINT_LINES = 16;
 // Codex's `/model` lists, by the footer of the row under the cursor (its keymap's own words): a
@@ -1536,13 +1550,27 @@ function parseClaudeConfirm(screen: string): ParsedPrompt | null {
  * rows must be the last lines on screen, under the title within a few lines; answered as Claude's
  * other confirmations are (moves, a look before the Enter).
  */
-const CLAUDE_SWITCH_TITLE_RE = /^\s*Switch model\?\s*$/;
+// One dialog for both since 2.1.32x: `Switch model?` before a model, `Change effort level?` before
+// a level, that would re-read a cached conversation; each offers `Yes, switch to …` and `No, go back`
+const CLAUDE_SWITCH_TITLE_RE = /^\s*(?:Switch model|Change effort level)\?\s*$/;
 const CLAUDE_SWITCH_ROW_RE = /^\s*(❯)?\s*([12])\.\s+(\S.*?)\s*$/;
+// 2.1.326 draws the dialog's keys under its rows (`Enter to confirm · Esc to cancel`)
+const CLAUDE_SWITCH_HINT_RE = /^\s*Enter to (?:confirm|cancel)\s*·\s*Esc to cancel\s*$/i;
+
+/** The screen's last line, or its last line over the switch dialog's hint, is the dialog's `2. No` row. */
+function claudeSwitchEnd(lines: string[]): number {
+  let end = lines.length - 1;
+  while (end >= 0 && lines[end]!.trim() === "") end -= 1;
+  if (end >= 0 && CLAUDE_SWITCH_HINT_RE.test(lines[end]!)) {
+    end -= 1;
+    while (end >= 0 && lines[end]!.trim() === "") end -= 1;
+  }
+  return end;
+}
 
 function parseClaudeSwitchModel(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
-  let end = lines.length - 1;
-  while (end >= 0 && lines[end]!.trim() === "") end -= 1;
+  const end = claudeSwitchEnd(lines);
   if (end < 1) return null;
   const yes = CLAUDE_SWITCH_ROW_RE.exec(lines[end - 1]!);
   const no = CLAUDE_SWITCH_ROW_RE.exec(lines[end]!);
@@ -1551,8 +1579,9 @@ function parseClaudeSwitchModel(screen: string): ParsedPrompt | null {
   const titleIndex = findLastIndex(lines, (line, index) => index < end - 1 && end - 1 - index <= 10 && CLAUDE_SWITCH_TITLE_RE.test(line));
   if (titleIndex < 0) return null;
   const body = lines.slice(titleIndex + 1, end - 1).map(cleanLine).filter(Boolean);
+  const title = cleanLine(lines[titleIndex]!);
   return finishPrompt("claude", {
-    kind: "menu", title: "Switch model?", question: "Switch model?",
+    kind: "menu", title, question: title,
     body: body.join("\n") || null,
     options: [{ label: yes[3]!, description: null }, { label: no[3]!, description: null }], multi_select: false, custom_option_index: null,
   }, {
@@ -1592,9 +1621,20 @@ function parseClaudeSwitchModel(screen: string): ParsedPrompt | null {
  *
  * The line under the rows is the effort the pick would run at. It follows the cursor (a model's
  * own default, or the session's when one was set), so it is no part of what the card asks.
+ *
+ * 2.1.319–2.1.326, live in 2.1.328: older models wait under an unnumbered row at the end,
+ * `▸   More models`, which Enter opens in place (`▾`, the rows then go on numbered under it, the
+ * window's rest counted `↓ 4 more`); the hint puts `s` first (`s to use this session only · Enter
+ * to save · Esc to cancel`), and with the cursor on that row reads `Enter to expand · Esc to cancel`.
+ * The row is a stop of the cursor like any other, so it is one of the card's rows by place (its
+ * moves walk over it) but no model: the card offers it last, as opening the older models.
  */
 const CLAUDE_MODEL_ROW_RE = /^\s*([❯›>↑↓])?\s*(\d+)\.\s+(\S.*)$/;
-const CLAUDE_MODEL_MORE_RE = /^…\s*\+(\d+) models?$/;
+const CLAUDE_MODEL_MORE_RE = /^(?:…\s*\+|↓\s*)(\d+)(?: models?| more)$/;
+/** the `More models` row: the cursor's mark, then ▸ shut or ▾ open */
+const CLAUDE_MODEL_EXPANDER_RE = /^\s*([❯›>])?\s*([▸▾])\s+More models\s*$/;
+/** what the card calls the row that opens the older models, and its row in menuLabels */
+const CLAUDE_MODEL_EXPANDER_LABEL = "More models";
 /** lines between the rows and the hint, at most: the effort line, wrapped by a narrow pane */
 const CLAUDE_MODEL_UNDER_LINES = 3;
 /** the first line of a notice Claude Code 2.1.302 adds under the effort line (Fast mode, or max effort's cost); it runs to the next blank line */
@@ -1602,6 +1642,8 @@ const CLAUDE_MODEL_NOTICE_RE = /^\s*(?:Fast mode is|Use \/fast\b|Max effort\b)/i
 
 interface ListRow {
   number: number; cursor: boolean;
+  /** the screen line the row was read from (listRows) */
+  line?: number;
   /** `↑` or `↓` in the cursor's column: the window's first or last row, with more of the list beyond it */
   edge: string | null;
   /** the row after its number, as drawn */
@@ -1657,8 +1699,10 @@ function listNames(rows: ListRow[]): { name: string; said: string | null }[] | n
  * `unread`: a line under a row that is not its wrapped text (a name the pane cut in two), so the
  * rows are not the list as it was drawn.
  */
-function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegExp | null): { rows: ListRow[]; below: number; first: number; last: number; unread: boolean } {
+function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegExp | null, through: RegExp | null = null): { rows: ListRow[]; below: number; first: number; last: number; unread: boolean; passed: number[] } {
   let rows: ListRow[] = [];
+  /** lines of the menu's own that are no list rows and that the rows go on past (`through`) */
+  const passed: number[] = [];
   let below = 0;
   let ended = false;
   let unread = false;
@@ -1667,6 +1711,11 @@ function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegEx
   for (let index = Math.max(0, hintIndex - 80); index < hintIndex; index += 1) {
     const line = lines[index]!;
     const text = line.trim();
+    if (through !== null && through.test(line)) {
+      passed.push(index);
+      if (!ended && rows.length > 0) last = index;
+      continue;
+    }
     const above = ended ? undefined : rows.at(-1);
     // what a row says, wrapped under itself: told by its column, before anything it happens to begin with
     if (above !== undefined && text !== "" && above.column >= 0 && line.length - line.trimStart().length === above.column) {
@@ -1677,6 +1726,7 @@ function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegEx
     const row = listRow(line, shape);
     if (row) {
       if (above === undefined || row.number !== above.number + 1 || row.edge === "↑" || above.edge === "↓") [rows, first] = [[], index];
+      row.line = index;
       rows.push(row);
       [below, ended, unread, last] = [0, false, false, index];
       continue;
@@ -1686,7 +1736,7 @@ function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegEx
     if (counted) [below, ended, last] = [Number(counted[1]), true, index];
     else [ended, unread] = [true, true];
   }
-  return { rows, below, first, last, unread };
+  return { rows, below, first, last, unread, passed };
 }
 
 /**
@@ -1873,18 +1923,37 @@ function parseClaudeModel(screen: string): ParsedPrompt | null {
   // read as the guard reads it, so the card and the guard agree (#542)
   const hintIndex = findLastIndex(lines, (_, index) => hintAt(lines, index, CLAUDE_MODEL_GUARD_RE));
   if (hintIndex < 0) return null;
-  const { rows, below, last, unread } = listRows(lines, hintIndex, CLAUDE_MODEL_ROW_RE, CLAUDE_MODEL_MORE_RE);
+  const { rows, below, first, last, unread, passed } = listRows(lines, hintIndex, CLAUDE_MODEL_ROW_RE, CLAUDE_MODEL_MORE_RE, CLAUDE_MODEL_EXPANDER_RE);
   let inNotice = false;
   const under = lines.slice(last + 1, hintIndex).filter((line) => {
     if (line.trim() === "") { inNotice = false; return false; }
     if (CLAUDE_MODEL_NOTICE_RE.test(line)) inNotice = true;
     return !inNotice;
   }).length;
-  const selectedIndex = rows.findIndex((row) => row.cursor);
-  if (unread || under > CLAUDE_MODEL_UNDER_LINES || rows.length < 2 || rows.filter((row) => row.cursor).length !== 1) return null;
+  // this list's More models row: under its rows, among them, or right over the first a scrolled window draws
+  const expanderLine = [...passed].reverse().find((at) => rows.length > 0 && at >= first - 1 && at <= last);
+  const expander = expanderLine === undefined ? null : CLAUDE_MODEL_EXPANDER_RE.exec(lines[expanderLine]!);
+  const onExpander = expander !== null && SELECTED_RE.test(expander[1] ?? "");
+  if (unread || under > CLAUDE_MODEL_UNDER_LINES || rows.length < 2 || rows.filter((row) => row.cursor).length + (onExpander ? 1 : 0) !== 1) return null;
   const names = listNames(rows);
   if (names === null) return null;
+  // the cursor's stops in screen order: the rows, and the More models row where it is drawn
+  const expanderSlot = expander === null ? -1 : rows.filter((row) => (row.line ?? -1) < expanderLine!).length;
+  const slotOf = (index: number): number => index + (expanderSlot >= 0 && index >= expanderSlot ? 1 : 0);
+  const selectedIndex = onExpander ? expanderSlot : slotOf(rows.findIndex((row) => row.cursor));
   const options = names.map(({ name, said }) => ({ label: name.replace(/\s*[✔✓]$/, ""), description: said }));
+  // a row by its number in the whole list and by what it says too: the window moves, two rows
+  // may share a name, and a list by family names the model itself only in what the row says
+  const menuLabels = rows.map((row, index) => `${row.number}. ${options[index]!.label}  ${options[index]!.description ?? ""}`);
+  if (expanderSlot >= 0) menuLabels.splice(expanderSlot, 0, `${expander![2]} ${CLAUDE_MODEL_EXPANDER_LABEL}`);
+  // `s`, never Enter: the pick stays in this session, and the default for new ones is left alone
+  const optionSteps: AnswerStep[][] = rows.map((_, index) => [...keySteps(navigationKeys(slotOf(index) - selectedIndex)), { text: "s" }]);
+  // shut, the row is offered last: Enter opens it in place, and the card that follows lists the older models
+  const opens = expander !== null && expander[2] === "▸";
+  if (opens) {
+    options.push({ label: CLAUDE_MODEL_EXPANDER_LABEL, description: "Show the older models in this list" });
+    optionSteps.push([...keySteps(navigationKeys(expanderSlot - selectedIndex)), { keys: [KEY.enter] }]);
+  }
   // counted, not named: the rows above the window (the list counts from 1) and the ones below it
   const hidden = rows[0]!.number - 1 + below;
   const current = names.findIndex(({ name }) => /\s[✔✓]$/.test(name));
@@ -1899,12 +1968,9 @@ function parseClaudeModel(screen: string): ParsedPrompt | null {
     multi_select: false,
     custom_option_index: null,
   }, {
-    // a row by its number in the whole list and by what it says too: the window moves, two rows
-    // may share a name, and a list by family names the model itself only in what the row says
-    responder: "claude-model", menuLabels: rows.map((row, index) => `${row.number}. ${options[index]!.label}  ${options[index]!.description ?? ""}`), selectedIndex,
+    responder: "claude-model", menuLabels, selectedIndex,
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
-    // `s`, never Enter: the pick stays in this session, and the default for new ones is left alone
-    optionSteps: rows.map((_, index) => [...keySteps(navigationKeys(index - selectedIndex)), { text: "s" }]),
+    optionSteps,
   });
 }
 
@@ -1967,6 +2033,7 @@ function parseClaudeEffort(screen: string): ParsedPrompt | null {
   const selectedIndex = levels.reduce((best, _, index) => distance(index) < distance(best) ? index : best, 0);
   if (distance(selectedIndex) > CLAUDE_EFFORT_ALIGN) return null;
   const names = levels.map(({ name }) => name);
+  const sessionKey: AnswerStep = CLAUDE_EFFORT_ENTER_SESSION_RE.test(wrapped(lines, hintIndex)) ? { keys: [KEY.enter] } : { text: "s" };
   return finishPrompt("claude", {
     // where the slider stands is no part of what the card asks: one card wherever ▲ is
     kind: "question",
@@ -1979,8 +2046,9 @@ function parseClaudeEffort(screen: string): ParsedPrompt | null {
   }, {
     responder: "claude-effort", menuLabels: names, selectedIndex,
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
-    // `s`, never Enter: the level stays in this session, and the default for new ones is left alone
-    optionSteps: names.map((_, index) => [...keySteps(sliderKeys(index - selectedIndex)), { text: "s" }]),
+    // `s`, never Enter: the level stays in this session, and the default for new ones is left alone.
+    // Where Claude Code says Enter itself keeps it to this session (2.1.326), `s` is no key and Enter is
+    optionSteps: names.map((_, index) => [...keySteps(sliderKeys(index - selectedIndex)), sessionKey]),
   });
 }
 
@@ -2049,8 +2117,12 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // chord. Anchor that suffix so arbitrary trailing text cannot keep an old approval live.
   if (prompt.responder === "claude-approval") return ends(/esc to cancel.*(?:tab|ctrl\+e)|ctrl\+e to explain|^esc to cancel(?:\s*·\s*ctrl\+x ctrl\+k twice to stop background agents)?$/i);
   if (prompt.responder === "claude-confirm") return ends(CLAUDE_CONFIRM_HINT_RE);
-  // no hint under it: its own last row, "2. No, go back", is the screen's last line
-  if (prompt.responder === "claude-switch-model") return /^(?:[›>❯]\s*)?2\.\s+No\b/.test(last);
+  // its own last row, "2. No, go back", is the screen's last line, or the last over the keys
+  // 2.1.326 draws under it ("Enter to confirm · Esc to cancel")
+  if (prompt.responder === "claude-switch-model") {
+    const row = CLAUDE_SWITCH_HINT_RE.test(last) ? shown.at(-2) ?? "" : last;
+    return /^(?:[›>❯]\s*)?2\.\s+No\b/.test(row);
+  }
   // its parser already found the hint over the input box with only the footer under it
   if (prompt.responder === "claude-held") return true;
   if (prompt.responder === "claude-model") return claudeModelListWaits(screen);

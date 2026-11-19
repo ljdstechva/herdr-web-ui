@@ -4867,3 +4867,106 @@ describe("Claude Code's model switch confirmation", () => {
     for (const agent of ["codex", "omp", "pi"]) expect(parseInteractivePrompt(agent, screen())).toBeNull();
   });
 });
+
+// as Claude Code 2.1.328 draws them (read off a live pane, 120 columns)
+describe("Claude Code 2.1.328's model list, effort slider and switch confirmation", () => {
+  const rule = "▔".repeat(120);
+  const model = (rows: string[], hint: string) => [
+    "❯ /model", rule, "  Select model", "  Your pick is the default for new sessions. For other models, use --model.", "",
+    ...rows, "", "  ◐ Medium effort (default) ←/→ to adjust", "", `  ${hint}`, "",
+  ].join("\n");
+  const top = [
+    "    1.  Default (recommended)  Opus 5.5 · Best for everyday, complex tasks",
+    "    2.  Opus 5.5               For complex work and everyday tasks",
+    "    3.  Fable 5.2              For your toughest challenges",
+    "    4.  Sonnet 5.5             Most efficient for simpler tasks",
+  ];
+  const older = [
+    "    6.  Fable 5.1              Most capable for your hardest and longest-running tasks",
+    "    7.  Haiku 4.5              Fastest for quick answers",
+    "    8.  Sonnet 5               Efficient for routine tasks",
+  ];
+  const pick = "s to use this session only · Enter to save · Esc to cancel";
+
+  test("the shut list: the models, and More models last, which Enter opens", () => {
+    const screen = model([...top, "  ❯ 5.  Haiku 5.5 ✔            Fastest for quick answers", "    ▸   More models"], pick);
+    const prompt = parseInteractivePrompt("claude", screen)!;
+    expect(prompt.question).toBe("Select model for this session (currently Haiku 5.5)");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Default (recommended)", "Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5", "More models"]);
+    expect(answerKeys(prompt, { option_index: 3 })).toEqual([{ keys: ["up"] }, { text: "s" }]);
+    expect(answerKeys(prompt, { option_index: 4 })).toEqual([{ text: "s" }]);
+    expect(answerKeys(prompt, { option_index: 5 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    expect(modelListWaits("claude", screen)).toBe(true);
+  });
+
+  test("the open list: the rows under More models count on, and the moves step over it", () => {
+    const rows = (cursorOn: "more" | "row6") => [
+      ...top, "    5.  Haiku 5.5 ✔            Fastest for quick answers",
+      `  ${cursorOn === "more" ? "❯" : " "} ▾   More models`,
+      older[0]!.replace(/^ {4}/, cursorOn === "row6" ? "  ❯ " : "    "), ...older.slice(1), "    ↓ 4 more",
+    ];
+    const onMore = model(rows("more"), "Enter to collapse · Esc to cancel");
+    const prompt = parseInteractivePrompt("claude", onMore)!;
+    expect(prompt.question).toBe("Select model for this session (currently Haiku 5.5). 4 more models are listed in the terminal.");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Default (recommended)", "Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "Haiku 4.5", "Sonnet 5"]);
+    expect(answerKeys(prompt, { option_index: 4 })).toEqual([{ keys: ["up"] }, { text: "s" }]);
+    expect(answerKeys(prompt, { option_index: 5 })).toEqual([{ keys: ["down"] }, { text: "s" }]);
+    expect(modelListWaits("claude", onMore)).toBe(true);
+    const onRow6 = parseInteractivePrompt("claude", model(rows("row6"), pick))!;
+    expect(answerKeys(onRow6, { option_index: 4 })).toEqual([{ keys: ["up"] }, { keys: ["up"] }, { text: "s" }]);
+    expect(answerKeys(onRow6, { option_index: 7 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { text: "s" }]);
+  });
+
+  test("the older hint still reads, and a list followed by later output is none", () => {
+    const old = model([...top, "  ❯ 5.  Haiku 5.5 ✔            Fastest for quick answers"], "Enter to set as default · s to use this session only · Esc to cancel");
+    expect(parseInteractivePrompt("claude", old)?.options).toHaveLength(5);
+    const answered = `${model([...top, "  ❯ 5.  Haiku 5.5 ✔            Fastest for quick answers", "    ▸   More models"], pick)}❯ /model\n  ⎿  Kept model as Haiku 5.5\n`;
+    expect(modelListWaits("claude", answered)).toBe(false);
+  });
+
+  const effort = (hint: string) => [
+    "❯ /effort", rule, "  Effort", "",
+    `${" ".repeat(29)}Faster${" ".repeat(29)}Smarter`,
+    `${" ".repeat(29)}${"─".repeat(10)}▲${"─".repeat(31)}      Ultracode  off`,
+    `${" ".repeat(29)}low     medium     high     xhigh      max      Tab to toggle`, "",
+    `${" ".repeat(44)}The default effort for this model`, "", "",
+    `  ${hint}`, "",
+  ].join("\n");
+
+  test("the slider's 2.1.326 hint: picked with s, or with Enter where Enter keeps it to this session", () => {
+    const screen = effort("←/→ to adjust · s to use this session only · Enter to save · Esc to cancel");
+    const prompt = parseInteractivePrompt("claude", screen)!;
+    expect(prompt.question).toBe("Set effort for this session");
+    expect(prompt.options.map((option) => option.label)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["left"] }, { text: "s" }]);
+    expect(answerKeys(prompt, { option_index: 3 })).toEqual([{ keys: ["right"] }, { keys: ["right"] }, { text: "s" }]);
+    expect(modelListWaits("claude", screen)).toBe(true);
+    const sessionOnly = parseInteractivePrompt("claude", effort("←/→ to adjust · Enter to use this session only · Esc to cancel"))!;
+    expect(answerKeys(sessionOnly, { option_index: 2 })).toEqual([{ keys: ["right"] }, { keys: ["enter"] }]);
+  });
+
+  const confirm = (title: string, target: string) => [
+    "❯ /model", "  ⎿  Kept model as Haiku 5.5", rule,
+    `  ${title}`,
+    "  Your next response will be slower and use more tokens",
+    "",
+    `  This conversation is cached for the current model. Switching to ${target} means the full history gets re-read.`,
+    "",
+    `  ❯ 1. Yes, switch to ${target}`,
+    "    2. No, go back",
+    "",
+    "  Enter to confirm · Esc to cancel",
+    "",
+  ].join("\n");
+
+  test("the switch confirmation with its keys under the rows, for a model or an effort level", () => {
+    const prompt = parseInteractivePrompt("claude", confirm("Switch model?", "Sonnet 5"))!;
+    expect(prompt).toMatchObject({ kind: "menu", title: "Switch model?", question: "Switch model?" });
+    expect(prompt.options.map((option) => option.label)).toEqual(["Yes, switch to Sonnet 5", "No, go back"]);
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    const level = parseInteractivePrompt("claude", confirm("Change effort level?", "high"))!;
+    expect(level).toMatchObject({ kind: "menu", title: "Change effort level?" });
+    expect(level.options.map((option) => option.label)).toEqual(["Yes, switch to high", "No, go back"]);
+    expect(parseInteractivePrompt("claude", `${confirm("Switch model?", "Sonnet 5")}❯ next prompt\n`)?.title).not.toBe("Switch model?");
+  });
+});
