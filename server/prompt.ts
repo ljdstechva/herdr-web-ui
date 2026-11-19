@@ -2103,7 +2103,28 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
     return hintAtEnd(shown, PI_MENU_HINT_AT_END_RE, PI_FOOTER_LINES, 4)
       || hintAtEnd(shown, PI_INPUT_HINT_AT_END_RE, PI_FOOTER_LINES, 4);
   }
-  return ends(/ctrl\+g to edit|shift\+tab to approve with this feedback/i);
+  // Claude's plan: its footer, wrapped or not, ends the screen
+  return ends(/ctrl\+g to edit|shift\+tab to approve with this feedback/i) || claudePlanFooterEnds(shown);
+}
+
+const CLAUDE_PLAN_FOOTER_RE = /^ctrl\+g to edit in [^·]+?[ \n]·[ \n]([^]+)$/i;
+
+/**
+ * Whether Claude's plan footer, `ctrl+g to edit in VS Code · ~/.claude/plans/x.md`, ends the screen. A narrow pane
+ * (a phone) wraps it with nothing marking the breaks: at a space before the path, or anywhere inside the path, even
+ * between `.m` and `d`, and over as many lines as the path needs. Missed, the plan fell to the generic card, whose
+ * Enter approves the plan and runs it. So the path's lines are joined as one word, and `.md` may show only at its
+ * very end: output under an answered plan (`⏺ Updated README.md`, a bare `README.md`, even one written on the
+ * footer's last row) comes after a path already complete, so it never extends it; a plan folder with `.md` in its
+ * name goes unread instead. The folder may hold a `·` (`CLAUDE_CONFIG_DIR`), so only the first `·` after the
+ * editor's name separates the path. Ported from upstream 53542d68 and 54020a93.
+ */
+function claudePlanFooterEnds(shown: string[]): boolean {
+  const at = findLastIndex(shown, (line) => /^ctrl\+g to edit\b/i.test(line));
+  const path = at < 0 ? undefined : CLAUDE_PLAN_FOOTER_RE.exec(shown.slice(at).join("\n"))?.[1];
+  if (path === undefined) return false;
+  const joined = path.replaceAll("\n", "");
+  return joined.indexOf(".md") === joined.length - 3;
 }
 
 /**
