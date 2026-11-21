@@ -118,6 +118,7 @@ import { handleUsageRequest, UsageService } from "./usage.ts";
 import { handleSignInRequest, SignInService } from "./sign-in.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 import { ClaudeVoice, claudeRecorderInstalled, claudeVoiceSettings, voiceDir, type ClaudeVoiceEvent, type ClaudeVoiceTake } from "./claude-voice.ts";
+import { claudeRebuilder, type Rebuilder } from "./claude-rebuild.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
@@ -502,6 +503,8 @@ export function createServer(
     voice?: VoiceService;
     /** the folder of Claude voice's recorder sockets (server/claude-voice.ts); unset, a Claude pane's mic cannot use Claude Code's own dictation. The real server passes voiceDir() */
     claudeVoiceDir?: string;
+    /** starts the program that rebuilds a dictation's words (server/claude-rebuild.ts); unset, dictations are sent as heard. The real server passes Claude Code's headless mode */
+    claudeRebuild?: Rebuilder;
     machines?: boolean;
     registerBridge?: boolean;
     /** where a worktree tab's checkout goes when the request names no path; unset, herdr's own worktree directory */
@@ -3018,7 +3021,8 @@ export function createServer(
           const send = (event: ClaudeVoiceEvent): void => {
             if (client.data.closing) return;
             try { client.send(JSON.stringify(event)); } catch { /* the phone left */ }
-            if (event.type === "final" || event.type === "error") client.close(1000, "done");
+            // a final that promises its rebuilt words keeps the connection for them
+            if (event.type === "error" || event.type === "polished" || (event.type === "final" && event.polish !== true)) client.close(1000, "done");
           };
           if (!claudeVoice) send({ type: "error", code: "unavailable", message: "Claude voice is not running on this server" });
           else dictation.take = claudeVoice.open(dictation.paneId, send);
@@ -3071,10 +3075,11 @@ export function createServer(
         const dictation = client.data.claudeVoice;
         if (dictation) {
           if (typeof raw !== "string") { dictation.take?.audio(raw); return; }
-          let kind: unknown = null;
-          try { kind = (JSON.parse(raw) as { type?: unknown }).type; } catch { /* not a control frame */ }
-          if (kind === "finish") dictation.take?.finish();
-          else if (kind === "cancel") dictation.take?.cancel();
+          let frame: Record<string, unknown> = {};
+          try { const parsed: unknown = JSON.parse(raw); if (typeof parsed === "object" && parsed !== null) frame = parsed as Record<string, unknown>; } catch { /* not a control frame */ }
+          if (frame["type"] === "finish") dictation.take?.finish();
+          else if (frame["type"] === "cancel") dictation.take?.cancel();
+          else if (frame["type"] === "options") dictation.take?.options({ polish: frame["polish"] === true, keywords: Array.isArray(frame["keywords"]) ? frame["keywords"] as string[] : [] });
           return;
         }
         if (stopped || client.data.closing) return;
@@ -3683,11 +3688,13 @@ export function createServer(
       name: `p${server.port}`,
       pane: async (paneId) => { const pane = await paneGet(paneId); return { agent: pane.agent ?? null, status: pane.agent_status }; },
       boxReads: claudeBoxReads,
-      screen: async (paneId) => (await paneRead({ paneId, source: "visible", format: "text" })).text,
+      // the live screen, as boxReads reads it: a viewport scrolled into the history shows no box
+      screen: async (paneId) => (await paneRead({ paneId, source: "detection", format: "text" })).text,
       keys: (paneId, keys) => paneSendKeys(paneId, keys),
       blocked: (screen) => parseInteractivePrompt("claude", screen) !== null || modelListWaits("claude", screen),
       settings: () => claudeVoiceSettings(),
       recorderInstalled: () => claudeRecorderInstalled(),
+      ...(options.claudeRebuild ? { rebuild: options.claudeRebuild } : {}),
     });
     voiceService.listen().then(() => { if (!stopped) claudeVoice = voiceService; else voiceService.close(); }, (error: unknown) => {
       console.error(`claude voice: ${error instanceof Error ? error.message : String(error)}`);
@@ -3725,7 +3732,9 @@ if (import.meta.main) {
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
   const vps = process.platform === "linux" ? new VpsMonitor({ stateDir: defaultStateDir() }) : undefined;
   const browsers = process.platform === "linux" ? new BrowserViews({ stateDir: defaultStateDir() }) : undefined;
-  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, browsers, registerBridge: true, claudeVoiceDir: voiceDir() });
+  // a dictation's words are rebuilt by Claude Code's own headless mode, where this PC has Claude Code
+  const claudeRebuild = claudeRebuilder({ cwd: join(defaultStateDir(), "claude-rebuild") }) ?? undefined;
+  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, vps, browsers, registerBridge: true, claudeVoiceDir: voiceDir(), claudeRebuild });
   telemetry.start();
   vps?.start();
   let stopping = false;

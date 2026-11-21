@@ -3176,7 +3176,7 @@ function claudeGreyInput(ansi: string): string | null {
  * its rule). "clipped" when only the bottom rule is on screen, as under a draft taller than the
  * pane; null when the screen has no rule at all.
  */
-function claudeInputBox(screen: string): { plain: string[]; raw: string[] } | "clipped" | null {
+function claudeInputBox(screen: string): { plain: string[]; raw: string[]; rule: string } | "clipped" | null {
   const raw = screen.split("\n").map((line) => line.replace(/\r$/, ""));
   const plain = raw.map((line) => line.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").trimEnd());
   const rule = (line: string): boolean => SOLID_RULE_RE.test(line.trim()) || LABELED_RULE_RE.test(line.trim());
@@ -3186,7 +3186,7 @@ function claudeInputBox(screen: string): { plain: string[]; raw: string[] } | "c
   let start = end - 1;
   while (start >= 0 && !rule(plain[start]!)) start--;
   if (start < 0) return "clipped";
-  return { plain: plain.slice(start + 1, end), raw: raw.slice(start + 1, end) };
+  return { plain: plain.slice(start + 1, end), raw: raw.slice(start + 1, end), rule: plain[start]!.trim() };
 }
 
 /**
@@ -3235,6 +3235,15 @@ export function claudeInputDraft(live: string, colors: string | null): boolean {
 export function claudeInputBoxRows(screen: string): string[] | null {
   const box = claudeInputBox(screen);
   return box === null || box === "clipped" ? null : box.plain;
+}
+
+/**
+ * Claude Code's message box as plain rows, with the rule drawn above it: that rule names the rows
+ * a text taller than the box scrolled out of it (`─── ↑ 7 more ───`). Null with no whole box.
+ */
+export function claudeInputBoxUnderRule(screen: string): { rule: string; rows: string[] } | null {
+  const box = claudeInputBox(screen);
+  return box === null || box === "clipped" ? null : { rule: box.rule, rows: box.plain };
 }
 
 /** Positive proof of an ordinary empty input box, never absence of a readable box. */

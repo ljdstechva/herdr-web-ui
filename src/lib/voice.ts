@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchVoiceStatus } from "./api.ts";
 import { claudeVoiceError, claudeVoiceUrl, createPcm16Resampler, loadClaudeVoiceStatus } from "./claudeVoice.ts";
-import type { ClaudeVoiceEvent, ClaudeVoiceStatus } from "../../shared/claude-voice.ts";
+import type { ClaudeVoiceEvent, ClaudeVoiceOptions, ClaudeVoiceStatus } from "../../shared/claude-voice.ts";
 import { LOCALE_TAGS, type Language, type LanguageSetting } from "./i18n.ts";
 import { useSettings, type DictationLanguage } from "./settings.ts";
 import {
@@ -37,6 +37,13 @@ export interface VoiceText { text: string; phase: "raw" | "polished"; take: numb
 
 /** a press held this long is push-to-talk (release finishes); a shorter tap toggles */
 export const HOLD_MS = 300;
+/**
+ * A Claude pane's take goes on recording this long after its finish: the last word is still on
+ * its way through the microphone and the capture's buffer when the button is tapped or let go.
+ */
+export const CLAUDE_TAIL_MS = 250;
+/** a Claude pane's rebuilt words are waited for this long after its raw ones; then the raw ones stay */
+export const CLAUDE_POLISH_WAIT_MS = 20_000;
 /** after a finish the mic stays open this long, so the next dictation starts at once */
 export const WARM_MIC_MS = 30_000;
 const SILENT_AFTER_MS = 3000;
@@ -458,6 +465,8 @@ interface Take {
   queued: ArrayBuffer[];
   /** a `claude` take got its final words or its error */
   answered: boolean;
+  /** a `claude` take's raw words are in the box and their rebuilt form is on its way; the timer gives up on it */
+  polishing: ReturnType<typeof setTimeout> | null;
 }
 
 /** The imperative half of useVoiceInput: mic, recorder, meter loop, uploads. Outlives renders. */
@@ -690,6 +699,8 @@ export function createVoiceEngine(io: EngineIO) {
   /** A `claude` take's end, by its words, an error or a lost connection: nothing more comes from it. */
   function closeClaude(current: Take): void {
     current.answered = true;
+    if (current.polishing !== null) clearTimeout(current.polishing);
+    current.polishing = null;
     stopCapture(current);
     const socket = current.socket;
     current.socket = null;
@@ -713,12 +724,35 @@ export function createVoiceEngine(io: EngineIO) {
       if (!current.discard && current.id === lastTakeId) io.options().onPartial?.(tidy(event.text));
       return;
     }
+    if (event.type === "polished") {
+      // the words rebuilt by Claude: over the raw ones, unless the user has edited them since
+      if (!current.discard && current.polishing !== null && tidy(event.text) !== "") io.options().onText({ text: tidy(event.text), phase: "polished", take: current.id });
+      closeClaude(current);
+      return;
+    }
     if (!current.discard) {
       if (event.type === "error") io.setError(claudeVoiceError(event.code));
       else if (tidy(event.text) === "") io.setError("no_speech");
       else io.options().onText({ text: tidy(event.text), phase: "raw", take: current.id });
     }
     if (event.type === "error" && (event.code === "unavailable" || event.code === "recorder_missing")) void loadClaudeVoiceStatus(true);
+    if (event.type === "final" && event.polish === true && !current.discard && tidy(event.text) !== "" && current.polishing === null) {
+      // the connection stays for the rebuilt words; without them the raw ones stay as they are
+      current.polishing = setTimeout(() => closeClaude(current), CLAUDE_POLISH_WAIT_MS);
+      if (take === current) {
+        // the server ended the take itself (a long silence): the microphone is done, as after a finish
+        take = null;
+        pressedAt = null;
+        stopCapture(current);
+        const controller = new AbortController();
+        pending.add(controller);
+        current.closing = controller;
+        controller.signal.addEventListener("abort", () => { current.discard = true; discardTake(current); pending.delete(controller); settle(); });
+        setPhase("transcribing");
+        if (document.hidden) releaseStream(); else keepWarm();
+      }
+      return;
+    }
     closeClaude(current);
   }
 
@@ -727,6 +761,10 @@ export function createVoiceEngine(io: EngineIO) {
     socket.binaryType = "arraybuffer";
     current.socket = socket;
     socket.onopen = () => {
+      // what this take asks for, before its audio: the rebuilt words, and the names that may be said
+      const options = io.options();
+      const asked: ClaudeVoiceOptions = { polish: options.polish, keywords: voiceKeywords(options.keywords?.() ?? []) };
+      socket.send(JSON.stringify({ type: "options", ...asked }));
       for (const chunk of current.queued) socket.send(chunk);
       current.queued = [];
     };
@@ -737,7 +775,8 @@ export function createVoiceEngine(io: EngineIO) {
     };
     socket.onclose = () => {
       if (current.answered) return;
-      if (!current.discard) io.setError("network");
+      // lost while its rebuilt words were on their way: the raw ones are in the box, nothing failed
+      if (!current.discard && current.polishing === null) io.setError("network");
       closeClaude(current);
     };
     try {
@@ -821,6 +860,8 @@ export function createVoiceEngine(io: EngineIO) {
     if (current.engine === "claude" && !current.answered) {
       sendControl(current, "cancel");
       current.answered = true;
+      if (current.polishing !== null) clearTimeout(current.polishing);
+      current.polishing = null;
       stopCapture(current);
       const socket = current.socket;
       current.socket = null;
@@ -901,9 +942,15 @@ export function createVoiceEngine(io: EngineIO) {
       // Claude Code settles the last words, the server reads them and empties its box: they come as `final`
       current.closing = controller;
       controller.signal.addEventListener("abort", () => { current.discard = true; discardTake(current); pending.delete(controller); settle(); });
-      stopCapture(current);
-      sendControl(current, "finish");
-      if (release || document.hidden) releaseStream(); else keepWarm();
+      const end = (): void => {
+        // cancelled, failed or answered in the meantime: its capture is stopped already
+        if (current.answered || current.discard) return;
+        stopCapture(current);
+        sendControl(current, "finish");
+        if (release || document.hidden) releaseStream(); else keepWarm();
+      };
+      // a tab going away has no time left for the tail
+      if (release) end(); else setTimeout(end, CLAUDE_TAIL_MS);
       return;
     }
     const mime = io.recorder();
@@ -956,7 +1003,7 @@ export function createVoiceEngine(io: EngineIO) {
     io.setElapsed(0);
     io.setSilent(false);
     meter.silent = false;
-    const current: Take = { id: ++lastTakeId, engine, discard: false, releaseMic: false, closing: null, recorder: null, recorderAt: null, gate: null, chunks: [], heard: false, startedAt: null, recognition: null, finalText: "", socket: null, capture: null, queued: [], answered: false };
+    const current: Take = { id: ++lastTakeId, engine, discard: false, releaseMic: false, closing: null, recorder: null, recorderAt: null, gate: null, chunks: [], heard: false, startedAt: null, recognition: null, finalText: "", socket: null, capture: null, queued: [], answered: false, polishing: null };
     take = current;
     pressedAt = performance.now();
     // the pill shows on this very frame; the mic catches up

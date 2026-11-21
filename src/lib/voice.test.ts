@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { VoiceEvent } from "../../shared/voice.ts";
-import type { InsertedSpan } from "./voice.ts";
+import type { InsertedSpan, VoiceError, VoiceText } from "./voice.ts";
 import {
   applyDictation,
   barScales,
@@ -16,6 +16,7 @@ import {
   replaceIfUnchanged,
   smoothLevel,
   speechErrorReason,
+  CLAUDE_TAIL_MS,
   SPEECH_HANG_MS,
   transcribeLanguage,
   voiceErrorFromCode,
@@ -386,7 +387,42 @@ describe("createVoiceEngine", () => {
     abort() { this.onend?.(); }
   }
 
-  const GLOBALS = ["document", "MediaRecorder", "requestAnimationFrame", "cancelAnimationFrame", "fetch"] as const;
+  /** the connection of a Claude pane's take: what the page sent, and the server's events as the test gives them */
+  class FakeSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 3;
+    static made: FakeSocket[] = [];
+    readyState = FakeSocket.CONNECTING;
+    binaryType = "";
+    sent: unknown[] = [];
+    onopen: (() => void) | null = null;
+    onmessage: ((message: { data: string }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    constructor(readonly url: string) { FakeSocket.made.push(this); }
+    send(data: unknown) { this.sent.push(data); }
+    close() { if (this.readyState === FakeSocket.CLOSED) return; this.readyState = FakeSocket.CLOSED; this.onclose?.(); }
+    open() { this.readyState = FakeSocket.OPEN; this.onopen?.(); }
+    event(event: object) { this.onmessage?.({ data: JSON.stringify(event) }); }
+    /** the control frames the page sent, parsed */
+    frames() { return this.sent.filter((data): data is string => typeof data === "string").map((data) => JSON.parse(data) as Record<string, unknown>); }
+  }
+  const node = () => ({ connect: () => undefined, disconnect: () => undefined });
+  class FakeAudioContext {
+    state = "running";
+    sampleRate = 48_000;
+    destination = {};
+    createAnalyser() { return { ...node(), fftSize: 0, getFloatTimeDomainData: () => undefined }; }
+    createDelay() { return { ...node(), delayTime: { value: 0 } }; }
+    createMediaStreamDestination() { return { stream: new FakeStream() }; }
+    createMediaStreamSource() { return node(); }
+    createScriptProcessor() { return { ...node(), onaudioprocess: null }; }
+    createGain() { return { ...node(), gain: { value: 1 } }; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = "closed"; return Promise.resolve(); }
+  }
+
+  const GLOBALS = ["document", "MediaRecorder", "requestAnimationFrame", "cancelAnimationFrame", "fetch", "WebSocket", "AudioContext", "window"] as const;
   const saved = new Map<string, PropertyDescriptor | undefined>();
   const define = (target: object, name: string, value: unknown) => Object.defineProperty(target, name, { configurable: true, writable: true, value });
   /** each getUserMedia call, to be answered by the test in the order it chooses */
@@ -402,6 +438,7 @@ describe("createVoiceEngine", () => {
     uploadedLanguages = [];
     FakeRecorder.made = [];
     FakeSpeech.made = [];
+    FakeSocket.made = [];
     for (const name of GLOBALS) saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     saved.set("mediaDevices", Object.getOwnPropertyDescriptor(navigator, "mediaDevices"));
     define(globalThis, "document", { hidden: false });
@@ -425,9 +462,11 @@ describe("createVoiceEngine", () => {
     saved.clear();
   });
 
-  function engine(locale = "en-US", provider: "server" | "browser" = "server") {
+  function engine(locale = "en-US", provider: "server" | "browser" | "claude" = "server", polish = false) {
     const states: string[] = [];
     const texts: string[] = [];
+    const results: VoiceText[] = [];
+    const errors: Array<VoiceError | null> = [];
     const waiting: Array<{ state: string; resolve: () => void }> = [];
     const voice = createVoiceEngine({
       setState: (state) => {
@@ -436,16 +475,38 @@ describe("createVoiceEngine", () => {
       },
       setElapsed: () => undefined,
       setSilent: () => undefined,
-      setError: () => undefined,
-      options: () => ({ mode: "chat", enabled: true, polish: false, onText: (result) => { texts.push(result.text); } }),
+      setError: (error) => { errors.push(error); },
+      options: () => ({ mode: "chat", enabled: true, polish, keywords: () => ["Claude", " /voice ", ""], onText: (result) => { texts.push(result.text); results.push(result); } }),
       engine: () => provider,
       language: () => ({ locale, ui: "en" }),
       recorder: () => ({ mimeType: "audio/webm", extension: "webm" }),
       speech: () => provider === "browser" ? FakeSpeech : null,
-      claudePane: () => null,
+      claudePane: () => provider === "claude" ? "w1:p1" : null,
     });
     const reached = (state: string) => new Promise<void>((resolve) => { waiting.push({ state, resolve }); });
-    return { voice, states, texts, reached };
+    return { voice, states, texts, results, errors, reached };
+  }
+
+  /** a Claude pane's take up to the finish: connected, the microphone open, Claude Code listening, the mic tapped again */
+  async function claudeTake(polish: boolean, tail = true) {
+    // only these takes get a WebAudio: with one, the other engines record through its delay line
+    define(globalThis, "WebSocket", FakeSocket);
+    define(globalThis, "AudioContext", FakeAudioContext);
+    define(globalThis, "window", { location: { protocol: "https:", host: "herdr.test" } });
+    const made = engine("en-US", "claude", polish);
+    made.voice.press();
+    const socket = FakeSocket.made[0]!;
+    socket.open();
+    micRequests[0]!(new FakeStream());
+    await drain();
+    socket.event({ type: "listening" });
+    expect(made.states.at(-1)).toBe("recording");
+    made.voice.press();
+    expect(made.states.at(-1)).toBe("transcribing");
+    // the microphone stays open for the last word before the finish goes out
+    expect(socket.frames().some((frame) => frame["type"] === "finish")).toBe(false);
+    if (tail) await new Promise((resolve) => setTimeout(resolve, CLAUDE_TAIL_MS + 30));
+    return { ...made, socket };
   }
 
   /** lets the engine's own continuations after a resolved promise run; nothing here waits on time */
@@ -521,5 +582,98 @@ describe("createVoiceEngine", () => {
     await drain();
     expect(FakeRecorder.made).toHaveLength(2);
     voice.cancel();
+  });
+
+  it("asks a Claude pane's take for its rebuilt words and puts them over the raw ones", async () => {
+    const { voice, states, results, errors, socket } = await claudeTake(true);
+    try {
+      expect(socket.url).toBe("wss://herdr.test/api/voice/claude/stream?pane_id=w1%3Ap1");
+      // what the take asks for is the first frame, before any audio
+      expect(JSON.parse(socket.sent[0] as string)).toEqual({ type: "options", polish: true, keywords: ["Claude", "/voice"] });
+      expect(socket.frames().at(-1)).toEqual({ type: "finish" });
+
+      socket.event({ type: "final", text: "Open the herder app.  And check it.", polish: true });
+      expect(results).toEqual([{ text: "Open the herder app. And check it.", phase: "raw", take: 1 }]);
+      // the rebuilt words are still owed: the connection stays, and no second take starts over them
+      expect(states.at(-1)).toBe("transcribing");
+      expect(socket.readyState).toBe(FakeSocket.OPEN);
+      voice.press();
+      expect(FakeSocket.made).toHaveLength(1);
+
+      socket.event({ type: "polished", text: "Open the herdr app and check it." });
+      expect(results.at(-1)).toEqual({ text: "Open the herdr app and check it.", phase: "polished", take: 1 });
+      expect(states.at(-1)).toBe("idle");
+      expect(socket.readyState).toBe(FakeSocket.CLOSED);
+      expect(errors.filter(Boolean)).toEqual([]);
+    } finally { voice.cancel(); }
+  });
+
+  it("keeps the raw words when the rebuilt ones never come, and ends at once without the promise", async () => {
+    const lost = await claudeTake(true);
+    try {
+      lost.socket.event({ type: "final", text: "as heard", polish: true });
+      // the server went away while it rebuilt: the words are in the box, nothing failed
+      lost.socket.close();
+      expect(lost.results).toEqual([{ text: "as heard", phase: "raw", take: 1 }]);
+      expect(lost.states.at(-1)).toBe("idle");
+      expect(lost.errors.filter(Boolean)).toEqual([]);
+    } finally { lost.voice.cancel(); }
+
+    FakeSocket.made = [];
+    micRequests = [];
+    const plain = await claudeTake(false);
+    try {
+      expect(JSON.parse(plain.socket.sent[0] as string)).toMatchObject({ type: "options", polish: false });
+      // a server that rebuilds nothing, or was not asked to, promises nothing
+      plain.socket.event({ type: "final", text: "only these words" });
+      expect(plain.results).toEqual([{ text: "only these words", phase: "raw", take: 1 }]);
+      expect(plain.states.at(-1)).toBe("idle");
+      // a late event of that take changes nothing
+      plain.socket.event({ type: "polished", text: "never asked for" });
+      expect(plain.results).toHaveLength(1);
+    } finally { plain.voice.cancel(); }
+  });
+
+  it("lets go of the microphone when the server ends a take over a long silence", async () => {
+    define(globalThis, "WebSocket", FakeSocket);
+    define(globalThis, "AudioContext", FakeAudioContext);
+    define(globalThis, "window", { location: { protocol: "https:", host: "herdr.test" } });
+    const { voice, states, results, errors } = engine("en-US", "claude", true);
+    try {
+      voice.press();
+      const socket = FakeSocket.made[0]!;
+      socket.open();
+      micRequests[0]!(new FakeStream());
+      await drain();
+      socket.event({ type: "listening" });
+      expect(states.at(-1)).toBe("recording");
+      // nobody tapped: the words come with the server's own finish, their rebuilt form after them
+      socket.event({ type: "final", text: "said before the silence", polish: true });
+      expect(states.at(-1)).toBe("transcribing");
+      expect(socket.frames().some((frame) => frame["type"] === "finish")).toBe(false);
+      socket.event({ type: "polished", text: "Said before the silence." });
+      expect(results.map((result) => result.phase)).toEqual(["raw", "polished"]);
+      expect(states.at(-1)).toBe("idle");
+      expect(errors.filter(Boolean)).toEqual([]);
+    } finally { voice.cancel(); }
+  });
+
+  it("sends no finish for a take cancelled while its last word was still coming in", async () => {
+    const { voice, states, socket } = await claudeTake(true, false);
+    voice.cancel();
+    await new Promise((resolve) => setTimeout(resolve, CLAUDE_TAIL_MS + 30));
+    expect(socket.frames().map((frame) => frame["type"])).toEqual(["options", "cancel"]);
+    expect(states.at(-1)).toBe("idle");
+  });
+
+  it("cancels the rebuild with the take", async () => {
+    const { voice, states, results, socket } = await claudeTake(true);
+    socket.event({ type: "final", text: "as heard", polish: true });
+    voice.cancel();
+    expect(socket.frames().at(-1)).toEqual({ type: "cancel" });
+    expect(socket.readyState).toBe(FakeSocket.CLOSED);
+    expect(states.at(-1)).toBe("idle");
+    socket.event({ type: "polished", text: "too late" });
+    expect(results).toHaveLength(1);
   });
 });
